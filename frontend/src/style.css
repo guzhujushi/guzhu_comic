@@ -77,8 +77,11 @@ album-card img {
 }
 
 album-card p {
-  margin: 6px 0 0;
-  font-size: 14px;
-  color: #333;
-  word-break: break-word;  /* 长标题换行，不撑破卡片 */
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
 }
+
+album-card { cursor: pointer; }

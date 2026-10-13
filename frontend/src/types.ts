@@ -23,3 +23,9 @@ export interface AlbumSummary {
   title: string
   cover_url?: string
 }
+
+export interface ChapterImages {
+  photo_id: string
+  images: string[]
+}
+

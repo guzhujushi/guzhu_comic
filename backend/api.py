@@ -2,6 +2,15 @@ import json
 import sqlite3
 import time
 from pathlib import Path
+import threading
+from functools import partial
+from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
+
+
+class _QuietHandler(SimpleHTTPRequestHandler):
+    """去掉 http.server 的请求日志，免得刷屏"""
+    def log_message(self, *args):
+        pass
 
 from jmcomic import JmMagicConstants, JmOption, JmcomicText
 
@@ -33,7 +42,9 @@ class API:
         self.client = JmOption.default().new_jm_client()
         APP_DIR.mkdir(parents=True, exist_ok=True)
         COVER_DIR.mkdir(parents=True, exist_ok=True)
+        (APP_DIR / "cache" / "images").mkdir(parents=True, exist_ok=True)
         self._init_db()
+        self.img_base = self._start_img_server()
 
     def _init_db(self) -> None:
         with sqlite3.connect(DB_PATH) as conn:
@@ -78,7 +89,7 @@ class API:
 
     def search(self, keyword: str, page: int = 1) -> list[dict[str, str]]:
         """
-        搜索本子，返回 [{"id", "title", "cover_url"}]，结果缓存 1 小时
+        搜索漫画，返回 [{"id", "title", "cover_url"}]，结果缓存 1 小时
         """
         keyword = keyword.strip()
         if not keyword:
@@ -183,3 +194,34 @@ class API:
         }
         self._cache_set(key, data)
         return data
+
+    def _start_img_server(self) -> str:
+        """启动本地图片静态服务（只监听本机），返回 base url"""
+        handler = partial(_QuietHandler, directory=str(APP_DIR / "cache"))
+        server = ThreadingHTTPServer(("127.0.0.1", 0), handler)  # 端口 0 = 系统自动分配
+        port = server.server_address[1]
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        return f"http://127.0.0.1:{port}"
+
+    def get_chapter(self, photo_id: str) -> dict:
+        """
+        章节图片：下载（解密）到本地，返回 {"photo_id", "images": [本地 http url]}
+        已下载过的直接复用，不重复请求
+        """
+        photo_id = str(photo_id).strip()
+        img_dir = APP_DIR / "cache" / "images" / photo_id
+        img_dir.mkdir(parents=True, exist_ok=True)
+        try:
+            photo = self.client.get_photo_detail(photo_id)
+        except Exception as e:
+            raise RuntimeError(f"章节获取失败: {e}") from e
+        urls = []
+        for img in photo:  # 迭代产生 JmImageDetail
+            path = img_dir / img.filename
+            if not path.exists():
+                try:
+                    self.client.download_by_image_detail(img, str(path))
+                except Exception as e:
+                    raise RuntimeError(f"图片下载失败 {img.filename}: {e}") from e
+            urls.append(f"{self.img_base}/images/{photo_id}/{img.filename}")
+        return {"photo_id": photo_id, "images": urls}
