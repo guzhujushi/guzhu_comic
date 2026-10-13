@@ -116,9 +116,22 @@ class API:
             {
                 "id": str(album_id),
                 "title": title,
-                "cover": self._cover_path(str(album_id)),
+                "cover_url": JmcomicText.get_album_cover_url(str(album_id)),
             }
             for album_id, title in result_page
         ]
         self._cache_set(key, data)
         return data
+    
+    def clear_cache(self) -> dict[str, int]:
+        """
+        清缓存：删 meta_cache 全表 + covers 目录下的文件
+        """
+        with sqlite3.connect(DB_PATH) as conn:
+            n_rows = conn.execute("DELETE FROM meta_cache").rowcount
+        n_files = 0
+        for f in COVER_DIR.glob("*"):
+            if f.is_file():
+                f.unlink()
+                n_files += 1
+        return {"meta_rows": n_rows, "cover_files": n_files}
