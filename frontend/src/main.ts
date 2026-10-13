@@ -1,5 +1,5 @@
 import './style.css'
-import { registerRoute, startRouter, navigate } from './router.js'
+import { registerRoute, startRouter } from './router.js'
 import { popularPage } from './pages/popular.js'
 import { searchPage } from './pages/search.js'
 import { waitForPywebview } from './webstatus.js'
@@ -16,19 +16,14 @@ nav.innerHTML = `
   <a href="#/popular">热门</a>
   <a href="#/search">搜索</a>
 `
-  registerRoute('/popular', popularPage)
-  registerRoute('/search', searchPage)
-  registerRoute('/album', albumPage)
-  registerRoute('/read', readerPage)
-  startRouter()
-
-  // 等 pywebview 就绪（不阻塞页面渲染）
-  try {
-    await waitForPywebview()
-    console.log('pywebview 已就绪')
-  } catch (err) {
-    console.error(err)
-  }
-
-// 启动路由
+registerRoute('/album', albumPage)
+registerRoute('/read', readerPage)
 startRouter()
+
+// 等 pywebview 就绪（不阻塞页面渲染）
+try {
+  await waitForPywebview()
+  console.log('pywebview 已就绪')
+} catch (err) {
+  console.error(err)
+}

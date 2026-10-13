@@ -21,6 +21,7 @@ export function readerPage(params: Record<string, string>): HTMLElement {
   const titleEl = el.querySelector('.reader-title')!
   const pageEl = el.querySelector('.reader-page')!
   const imgsEl = el.querySelector<HTMLElement>('.reader-images')!
+  const toolbarEl = el.querySelector<HTMLElement>('.reader-toolbar')!
   el.querySelector('.back-btn')!.addEventListener('click', () => history.back())
 
   let images: string[] = []
@@ -28,14 +29,16 @@ export function readerPage(params: Record<string, string>): HTMLElement {
   let coverUrl = ''
   let currentIndex = 0
   let saveTimer: number | undefined
-  let isRestoring = true
+  let restoring = true      // 进度恢复完成前，滚动事件不许覆盖页码
+  let suppressScroll = false
+  let restoreCancelled = false
 
   void (async () => {
-    if (!window.pywebview?.api) {
-      imgsEl.innerHTML = '<p class="empty-hint">pywebview api 未就绪</p>'
-      return
-    }
     try {
+      if (!window.pywebview?.api) {
+        imgsEl.innerHTML = '<p class="empty-hint">pywebview api 未就绪</p>'
+        return
+      }
       // 章节图片 + 上次进度并行拿；标题封面给 save_progress 用（详情有 24h 缓存，开销小）
       const [ch, startIndex, album] = await Promise.all([
         window.pywebview.api.get_chapter(photoId),
@@ -49,11 +52,14 @@ export function readerPage(params: Record<string, string>): HTMLElement {
       }
       titleEl.textContent = title || `章节 ${photoId}`
       renderImages()
-      currentIndex = Math.min(startIndex, Math.max(0, images.length - 1))
+      currentIndex = Math.min(Math.max(0, startIndex), Math.max(0, images.length - 1))
       updatePageLabel()
-      requestAnimationFrame(() => scrollToIndex(currentIndex))
+      // 必须等图片把高度撑起来之后再滚，否则 scrollIntoView 会被夹在顶部
+      await restoreScroll()
     } catch (err) {
       imgsEl.innerHTML = `<p class="empty-hint">加载失败: ${String(err)}</p>`
+    } finally {
+      restoring = false
     }
   })()
 
@@ -84,25 +90,33 @@ export function readerPage(params: Record<string, string>): HTMLElement {
 
   function scrollToIndex(i: number): void {
     const target = imgsEl.children[i] as HTMLElement | undefined
-    target?.scrollIntoView({ block: 'start' })
+    if (!target) return
+    suppressScroll = true
+    // 工具栏是 sticky 的，不把它的高度让出来，目标页顶部会被压在工具栏下面
+    target.style.scrollMarginTop = `${toolbarEl.offsetHeight}px`
+    target.scrollIntoView({ block: 'start' })
+    requestAnimationFrame(() => {
+        requestAnimationFrame(() => { suppressScroll = false })
+    })
   }
-  // 替换原来的 requestAnimationFrame(() => scrollToIndex(currentIndex))
-void restoreScroll()
-
-async function restoreScroll(): Promise<void> {
-  try{
-    if (currentIndex === 0) return
+  /**
+   * 恢复上次进度。要等 target 之前的图都拿到高度再滚：整页还没被图片撑开时
+   * scrollIntoView 会被夹在顶部，症状就是"每次进来都回到第 1 页"。
+   * 由上面的 IIFE 在拿到 startIndex 之后 await 调用；期间 restoring 保持 true。
+   */
+  async function restoreScroll(): Promise<void> {
+    if (currentIndex <= 0) return   // 本来就是第 1 页，不用滚
     const ahead = [...imgsEl.querySelectorAll('img')].slice(0, currentIndex + 1)
-    const timeout = new Promise((r) => setTimeout(r, 8000))
-     await Promise.race([
-        Promise.allSettled(ahead.map((i) => i.decode().catch(() => {}))),
-        timeout,
-    ])
+    const deadline = Date.now() + 20000
+    while (Date.now() < deadline && !restoreCancelled) {
+      if (ahead.every((img) => img.complete && img.naturalHeight > 0)) break
+      await new Promise((r) => setTimeout(r, 200))
+    }
+    if (restoreCancelled) return     // 用户自己滚了，别抢他的位置
     scrollToIndex(currentIndex)
-}finally{
-    isRestoring = false
-}
-}
+    // 等自己这次滚动的事件派发完，再放开 restoring
+    await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(() => r(null))))
+  }
 
 
   function updatePageLabel(): void {
@@ -124,25 +138,31 @@ async function restoreScroll(): Promise<void> {
     scheduleSave()
   }
 
-  function currentVisibleIndex(): number {
-    const mid = window.innerHeight / 2
-    const imgs = imgsEl.querySelectorAll('img')
-    let candidate = currentIndex
-    for (let i = 0; i < imgs.length; i++) {
-        const r = imgs[i].getBoundingClientRect()
-        if (r.top < mid && r.bottom > mid) return i  // 真正压住中线的那张
-        if (r.top < mid) candidate = i
-    }
-    return Math.max(0, imgs.length - 1)
+function currentVisibleIndex(): number {
+  const mid = window.innerHeight / 2
+  const imgs = imgsEl.querySelectorAll('img')
+  let candidate = currentIndex
+  for (let i = 0; i < imgs.length; i++) {
+    const r = imgs[i].getBoundingClientRect()
+    if (r.height === 0) continue        // 没加载出来，不参与计算
+    if (r.top < mid && r.bottom > mid) return i
+    if (r.bottom <= mid) candidate = i  // 中线上方最后一张有高度的
   }
-
+  return candidate
+}
   // 滚动时更新页码 + 节流保存；页面被路由移除后自动解绑
   const onScroll = () => {
     if (!document.contains(el)) {
         window.removeEventListener('scroll', onScroll)
         return
     }
-    if (isRestoring) return
+    if (suppressScroll) return
+    if (restoring) {
+      // 图片还没撑开时按可见位置算出来必然是 0，不能用它覆盖页码；
+      // 这次事件要么是 scrollIntoView 漏出来的，要么是用户提前滚了 —— 放弃这次恢复
+      restoreCancelled = true
+      restoring = false
+    }
     const i = currentVisibleIndex()
     if (i !== currentIndex) {
       currentIndex = i
@@ -178,6 +198,9 @@ async function restoreScroll(): Promise<void> {
 
   // 切走/关闭页面时存一次
   const onHide = () => {
+    // 进度还没恢复出来就关窗口/切路由时，currentIndex 还是初始的 0，
+    // 这一存就把库里的真实进度抹成第 1 页了
+    if (restoring) return
     void window.pywebview?.api?.save_progress(albumId, photoId, currentIndex, title, coverUrl)
   }
   window.addEventListener('pagehide', onHide)
