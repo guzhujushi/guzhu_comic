@@ -4,8 +4,11 @@ interface AlbumSummary {
   cover_url?: string
 }
 
+type RankRange = "day" | "week" | "month"
+
 interface PyApi {
   search(keyword: string): Promise<AlbumSummary[]>
+  get_ranking(time_range: str, page?: number): Promis<AlbumSummary[]>
 }
 
 interface PyWebview {
