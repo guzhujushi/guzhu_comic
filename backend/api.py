@@ -1,6 +1,7 @@
 import json
 import sqlite3
 import time
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 import threading
 from functools import partial
@@ -20,6 +21,8 @@ DB_PATH = APP_DIR / "app.db"
 
 RANKING_TTL = 3600  # 排行榜缓存 1 小时
 SEARCH_TTL = 3600  
+PHOTO_TTL = 86400   # 章节图列表缓存 1 天（同一个 photo_id 的图片列表不会变）
+DL_WORKERS = 8      # 图片后台下载的并发线程数（jmcomic 自己的下载器也是多线程共用一个 client）
 
 # 前端传 "day"/"week"/"month"，这里映射到 jmcomic 常量
 _TIME_MAP = {
@@ -45,7 +48,10 @@ class API:
         (APP_DIR / "cache" / "images").mkdir(parents=True, exist_ok=True)
         self._init_db()
         self.img_base = self._start_img_server()
-        self._dl_lock = threading.Lock()
+        # 一个章节同时只允许一个下载批次：两批一起下会抢同一个 .part 文件
+        # （这个锁只保护下面那个登记表，不串行化下载本身）
+        self._dl_batch_lock = threading.Lock()
+        self._dl_photo_ids: set[str] = set()
 
     def _init_db(self) -> None:
         with sqlite3.connect(DB_PATH) as conn:
@@ -215,37 +221,92 @@ class API:
         return f"http://127.0.0.1:{port}"
 
     def get_chapter(self, photo_id: str) -> dict:
-        """返回 {"photo_id", "images"}；缺失图片后台下载，前端按需重试"""
+        """
+        返回 {"photo_id", "images"}。
+        只缓存图片文件名列表，URL 每次用当前 img_base 拼（图服务的端口每次启动都变，
+        缓存整个 URL 下次启动就全指向旧端口了）；缺的图交给后台线程并发下载，
+        前端按需重试。
+        """
         photo_id = str(photo_id).strip()
         img_dir = APP_DIR / "cache" / "images" / photo_id
         img_dir.mkdir(parents=True, exist_ok=True)
+
+        key = f"photo:{photo_id}"
+        files: list[str] | None = self._cache_get(key, PHOTO_TTL)
+
+        if files is None:
+            try:
+                photo = self.client.get_photo_detail(photo_id)
+            except Exception as e:
+                raise RuntimeError(f"章节获取失败: {e}") from e
+            files = [img.filename for img in photo]
+            self._cache_set(key, files)
+            missing = [
+                (img, img_dir / img.filename)
+                for img in photo
+                if not (img_dir / img.filename).exists()
+            ]
+            if missing:
+                self._spawn_download(photo_id, missing)
+        elif any(not (img_dir / name).exists() for name in files):
+            # 列表命中缓存、图还没下全：把取详情那次网络请求也挪到后台，别拖慢这次返回
+            self._spawn_download(photo_id, None)
+
+        return {
+            "photo_id": photo_id,
+            "images": [f"{self.img_base}/images/{photo_id}/{name}" for name in files],
+        }
+
+    def _spawn_download(self, photo_id: str, jobs: list[tuple] | None) -> None:
+        """
+        起一个后台下载批次。jobs 为 None 表示"图列表来自缓存，详情要去网络取"。
+        同一章节已在下载中就直接返回，避免两批抢同一个 .part 文件。
+        """
+        with self._dl_batch_lock:
+            if photo_id in self._dl_photo_ids:
+                return
+            self._dl_photo_ids.add(photo_id)
+        threading.Thread(target=self._run_download, args=(photo_id, jobs), daemon=True).start()
+
+    def _run_download(self, photo_id: str, jobs: list[tuple] | None) -> None:
         try:
-            photo = self.client.get_photo_detail(photo_id)
-        except Exception as e:
-            raise RuntimeError(f"章节获取失败: {e}") from e
-        images: list[str] = []
-        missing: list[tuple] = []
-        for img in photo:
-            path = img_dir / img.filename
-            images.append(f"{self.img_base}/images/{photo_id}/{img.filename}")
-            if not path.exists():
-                missing.append((img, path))
-        if missing:
-            threading.Thread(target=self._download_images, args=(missing,), daemon=True).start()
-        return {"photo_id": photo_id, "images": images}
+            if jobs is None:
+                img_dir = APP_DIR / "cache" / "images" / photo_id
+                try:
+                    photo = self.client.get_photo_detail(photo_id)
+                except Exception:
+                    return  # 网络不通就留着下次进章节再补
+                jobs = [
+                    (img, img_dir / img.filename)
+                    for img in photo
+                    if not (img_dir / img.filename).exists()
+                ]
+            self._download_images(jobs)
+        finally:
+            with self._dl_batch_lock:
+                self._dl_photo_ids.discard(photo_id)
 
     def _download_images(self, jobs: list[tuple]) -> None:
-        """后台下载；先写 .part 再改名，中断不留坏文件"""
-        for img, path in jobs:
-            if path.exists():
-                continue
-            tmp = path.with_suffix(path.suffix + ".part")
-            try:
-                with self._dl_lock:
-                    self.client.download_by_image_detail(img, str(tmp))
-                tmp.rename(path)
-            except Exception:
-                tmp.unlink(missing_ok=True)
+        """并发下载；每张图先写 .part 再改名，中断不留坏文件"""
+        jobs = [(img, path) for img, path in jobs if not path.exists()]
+        if not jobs:
+            return
+        with ThreadPoolExecutor(max_workers=DL_WORKERS) as pool:
+            list(pool.map(self._download_one, jobs))
+
+    def _download_one(self, job: tuple) -> None:
+        img, path = job
+        if path.exists():
+            return
+        # 临时名必须保留真实后缀（00028.part.webp）：jmcomic 是按输出后缀决定编码格式的，
+        # 命名成 00028.webp.part 会直接抛 ValueError: unknown file extension: .part，
+        # 再被下面的 except 吞掉 —— 之前所有图都下不下来就是这个原因。
+        tmp = path.with_name(f"{path.stem}.part{path.suffix}")
+        try:
+            self.client.download_by_image_detail(img, str(tmp))
+            tmp.rename(path)
+        except Exception:
+            tmp.unlink(missing_ok=True)
 
     def save_progress(self, album_id: str, photo_id: str, page_index: int,
                     title: str = "", cover_url: str = "") -> None:

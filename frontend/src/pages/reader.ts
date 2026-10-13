@@ -35,8 +35,17 @@ export function readerPage(params: Record<string, string>): HTMLElement {
   let coverUrl = ''
   let currentIndex = 0
   let progressReady = false   // 上次进度读出来之前，currentIndex 是无意义的 0
-  let suppressScroll = false
   let restoreCancelled = false
+  let restoring = false       // 正在滚回上次那页，这期间的页码只是过渡值
+  // 我们自己滚到的位置：scroll 事件里拿它比对，用来区分"我们滚的"和"用户滚的"
+  let ownScrollY: number | null = null
+  // 上面的图到货把版面撑开时，浏览器会自己修正滚动位置并派发一次 scroll 事件。
+  // 这两个时间戳用来把"版面变化顺带滚的"和"用户真的在滚"分开。
+  let lastLayoutChangeAt = 0
+  let userInputAt = 0
+  const noteUserInput = () => { userInputAt = performance.now() }
+  window.addEventListener('wheel', noteUserInput, { passive: true })
+  window.addEventListener('touchmove', noteUserInput, { passive: true })
 
   // 整页还没被图片撑开时，滚动位置会被浏览器夹回顶部，算出来的页码没有意义
   function pageScrollable(): boolean {
@@ -101,31 +110,45 @@ export function readerPage(params: Record<string, string>): HTMLElement {
   function scrollToIndex(i: number): void {
     const target = imgsEl.children[i] as HTMLElement | undefined
     if (!target) return
-    suppressScroll = true
     // 工具栏是 sticky 的，不把它的高度让出来，目标页顶部会被压在工具栏下面
     target.style.scrollMarginTop = `${toolbarEl.offsetHeight}px`
     target.scrollIntoView({ block: 'start' })
-    requestAnimationFrame(() => {
-        requestAnimationFrame(() => { suppressScroll = false })
-    })
+    ownScrollY = window.scrollY   // 这次的 scroll 事件不该被当成用户滚动
   }
+  /** 元素在文档里的纵向位置（跟 offsetParent 是谁无关） */
+  function docTop(el: HTMLElement): number {
+    return el.getBoundingClientRect().top + window.scrollY
+  }
+
   /**
-   * 恢复上次进度。要等 target 之前的图都拿到高度再滚：整页还没被图片撑开时
-   * scrollIntoView 会被夹在顶部，症状就是"每次进来都回到第 1 页"。
-   * 由上面的 IIFE 在拿到 startIndex 之后 await 调用；期间 restoring 保持 true。
+   * 恢复上次进度。target 之前的图必须先拿到高度，否则目标页的位置是错的
+   * （整页被撑开前 scrollIntoView 会被夹在顶部，症状就是"每次进来都回到第 1 页"）。
+   * 但不能傻等：图还在后台下的时候前面的图迟迟不来，用户就对着第 1 页干等好几秒。
+   * 所以先立刻滚一次，之后每当前面的图到货、版面变高，就把目标页重新钉回原位，
+   * 直到目标之前的图全部就位、用户自己滚了、或等够 20s（恢复期间 restoring 为 true）。
    */
   async function restoreScroll(): Promise<void> {
     if (currentIndex <= 0) return   // 本来就是第 1 页，不用滚
-    const ahead = [...imgsEl.querySelectorAll('img')].slice(0, currentIndex + 1)
-    const deadline = Date.now() + 8000
-    while (Date.now() < deadline && !restoreCancelled) {
-      if (ahead.every((img) => img.complete && img.naturalHeight > 0)) break
-      await new Promise((r) => setTimeout(r, 200))
+    restoring = true
+    try {
+      const deadline = Date.now() + 20000
+      let lastTop = Number.NaN
+      while (!restoreCancelled && Date.now() < deadline) {
+        const target = imgsEl.children[currentIndex] as HTMLElement | undefined
+        if (!target) return
+        const top = Math.round(docTop(target))
+        if (top !== lastTop) {
+          lastTop = top
+          lastLayoutChangeAt = performance.now()
+          scrollToIndex(currentIndex)
+        }
+        const ahead = [...imgsEl.querySelectorAll('img')].slice(0, currentIndex + 1)
+        if (ahead.every((img) => img.complete && img.naturalHeight > 0)) return
+        await new Promise((r) => setTimeout(r, 100))
+      }
+    } finally {
+      restoring = false
     }
-    if (restoreCancelled) return     // 用户自己滚了，别抢他的位置
-    scrollToIndex(currentIndex)
-    // 等自己这次滚动的事件派发完，再放开 restoring
-    await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(() => r(null))))
   }
 
 
@@ -138,13 +161,17 @@ export function readerPage(params: Record<string, string>): HTMLElement {
    * 关窗口太快时，"1s 防抖"和 pagehide 里那次异步桥调用都来不及落库。
    */
   function saveProgress(): void {
-    if (!progressReady) return   // 进度还没读出来时 currentIndex 还是 0，存下去就把库里的值抹了
+    // 进度还没读出来时 currentIndex 还是 0；恢复过程中页码只是过渡值。
+    // 这两种情况存下去都会把库里的真实进度抹掉（缺图时尤其明显：恢复到一半的页码
+    // 会被当成新进度写进库）。
+    if (!progressReady || restoring) return
     void window.pywebview?.api?.save_progress(albumId, photoId, currentIndex, title, coverUrl)
   }
 
   function goTo(i: number): void {
     if (!images.length) return
     restoreCancelled = true   // 用户主动翻页，别再把他拽回"上次那一页"
+    restoring = false
     currentIndex = Math.max(0, Math.min(images.length - 1, i))
     scrollToIndex(currentIndex)
     updatePageLabel()
@@ -170,14 +197,20 @@ function currentVisibleIndex(): number {
         return
     }
     // 以下三种 scroll 事件一律不算数：
-    //   1. suppressScroll：我们自己 scrollIntoView 触发的；
+    //   1. 我们自己滚出来的位置（scrollIntoView 恢复进度、键盘/点击翻页）；
     //   2. 进度还没从库里读出来：此刻 currentIndex 是初始的 0；
     //   3. 整页还没被图片撑开：滚动位置会被浏览器夹回顶部，算出来必然第 1 页
     //      —— 这就是"每次进章节都从第 1 页开始"的根因（路由换页时 #app 被清空、
     //      文档变矮、滚动被夹回，浏览器就会发这么一次事件）。
     // 反过来，只要页面已经能滚，用户的滚动就算数：立刻更新页码并落库。
-    if (suppressScroll || !progressReady || !pageScrollable()) return
+    if (ownScrollY !== null && Math.abs(window.scrollY - ownScrollY) < 4) return
+    // 排版刚被上面的图撑开过 -> 这次多半是浏览器顺带修正的位置，不是用户在滚；
+    // 反之，版面没动而位置变了（拖滚动条）就是用户自己在滚。
+    const now = performance.now()
+    const userDriven = now - userInputAt < 400 || now - lastLayoutChangeAt > 300
+    if (!progressReady || !pageScrollable() || !userDriven) return
     restoreCancelled = true   // 页面能滚了说明用户自己在动，放弃还没执行的恢复
+    restoring = false         // 恢复过程就此结束，之后算出来的才是用户的真实进度
     const i = currentVisibleIndex()
     if (i !== currentIndex) {
       currentIndex = i
@@ -222,6 +255,8 @@ function currentVisibleIndex(): number {
     window.removeEventListener('scroll', onScroll)
     window.removeEventListener('keydown', onKey)
     window.removeEventListener('pagehide', onHide)
+    window.removeEventListener('wheel', noteUserInput)
+    window.removeEventListener('touchmove', noteUserInput)
   })
 
   return el
