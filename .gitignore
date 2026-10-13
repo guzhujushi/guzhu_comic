@@ -1,3 +1,28 @@
-/backend/__pycache__/
-scripts/
-tmp/
+# Python 缓存与构建产物
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+
+# 虚拟环境与密钥
+.venv/
+venv/
+.env
+
+# 测试与类型检查缓存
+.pytest_cache/
+.mypy_cache/
+
+# 本地运行时文件（万一哪天落在仓库目录里）
+*.log
+*.db
+*.sqlite3
+
+# OS
+.DS_Store
+Thumbs.db
+
+# 编辑器
+.vscode/
+.idea/
