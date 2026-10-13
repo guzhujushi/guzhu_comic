@@ -9,6 +9,7 @@ type RankRange = "day" | "week" | "month"
 interface PyApi {
   search(keyword: string): Promise<AlbumSummary[]>
   get_ranking(time_range: str, page?: number): Promis<AlbumSummary[]>
+  clear_cache(): Promise<{ meta_rows: number; cover_files: number }>
 }
 
 interface PyWebview {
