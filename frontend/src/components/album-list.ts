@@ -1,10 +1,14 @@
 import { AlbumCard } from './album.js'
 import type { AlbumSummary } from '../types.js'
 
-export function renderAlbumList(albums: AlbumSummary[], container: HTMLElement): void {
+export function renderAlbumList(
+  albums: AlbumSummary[],
+  container: HTMLElement,
+  emptyHint = '这里什么都没有，换个条件试试',
+): void {
   container.innerHTML = ''
   if (albums.length === 0) {
-    container.innerHTML = '<p class="empty-hint">这里什么都没有，换个条件试试</p>'
+    container.innerHTML = `<p class="empty-hint">${emptyHint}</p>`
     return
   }
   for (const item of albums) {

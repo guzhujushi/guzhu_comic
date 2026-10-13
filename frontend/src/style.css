@@ -94,3 +94,142 @@ album-card { cursor: pointer; }
 }
 .reader-title { flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .reader-images img { display: block; width: 100%; }
+
+/* 顶部导航 */
+#nav {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 10px 16px;
+  background: #1a1a1a;
+  border-bottom: 1px solid #262626;
+}
+
+#nav a {
+  color: #b9b9b9;
+  text-decoration: none;
+  padding: 6px 12px;
+  border-radius: 6px;
+  font-size: 14px;
+}
+
+#nav a:hover {
+  background: #262626;
+  color: #fff;
+}
+
+/* 页面内容统一留点边距（以前标题是贴着窗口边的） */
+#app {
+  padding: 8px 16px 40px;
+}
+
+/* 详情页：开始阅读 / 继续阅读 */
+.read-btn {
+  display: block;
+  width: 100%;
+  margin: 16px 0;
+  padding: 12px;
+  font-size: 15px;
+}
+
+.chapter-item.last-read {
+  outline: 1px solid #3b82f6;
+}
+
+/* 卡片下面那行小字，比如最近阅读的"读到第 61 页" */
+album-card .album-sub {
+  display: block;
+  color: #9a9a9a;
+  font-size: 12px;
+  margin-top: 2px;
+}
+
+/* 设置页 */
+.settings-note {
+  color: #9a9a9a;
+  font-size: 13px;
+}
+
+.settings-form fieldset {
+  border: 1px solid #2c2c2c;
+  border-radius: 8px;
+  padding: 8px 16px 14px;
+  margin: 0 0 16px;
+}
+
+.settings-form legend {
+  color: #9a9a9a;
+  font-size: 13px;
+  padding: 0 6px;
+}
+
+.settings-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 0;
+  flex-wrap: wrap;
+}
+
+.settings-row > label {
+  flex: none;
+  width: 220px;
+  color: #d0d0d0;
+  font-size: 14px;
+}
+
+.settings-row input[type="text"] {
+  flex: none;
+  width: 240px;
+}
+
+.settings-row input[type="number"] {
+  flex: none;
+  width: 120px;
+}
+
+.settings-row input[type="checkbox"] {
+  flex: none;
+  width: 18px;
+  height: 18px;
+  accent-color: #3b82f6;
+}
+
+.field-hint {
+  color: #7d7d7d;
+  font-size: 12px;
+}
+
+.restart-tag {
+  color: #e0a33e;
+  font-size: 12px;
+  border: 1px solid #5a4520;
+  border-radius: 4px;
+  padding: 0 4px;
+}
+
+.settings-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.settings-status {
+  color: #8fbf7f;
+  font-size: 13px;
+}
+
+/* 最近阅读 */
+.history-page .album-list {
+  margin-top: 8px;
+}
+.cache-usage {
+  color: #9a9a9a;
+  font-size: 13px;
+  margin: 0 0 12px;
+}
+
+.cache-usage.over {
+  color: #e0a33e;
+}

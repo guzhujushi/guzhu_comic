@@ -1,4 +1,5 @@
 import { onUnmount } from '../router.js'
+import { loadSettings } from '../settings.js'
 
 export function readerPage(params: Record<string, string>): HTMLElement {
   const el = document.createElement('div')
@@ -35,6 +36,7 @@ export function readerPage(params: Record<string, string>): HTMLElement {
   let coverUrl = ''
   let currentIndex = 0
   let progressReady = false   // 上次进度读出来之前，currentIndex 是无意义的 0
+  let clickToPage = true      // 点击左右两侧翻页，设置里可以关掉
   let restoreCancelled = false
   let restoring = false       // 正在滚回上次那页，这期间的页码只是过渡值
   // 我们自己滚到的位置：scroll 事件里拿它比对，用来区分"我们滚的"和"用户滚的"
@@ -58,20 +60,24 @@ export function readerPage(params: Record<string, string>): HTMLElement {
         imgsEl.innerHTML = '<p class="empty-hint">pywebview api 未就绪</p>'
         return
       }
-      // 章节图片 + 上次进度并行拿；标题封面给 save_progress 用（详情有 24h 缓存，开销小）
-      const [ch, startIndex, album] = await Promise.all([
+      // 章节图片 + 上次进度 + 配置并行拿；标题封面给 save_progress 用（详情有 24h 缓存，开销小）
+      const [ch, startIndex, album, settings] = await Promise.all([
         window.pywebview.api.get_chapter(photoId),
         window.pywebview.api.get_progress(albumId, photoId),
         albumId ? window.pywebview.api.get_album_detail(albumId).catch(() => null) : Promise.resolve(null),
+        loadSettings(),
       ])
       images = ch.images
+      clickToPage = settings.reader.click_to_page
       if (album) {
         title = album.title
         coverUrl = album.cover_url
       }
       titleEl.textContent = title || `章节 ${photoId}`
       renderImages()
-      currentIndex = Math.min(Math.max(0, startIndex), Math.max(0, images.length - 1))
+      // 设置里关掉"自动回到上次那一页"就从第 1 页开始
+      const start = settings.reader.restore_progress ? startIndex : 0
+      currentIndex = Math.min(Math.max(0, start), Math.max(0, images.length - 1))
       progressReady = true
       updatePageLabel()
       // 必须等图片把高度撑起来之后再滚，否则 scrollIntoView 会被夹在顶部
@@ -237,8 +243,9 @@ function currentVisibleIndex(): number {
   }
   window.addEventListener('keydown', onKey)
 
-  // 点击左右 30% 区域翻页，中间不动
+  // 点击左右 30% 区域翻页，中间不动（设置里可以关）
   imgsEl.addEventListener('click', (e) => {
+    if (!clickToPage) return
     const x = e.clientX / window.innerWidth
     if (x < 0.3) goTo(currentIndex - 1)
     else if (x > 0.7) goTo(currentIndex + 1)

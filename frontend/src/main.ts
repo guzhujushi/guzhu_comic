@@ -5,6 +5,8 @@ import { searchPage } from './pages/search.js'
 import { waitForPywebview } from './webstatus.js'
 import { albumPage } from './pages/detail.js'
 import { readerPage } from './pages/reader.js'
+import { historyPage } from './pages/history.js'
+import { settingsPage } from './pages/settings.js'
 
 // 注册路由
 registerRoute('/popular', popularPage)
@@ -15,9 +17,13 @@ const nav = document.querySelector<HTMLElement>('#nav')!
 nav.innerHTML = `
   <a href="#/popular">热门</a>
   <a href="#/search">搜索</a>
+  <a href="#/history">最近阅读</a>
+  <a href="#/settings">设置</a>
 `
 registerRoute('/album', albumPage)
 registerRoute('/read', readerPage)
+registerRoute('/history', historyPage)
+registerRoute('/settings', settingsPage)
 
 // 先等 pywebview 把 JS 桥注入好再开路由：否则首页会先闪一下"pywebview api 未就绪"
 try {

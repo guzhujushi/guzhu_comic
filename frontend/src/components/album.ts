@@ -6,6 +6,7 @@ export class AlbumCard extends HTMLElement {
     this.innerHTML = `
       <img alt="" />
       <p></p>
+      <span class="album-sub" hidden></span>
     `
   }
 
@@ -15,6 +16,9 @@ export class AlbumCard extends HTMLElement {
     img.src = data.cover_url ?? 'placeholder.png'
     img.alt = data.title
     p.textContent = data.title
+    const sub = this.querySelector<HTMLElement>('.album-sub')!
+    sub.textContent = data.subtitle ?? ''
+    sub.hidden = !data.subtitle
   }
 }
 

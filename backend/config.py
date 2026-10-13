@@ -1,3 +1,5 @@
+"""config.yaml 的读写；缺失的键用 DEFAULT_CONFIG 补齐。"""
+import copy
 from pathlib import Path
 from typing import Any
 
@@ -5,6 +7,68 @@ import yaml
 
 CONFIG_PATH = Path(__file__).resolve().parent.parent / "config.yaml"
 
+DEFAULT_CONFIG: dict[str, Any] = {
+    "window": {
+        "title": "Guzhu Comic",
+        "width": 1200,
+        "height": 800,
+        "min_size": [800, 600],
+    },
+    "dev": {
+        "url": "http://localhost:5173",
+        "debug": True,
+    },
+    "reader": {
+        "restore_progress": True,
+        "click_to_page": True,
+    },
+    "download": {
+        "workers": 8,
+    },
+    "cache": {
+        "photo_ttl": 86400,
+        "album_ttl": 86400,
+        "search_ttl": 3600,
+        "ranking_ttl": 3600,
+        "max_size_mb": 2048,
+        "cleanup_interval": 600,
+    },
+}
+
+
+def _merged(base: Any, override: Any) -> Any:
+    """逐层合并，override 优先"""
+    if isinstance(base, dict) and isinstance(override, dict):
+        out = copy.deepcopy(base)
+        for key, value in override.items():
+            out[key] = _merged(out[key], value) if key in out else copy.deepcopy(value)
+        return out
+    return copy.deepcopy(base if override is None else override)
+
+
+class _ConfigDumper(yaml.SafeDumper):
+    """映射写块状，一维短列表（min_size）留一行"""
+    pass
+
+
+def _represent_list(dumper: yaml.SafeDumper, data: list) -> yaml.Node:
+    flow = all(not isinstance(v, (list, dict)) for v in data)
+    return dumper.represent_sequence("tag:yaml.org,2002:seq", data, flow_style=flow)
+
+
+_ConfigDumper.add_representer(list, _represent_list)
+
+
 def load_config() -> dict[str, Any]:
-    with CONFIG_PATH.open(encoding="utf-8") as f:
-        return yaml.safe_load(f)
+    """读 config.yaml，缺的键补默认值"""
+    raw: Any = {}
+    if CONFIG_PATH.exists():
+        with CONFIG_PATH.open(encoding="utf-8") as f:
+            raw = yaml.safe_load(f)
+    return _merged(DEFAULT_CONFIG, raw)
+
+
+def save_config(config: dict[str, Any]) -> None:
+    """整份写回 config.yaml"""
+    with CONFIG_PATH.open("w", encoding="utf-8", newline="\r\n") as f:
+        yaml.dump(config, f, Dumper=_ConfigDumper, allow_unicode=True, sort_keys=False, default_flow_style=False)

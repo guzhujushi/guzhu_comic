@@ -22,6 +22,8 @@ export interface AlbumSummary {
   id: string
   title: string
   cover_url?: string
+  /** 卡片下面那行小字，比如"读到第 61 页" */
+  subtitle?: string
 }
 
 export interface ChapterImages {
@@ -36,4 +38,11 @@ export interface HistoryItem {
   title: string
   cover_url: string
   updated_at: number
+}
+
+/** 某部漫画最近读到哪一话哪一页（详情页判断"开始阅读"/"继续阅读"用） */
+export interface AlbumProgress {
+  photo_id: string
+  page_index: number
+  title: string
 }

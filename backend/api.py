@@ -1,11 +1,33 @@
 import json
+import shutil
 import sqlite3
+from typing import Any
 import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 import threading
 from functools import partial
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
+
+
+def _cfg_int(value: Any, default: int, lo: int, hi: int) -> int:
+    """配置里的整数，非法就退回默认"""
+    try:
+        n = int(float(value))
+    except (TypeError, ValueError):
+        return default
+    return max(lo, min(hi, n))
+
+
+def _setting_int(value: Any, lo: int, hi: int, name: str) -> int:
+    """设置页提交的整数，非法直接报错"""
+    try:
+        n = int(float(value))
+    except (TypeError, ValueError):
+        raise ValueError(f"{name}要填数字") from None
+    if not (lo <= n <= hi):
+        raise ValueError(f"{name}要在 {lo}~{hi} 之间")
+    return n
 
 
 class _QuietHandler(SimpleHTTPRequestHandler):
@@ -15,14 +37,15 @@ class _QuietHandler(SimpleHTTPRequestHandler):
 
 from jmcomic import JmMagicConstants, JmOption, JmcomicText
 
-APP_DIR = Path.home() / ".jmreader"
-COVER_DIR = APP_DIR / "cache" / "covers"
-DB_PATH = APP_DIR / "app.db"
+from backend.config import load_config, save_config
 
-RANKING_TTL = 3600  # 排行榜缓存 1 小时
-SEARCH_TTL = 3600  
-PHOTO_TTL = 86400   # 章节图列表缓存 1 天（同一个 photo_id 的图片列表不会变）
-DL_WORKERS = 8      # 图片后台下载的并发线程数（jmcomic 自己的下载器也是多线程共用一个 client）
+APP_DIR = Path.home() / ".jmreader"
+# data/ 放再生不出来的用户数据，cache/ 放随时可删的缓存（受 cache.max_size_mb 约束）
+DATA_DIR = APP_DIR / "data"
+DATA_DB = DATA_DIR / "app.db"
+CACHE_DIR = APP_DIR / "cache"
+CACHE_DB = CACHE_DIR / "cache.db"
+IMG_DIR = CACHE_DIR / "images"
 
 # 前端传 "day"/"week"/"month"，这里映射到 jmcomic 常量
 _TIME_MAP = {
@@ -42,25 +65,43 @@ _CATEGORY_MAP = {
 
 class API:
     def __init__(self):
+        # 缓存时长 / 下载并发数都来自 config.yaml（设置页可改，重启窗口后生效）
+        cfg = load_config()
+        self._dl_workers = _cfg_int(cfg["download"]["workers"], 8, 1, 32)
+        self._photo_ttl = _cfg_int(cfg["cache"]["photo_ttl"], 86400, 0, 30 * 86400)
+        self._max_cache_mb = _cfg_int(cfg["cache"]["max_size_mb"], 2048, 0, 102400)
+        self._cleanup_interval = _cfg_int(cfg["cache"]["cleanup_interval"], 600, 30, 86400)
+        self._album_ttl = _cfg_int(cfg["cache"]["album_ttl"], 86400, 0, 30 * 86400)
+        self._search_ttl = _cfg_int(cfg["cache"]["search_ttl"], 3600, 0, 30 * 86400)
+        self._ranking_ttl = _cfg_int(cfg["cache"]["ranking_ttl"], 3600, 0, 30 * 86400)
+
         self.client = JmOption.default().new_jm_client()
-        APP_DIR.mkdir(parents=True, exist_ok=True)
-        COVER_DIR.mkdir(parents=True, exist_ok=True)
-        (APP_DIR / "cache" / "images").mkdir(parents=True, exist_ok=True)
         self._init_db()
         self.img_base = self._start_img_server()
+        self._last_photo_id = ""   # 最近打开的章节，清理缓存时留着别删
         # 一个章节同时只允许一个下载批次：两批一起下会抢同一个 .part 文件
         # （这个锁只保护下面那个登记表，不串行化下载本身）
         self._dl_batch_lock = threading.Lock()
         self._dl_photo_ids: set[str] = set()
+        threading.Thread(target=self._cache_loop, daemon=True).start()
 
     def _init_db(self) -> None:
-        with sqlite3.connect(DB_PATH) as conn:
-            conn.execute(
-                "CREATE TABLE IF NOT EXISTS meta_cache ("
-                "key TEXT PRIMARY KEY, "
-                "data_json TEXT NOT NULL, "
-                "fetched_at REAL NOT NULL)"
-            )
+        """建目录建库，并迁移老版本的单一 app.db"""
+        for folder in (DATA_DIR, CACHE_DIR, IMG_DIR):
+            folder.mkdir(parents=True, exist_ok=True)
+
+        legacy_db = APP_DIR / "app.db"   # 老版本只有一个库，和缓存混在一起
+        if legacy_db.exists() and not DATA_DB.exists():
+            try:
+                legacy_db.replace(DATA_DB)
+            except OSError:
+                shutil.copy2(legacy_db, DATA_DB)    # 搬不动就复制，别丢历史
+
+        legacy_covers = CACHE_DIR / "covers"
+        if legacy_covers.exists():
+            shutil.rmtree(legacy_covers, ignore_errors=True)   # 旧版本下过封面，现在用远程图
+
+        with sqlite3.connect(DATA_DB) as conn:
             conn.execute(
                 "CREATE TABLE IF NOT EXISTS history ("
                 "album_id TEXT NOT NULL, "
@@ -71,10 +112,36 @@ class API:
                 "updated_at REAL NOT NULL, "
                 "PRIMARY KEY (album_id, photo_id))"
             )
+        with sqlite3.connect(CACHE_DB) as conn:
+            conn.execute(
+                "CREATE TABLE IF NOT EXISTS meta_cache ("
+                "key TEXT PRIMARY KEY, "
+                "data_json TEXT NOT NULL, "
+                "fetched_at REAL NOT NULL)"
+            )
+        self._move_legacy_cache()
+
+    def _move_legacy_cache(self) -> None:
+        """把老库里的 meta_cache 表搬进 cache.db，然后删掉"""
+        with sqlite3.connect(DATA_DB) as conn:
+            exists = conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name='meta_cache'"
+            ).fetchone()
+            if exists is None:
+                return
+            rows = conn.execute("SELECT key, data_json, fetched_at FROM meta_cache").fetchall()
+            if rows:
+                with sqlite3.connect(CACHE_DB) as cache_conn:
+                    cache_conn.executemany(
+                        "INSERT OR REPLACE INTO meta_cache (key, data_json, fetched_at)"
+                        " VALUES (?, ?, ?)",
+                        rows,
+                    )
+            conn.execute("DROP TABLE meta_cache")
 
     def _cache_get(self, key: str, ttl: float) -> list | None:
         """命中且未过期返回数据，否则返回 None"""
-        with sqlite3.connect(DB_PATH) as conn:
+        with sqlite3.connect(CACHE_DB) as conn:
             row = conn.execute(
                 "SELECT data_json, fetched_at FROM meta_cache WHERE key = ?",
                 (key,),
@@ -87,22 +154,12 @@ class API:
         return json.loads(data_json)
 
     def _cache_set(self, key: str, data: list) -> None:
-        with sqlite3.connect(DB_PATH) as conn:
+        with sqlite3.connect(CACHE_DB) as conn:
             conn.execute(
                 "INSERT OR REPLACE INTO meta_cache (key, data_json, fetched_at)"
                 " VALUES (?, ?, ?)",
                 (key, json.dumps(data, ensure_ascii=False), time.time()),
             )
-
-    def _cover_path(self, album_id: str) -> str:
-        """返回封面本地路径；不存在则下载"""
-        path = COVER_DIR / f"{album_id}.jpg"
-        if not path.exists():
-            try:
-                self.client.download_album_cover(album_id, str(path))
-            except Exception:
-                return ""  # 单张封面失败不拖累整个列表，前端用占位图
-        return str(path)
 
     def search(self, keyword: str, page: int = 1) -> list[dict[str, str]]:
         """
@@ -112,7 +169,7 @@ class API:
         if not keyword:
             return []
         key = f"search:{keyword}:{page}"
-        cached = self._cache_get(key, SEARCH_TTL)
+        cached = self._cache_get(key, self._search_ttl)
         if cached is not None:
             return cached
         try:
@@ -140,7 +197,7 @@ class API:
         if category not in _CATEGORY_MAP:
             raise ValueError(f"未知分类: {category}")
         key = f"ranking:{time_range}:{category}:{page}"
-        cached = self._cache_get(key, RANKING_TTL)
+        cached = self._cache_get(key, self._ranking_ttl)
         if cached is not None:
             return cached
         try:
@@ -164,19 +221,121 @@ class API:
         return data
     
     def clear_cache(self) -> dict[str, int]:
-        """
-        清缓存：删 meta_cache 全表 + covers 目录下的文件
-        """
-        with sqlite3.connect(DB_PATH) as conn:
+        """清缓存：接口元数据 + 章节图；data/ 里的用户数据不动"""
+        with sqlite3.connect(CACHE_DB) as conn:
             n_rows = conn.execute("DELETE FROM meta_cache").rowcount
         n_files = 0
-        for f in COVER_DIR.glob("*"):
-            if f.is_file():
-                f.unlink()
-                n_files += 1
-        return {"meta_rows": n_rows, "cover_files": n_files}
+        for folder in IMG_DIR.glob("*"):
+            for f in folder.rglob("*"):
+                if not f.is_file():
+                    continue
+                try:
+                    f.unlink()
+                    n_files += 1
+                except OSError:
+                    pass    # 正被图服务读着的文件删不掉，留给下次清理
+        for folder in IMG_DIR.glob("*"):
+            if folder.is_dir():
+                try:
+                    folder.rmdir()
+                except OSError:
+                    pass
+        return {"meta_rows": n_rows, "cache_files": n_files}
 
-    ALBUM_TTL = 86400
+    def _dir_size(self, path: Path) -> int:
+        """目录里所有文件的总字节数"""
+        total = 0
+        for f in path.rglob("*"):
+            try:
+                if f.is_file():
+                    total += f.stat().st_size
+            except OSError:
+                pass
+        return total
+
+    def get_cache_stats(self) -> dict:
+        """缓存占用，设置页显示用"""
+        return {
+            "used_mb": round(self._dir_size(CACHE_DIR) / 1024 / 1024, 1),
+            "limit_mb": self._max_cache_mb,
+            "interval": self._cleanup_interval,
+            "chapters": sum(1 for d in IMG_DIR.glob("*") if d.is_dir()),
+        }
+
+    def _keep_photo_ids(self) -> tuple[set[str], set[str]]:
+        """返回 (绝对不删, 尽量别删)：正在下载/刚看的不删；最近读过的排在最后删"""
+        with self._dl_batch_lock:      # 清理线程和下载线程会同时碰它
+            always = set(self._dl_photo_ids)
+        if self._last_photo_id:
+            always.add(self._last_photo_id)
+        with sqlite3.connect(DATA_DB) as conn:
+            rows = conn.execute(
+                "SELECT photo_id FROM history ORDER BY updated_at DESC LIMIT 3"
+            ).fetchall()
+        return always, {row[0] for row in rows} - always
+
+    def cleanup_cache(self) -> dict:
+        """把缓存压回上限：从最久没看过的章节开始整话删"""
+        limit = self._max_cache_mb * 1024 * 1024
+        # 过期到任何 TTL 之外的接口缓存一并清掉
+        stale_before = time.time() - max(
+            self._photo_ttl, self._album_ttl, self._search_ttl, self._ranking_ttl
+        )
+        with sqlite3.connect(CACHE_DB) as conn:
+            conn.execute("DELETE FROM meta_cache WHERE fetched_at < ?", (stale_before,))
+
+        used = self._dir_size(CACHE_DIR)
+        result = {"used_mb": round(used / 1024 / 1024, 1), "removed_chapters": 0, "freed_mb": 0.0}
+        if limit <= 0 or used <= limit:
+            return result      # 0 = 不限
+
+        always_keep, prefer_keep = self._keep_photo_ids()
+        victims: list[tuple[bool, float, Path]] = []
+        for folder in IMG_DIR.glob("*"):
+            if not folder.is_dir() or folder.name in always_keep:
+                continue
+            mtimes = [f.stat().st_mtime for f in folder.glob("*") if f.is_file()]
+            # 最近读过的排后面，其余按最久没碰过排前面
+            victims.append((folder.name in prefer_keep, max(mtimes, default=0), folder))
+        victims.sort(key=lambda item: (item[0], item[1]))
+
+        freed = 0
+        target = int(limit * 0.9)
+        for _, _, folder in victims:
+            if used - freed <= target:
+                break
+            for f in folder.glob("*"):
+                if not f.is_file():
+                    continue
+                try:
+                    size = f.stat().st_size    # 先量再删
+                    f.unlink()
+                    freed += size
+                except OSError:
+                    pass
+            try:
+                folder.rmdir()
+            except OSError:
+                pass
+            result["removed_chapters"] += 1
+
+        result["freed_mb"] = round(freed / 1024 / 1024, 1)
+        result["used_mb"] = round((used - freed) / 1024 / 1024, 1)
+        return result
+
+    def _cache_loop(self) -> None:
+        """定时整理缓存（守护线程）"""
+        delay = min(self._cleanup_interval, 60)    # 启动后先看一次，别一开机就超限
+        while True:
+            time.sleep(delay)
+            delay = self._cleanup_interval
+            try:
+                res = self.cleanup_cache()
+                if res["removed_chapters"]:
+                    print(f"[cache] 清理 {res['removed_chapters']} 话，释放 {res['freed_mb']} MB，"
+                          f"现用 {res['used_mb']} MB")
+            except Exception as e:      # 清理失败别把线程弄死
+                print(f"[cache] 清理失败: {e}")
 
     def get_album_detail(self, album_id: str) -> dict:
         """
@@ -186,7 +345,7 @@ class API:
         """
         album_id = str(album_id).strip()
         key = f"album:{album_id}"
-        cached = self._cache_get(key, self.ALBUM_TTL)
+        cached = self._cache_get(key, self._album_ttl)
         if cached is not None:
             return cached
         try:
@@ -214,7 +373,7 @@ class API:
 
     def _start_img_server(self) -> str:
         """启动本地图片静态服务（只监听本机），返回 base url"""
-        handler = partial(_QuietHandler, directory=str(APP_DIR / "cache"))
+        handler = partial(_QuietHandler, directory=str(CACHE_DIR))
         server = ThreadingHTTPServer(("127.0.0.1", 0), handler)  # 端口 0 = 系统自动分配
         port = server.server_address[1]
         threading.Thread(target=server.serve_forever, daemon=True).start()
@@ -223,16 +382,15 @@ class API:
     def get_chapter(self, photo_id: str) -> dict:
         """
         返回 {"photo_id", "images"}。
-        只缓存图片文件名列表，URL 每次用当前 img_base 拼（图服务的端口每次启动都变，
-        缓存整个 URL 下次启动就全指向旧端口了）；缺的图交给后台线程并发下载，
-        前端按需重试。
+        只缓存文件名列表，URL 每次用当前 img_base 拼（图服务端口每次启动都变）。
         """
         photo_id = str(photo_id).strip()
-        img_dir = APP_DIR / "cache" / "images" / photo_id
+        self._last_photo_id = photo_id    # 正在看的这一话缓存里留着
+        img_dir = IMG_DIR / photo_id
         img_dir.mkdir(parents=True, exist_ok=True)
 
         key = f"photo:{photo_id}"
-        files: list[str] | None = self._cache_get(key, PHOTO_TTL)
+        files: list[str] | None = self._cache_get(key, self._photo_ttl)
 
         if files is None:
             try:
@@ -258,10 +416,7 @@ class API:
         }
 
     def _spawn_download(self, photo_id: str, jobs: list[tuple] | None) -> None:
-        """
-        起一个后台下载批次。jobs 为 None 表示"图列表来自缓存，详情要去网络取"。
-        同一章节已在下载中就直接返回，避免两批抢同一个 .part 文件。
-        """
+        """起一个后台下载批次；jobs 为 None 表示要去网络取图列表（同一章节只跑一批）"""
         with self._dl_batch_lock:
             if photo_id in self._dl_photo_ids:
                 return
@@ -271,7 +426,7 @@ class API:
     def _run_download(self, photo_id: str, jobs: list[tuple] | None) -> None:
         try:
             if jobs is None:
-                img_dir = APP_DIR / "cache" / "images" / photo_id
+                img_dir = IMG_DIR / photo_id
                 try:
                     photo = self.client.get_photo_detail(photo_id)
                 except Exception:
@@ -291,16 +446,14 @@ class API:
         jobs = [(img, path) for img, path in jobs if not path.exists()]
         if not jobs:
             return
-        with ThreadPoolExecutor(max_workers=DL_WORKERS) as pool:
+        with ThreadPoolExecutor(max_workers=self._dl_workers) as pool:
             list(pool.map(self._download_one, jobs))
 
     def _download_one(self, job: tuple) -> None:
         img, path = job
         if path.exists():
             return
-        # 临时名必须保留真实后缀（00028.part.webp）：jmcomic 是按输出后缀决定编码格式的，
-        # 命名成 00028.webp.part 会直接抛 ValueError: unknown file extension: .part，
-        # 再被下面的 except 吞掉 —— 之前所有图都下不下来就是这个原因。
+        # 临时名要保留真实后缀：jmcomic 按输出后缀定编码，用 .part 当后缀会直接抛错
         tmp = path.with_name(f"{path.stem}.part{path.suffix}")
         try:
             self.client.download_by_image_detail(img, str(tmp))
@@ -311,7 +464,7 @@ class API:
     def save_progress(self, album_id: str, photo_id: str, page_index: int,
                     title: str = "", cover_url: str = "") -> None:
         """保存阅读进度；title/cover_url 给首页"继续阅读"列表展示用"""
-        with sqlite3.connect(DB_PATH) as conn:
+        with sqlite3.connect(DATA_DB) as conn:
             conn.execute(
                 "INSERT OR REPLACE INTO history"
                 " (album_id, photo_id, page_index, title, cover_url, updated_at)"
@@ -322,7 +475,7 @@ class API:
 
     def get_progress(self, album_id: str, photo_id: str) -> int:
         """返回上次看到的页码（从 0 开始），没有记录返回 0"""
-        with sqlite3.connect(DB_PATH) as conn:
+        with sqlite3.connect(DATA_DB) as conn:
             row = conn.execute(
                 "SELECT page_index FROM history WHERE album_id=? AND photo_id=?",
                 (str(album_id), str(photo_id)),
@@ -331,7 +484,7 @@ class API:
 
     def get_history(self, limit: int = 10) -> list[dict]:
         """最近阅读，按更新时间倒序"""
-        with sqlite3.connect(DB_PATH) as conn:
+        with sqlite3.connect(DATA_DB) as conn:
             rows = conn.execute(
                 "SELECT album_id, photo_id, page_index, title, cover_url, updated_at"
                 " FROM history ORDER BY updated_at DESC LIMIT ?",
@@ -348,3 +501,80 @@ class API:
             }
             for r in rows
         ]
+
+    def get_album_progress(self, album_id: str) -> dict | None:
+        """这部漫画最近读到哪一话的哪一页；没读过返回 None"""
+        with sqlite3.connect(DATA_DB) as conn:
+            row = conn.execute(
+                "SELECT photo_id, page_index, title FROM history"
+                " WHERE album_id = ? ORDER BY updated_at DESC LIMIT 1",
+                (str(album_id),),
+            ).fetchone()
+        if row is None:
+            return None
+        return {"photo_id": row[0], "page_index": int(row[1]), "title": row[2]}
+
+    def get_settings(self) -> dict:
+        """当前配置（含默认值）"""
+        return load_config()
+
+    def save_settings(self, settings: dict) -> dict:
+        """保存设置到 config.yaml 并返回完整配置（重启生效的项由前端提示）"""
+        if not isinstance(settings, dict):
+            raise RuntimeError("保存失败：设置内容格式不对")
+        cfg = load_config()
+        try:
+            win = settings.get("window") or {}
+            if "title" in win:
+                title = str(win["title"]).strip()
+                if not title:
+                    raise ValueError("窗口标题不能为空")
+                cfg["window"]["title"] = title
+            if "width" in win:
+                cfg["window"]["width"] = _setting_int(win["width"], 400, 5000, "窗口宽度")
+            if "height" in win:
+                cfg["window"]["height"] = _setting_int(win["height"], 400, 5000, "窗口高度")
+            if "min_size" in win:
+                size = win["min_size"]
+                if not isinstance(size, (list, tuple)) or len(size) != 2:
+                    raise ValueError("最小尺寸要填两个数字（宽、高）")
+                cfg["window"]["min_size"] = [
+                    _setting_int(size[0], 200, 5000, "最小宽度"),
+                    _setting_int(size[1], 200, 5000, "最小高度"),
+                ]
+
+            dev = settings.get("dev") or {}
+            if "url" in dev:
+                url = str(dev["url"]).strip()
+                if not url.startswith(("http://", "https://", "file://")):
+                    raise ValueError("启动地址要以 http:// 或 https:// 或 file:// 开头")
+                cfg["dev"]["url"] = url
+            if "debug" in dev:
+                cfg["dev"]["debug"] = bool(dev["debug"])
+
+            reader = settings.get("reader") or {}
+            if "restore_progress" in reader:
+                cfg["reader"]["restore_progress"] = bool(reader["restore_progress"])
+            if "click_to_page" in reader:
+                cfg["reader"]["click_to_page"] = bool(reader["click_to_page"])
+
+            download = settings.get("download") or {}
+            if "workers" in download:
+                cfg["download"]["workers"] = _setting_int(download["workers"], 1, 32, "下载并发数")
+
+            cache = settings.get("cache") or {}
+            for key, label, lo, hi in (
+                ("photo_ttl", "章节图列表缓存时长", 0, 30 * 86400),
+                ("album_ttl", "漫画详情缓存时长", 0, 30 * 86400),
+                ("search_ttl", "搜索缓存时长", 0, 30 * 86400),
+                ("ranking_ttl", "榜单缓存时长", 0, 30 * 86400),
+                ("max_size_mb", "缓存上限", 0, 102400),
+                ("cleanup_interval", "定时清理间隔", 30, 86400),
+            ):
+                if key in cache:
+                    cfg["cache"][key] = _setting_int(cache[key], lo, hi, label)
+        except ValueError as e:
+            raise RuntimeError(f"保存失败：{e}") from e
+
+        save_config(cfg)
+        return cfg
