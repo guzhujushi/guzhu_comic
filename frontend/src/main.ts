@@ -15,6 +15,19 @@ const keywordInput = document.querySelector<HTMLInputElement>('#keyword')!
 const searchBtn = document.querySelector<HTMLButtonElement>('#search-btn')!
 const resultEl = document.querySelector<HTMLPreElement>('#result')!
 
+function renderAlbums(albums: AlbumSummary[], container: HTMLElement) {
+  container.innerHTML = albums
+    .map(
+      album => `
+        <div class="album-card">
+          <img src="${album.cover_url ?? 'placeholder.png'}" alt="${album.title}" width="100" />
+          <p>${album.title}</p>
+        </div>
+      `
+    )
+    .join('')
+}
+
 async function doSearch(): Promise<void> {
   const keyword = keywordInput.value.trim()
   if (!keyword) {
@@ -30,7 +43,7 @@ async function doSearch(): Promise<void> {
   try {
     resultEl.textContent = '搜索中...'
     const data = await window.pywebview.api.search(keyword)
-    resultEl.textContent = JSON.stringify(data, null, 2)
+    renderAlbums(data, resultEl)
   } catch (err) {
     resultEl.textContent = `搜索失败: ${String(err)}`
   }

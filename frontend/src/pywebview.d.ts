@@ -1,6 +1,7 @@
 interface AlbumSummary {
   id: string
   title: string
+  cover_url?: string
 }
 
 interface PyApi {
