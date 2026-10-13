@@ -34,6 +34,10 @@ const GROUPS: { title: string; fields: FieldDef[] }[] = [
     fields: [
       { path: 'reader.restore_progress', label: '自动回到上次那一页', type: 'bool' },
       { path: 'reader.click_to_page', label: '点击左右两侧翻页', type: 'bool', hint: '关掉后只能滚轮 / 方向键翻页' },
+      { path: 'reader.mode', label: '阅读模式', type: 'text', hint: 'webtoon = 连续滚动，single = 单页翻页（阅读器里改是立即生效）' },
+      { path: 'reader.background', label: '背景色', type: 'text', hint: 'dark / black / gray / light' },
+      { path: 'reader.page_gap', label: '页间距（像素）', type: 'number', min: 0, max: 64, hint: '只在连续滚动模式有效' },
+      { path: 'reader.auto_scroll', label: '自动滚屏速度（像素/秒）', type: 'number', min: 0, max: 1000, hint: '0 = 关；只在连续滚动模式有效' },
     ],
   },
   {
@@ -74,7 +78,10 @@ export function settingsPage(): HTMLElement {
   const el = document.createElement('div')
   el.className = 'settings-page'
   el.innerHTML = `
-    <h2>设置</h2>
+    <header class="page-head">
+      <h1 class="page-title">设置</h1>
+      <p class="page-sub">改完点「保存」写回 config.yaml</p>
+    </header>
     <p class="settings-note">保存后写进项目根目录的 <code>config.yaml</code>；标了「重启生效」的要重开窗口才用得上。</p>
     <form class="settings-form"></form>
     <p class="cache-usage"></p>

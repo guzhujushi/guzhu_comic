@@ -12,14 +12,27 @@ import { settingsPage } from './pages/settings.js'
 registerRoute('/popular', popularPage)
 registerRoute('/search', searchPage)
 
-// 顶部导航
+// 顶部导航：内容列和页面同宽，链接居中
 const nav = document.querySelector<HTMLElement>('#nav')!
 nav.innerHTML = `
-  <a href="#/popular">热门</a>
-  <a href="#/search">搜索</a>
-  <a href="#/history">最近阅读</a>
-  <a href="#/settings">设置</a>
+  <div class="nav-inner">
+    <a href="#/popular" data-path="/popular">热门</a>
+    <a href="#/search" data-path="/search">搜索</a>
+    <a href="#/history" data-path="/history">最近阅读</a>
+    <a href="#/settings" data-path="/settings">设置</a>
+  </div>
 `
+
+// 详情页 / 阅读器不从导航进来，就不标高亮，免得跟来路对不上
+function syncNav(): void {
+  const path = (window.location.hash.slice(1) || '/popular').split('?')[0]
+  nav.querySelectorAll<HTMLAnchorElement>('a').forEach((a) => {
+    a.classList.toggle('active', a.dataset.path === path)
+  })
+}
+window.addEventListener('hashchange', syncNav)
+syncNav()
+
 registerRoute('/album', albumPage)
 registerRoute('/read', readerPage)
 registerRoute('/history', historyPage)

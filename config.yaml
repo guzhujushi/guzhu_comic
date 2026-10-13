@@ -9,6 +9,10 @@ dev:
 reader:
   restore_progress: true
   click_to_page: true
+  mode: webtoon
+  background: dark
+  page_gap: 0
+  auto_scroll: 0
 download:
   workers: 8
 cache:

@@ -21,6 +21,10 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "reader": {
         "restore_progress": True,
         "click_to_page": True,
+        "mode": "webtoon",
+        "background": "dark",
+        "page_gap": 0,
+        "auto_scroll": 0,
     },
     "download": {
         "workers": 8,

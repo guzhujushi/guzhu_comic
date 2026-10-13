@@ -2,7 +2,14 @@
 export interface AppSettings {
   window: { title: string; width: number; height: number; min_size: number[] }
   dev: { url: string; debug: boolean }
-  reader: { restore_progress: boolean; click_to_page: boolean }
+  reader: {
+    restore_progress: boolean
+    click_to_page: boolean
+    mode: 'webtoon' | 'single'
+    background: 'dark' | 'black' | 'gray' | 'light'
+    page_gap: number
+    auto_scroll: number
+  }
   download: { workers: number }
   cache: {
     photo_ttl: number
@@ -18,7 +25,10 @@ export interface AppSettings {
 export const DEFAULT_SETTINGS: AppSettings = {
   window: { title: 'Guzhu Comic', width: 1200, height: 800, min_size: [800, 600] },
   dev: { url: 'http://localhost:5173', debug: true },
-  reader: { restore_progress: true, click_to_page: true },
+  reader: {
+    restore_progress: true, click_to_page: true,
+    mode: 'webtoon', background: 'dark', page_gap: 0, auto_scroll: 0,
+  },
   download: { workers: 8 },
   cache: {
     photo_ttl: 86400, album_ttl: 86400, search_ttl: 3600, ranking_ttl: 3600,

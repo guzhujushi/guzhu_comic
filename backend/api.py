@@ -483,11 +483,12 @@ class API:
         return int(row[0]) if row else 0
 
     def get_history(self, limit: int = 10) -> list[dict]:
-        """最近阅读，按更新时间倒序"""
+        """最近阅读：一部漫画一条，取最近读的那一话，按更新时间倒序"""
         with sqlite3.connect(DATA_DB) as conn:
             rows = conn.execute(
-                "SELECT album_id, photo_id, page_index, title, cover_url, updated_at"
-                " FROM history ORDER BY updated_at DESC LIMIT ?",
+                "SELECT album_id, photo_id, page_index, title, cover_url, updated_at FROM ("
+                " SELECT *, ROW_NUMBER() OVER (PARTITION BY album_id ORDER BY updated_at DESC) AS rn"
+                " FROM history) WHERE rn = 1 ORDER BY updated_at DESC LIMIT ?",
                 (int(limit),),
             ).fetchall()
         return [
@@ -553,10 +554,21 @@ class API:
                 cfg["dev"]["debug"] = bool(dev["debug"])
 
             reader = settings.get("reader") or {}
-            if "restore_progress" in reader:
-                cfg["reader"]["restore_progress"] = bool(reader["restore_progress"])
-            if "click_to_page" in reader:
-                cfg["reader"]["click_to_page"] = bool(reader["click_to_page"])
+            for key in ("restore_progress", "click_to_page"):
+                if key in reader:
+                    cfg["reader"][key] = bool(reader[key])
+            if "mode" in reader:
+                if reader["mode"] not in ("webtoon", "single"):
+                    raise ValueError("阅读模式只能是 webtoon（连续滚动）或 single（单页翻页）")
+                cfg["reader"]["mode"] = reader["mode"]
+            if "background" in reader:
+                if reader["background"] not in ("dark", "black", "gray", "light"):
+                    raise ValueError("背景色只能是 dark / black / gray / light")
+                cfg["reader"]["background"] = reader["background"]
+            if "page_gap" in reader:
+                cfg["reader"]["page_gap"] = _setting_int(reader["page_gap"], 0, 64, "页间距")
+            if "auto_scroll" in reader:
+                cfg["reader"]["auto_scroll"] = _setting_int(reader["auto_scroll"], 0, 1000, "自动滚屏速度")
 
             download = settings.get("download") or {}
             if "workers" in download:
