@@ -1,3 +1,4 @@
+import './style.css'
 import { AlbumCard } from './components/album.js'
 
 const app = document.querySelector<HTMLDivElement>('#app')!
@@ -9,13 +10,13 @@ app.innerHTML = `
       <input id="keyword" type="text" placeholder="输入关键词搜索" />
       <button id="search-btn">搜索</button>
     </div>
-    <pre id="result"></pre>
+    <div id="album-list"></div>
   </div>
 `
 
 const keywordInput = document.querySelector<HTMLInputElement>('#keyword')!
 const searchBtn = document.querySelector<HTMLButtonElement>('#search-btn')!
-const resultEl = document.querySelector<HTMLPreElement>('#result')!
+const albumListEl = document.querySelector<HTMLPreElement>('#album-list')!
 
 function renderAlbumList(albums: AlbumSummary[], container: HTMLElement) {
   container.innerHTML = ''
@@ -30,21 +31,21 @@ function renderAlbumList(albums: AlbumSummary[], container: HTMLElement) {
 async function doSearch(): Promise<void> {
   const keyword = keywordInput.value.trim()
   if (!keyword) {
-    resultEl.textContent = '请输入关键词'
+    albumListEl.textContent = '请输入关键词'
     return
   }
 
   if (!window.pywebview?.api) {
-    resultEl.textContent = 'pywebview api 未就绪'
+    albumListEl.textContent = 'pywebview api 未就绪'
     return
   }
 
   try {
-    resultEl.textContent = '搜索中...'
+    albumListEl.textContent = '搜索中...'
     const data = await window.pywebview.api.search(keyword)
-    renderAlbumList(data, resultEl)
+    renderAlbumList(data, albumListEl)
   } catch (err) {
-    resultEl.textContent = `搜索失败: ${String(err)}`
+    albumListEl.textContent = `搜索失败: ${String(err)}`
   }
 }
 

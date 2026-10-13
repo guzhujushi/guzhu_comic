@@ -56,14 +56,23 @@ album-card {
   width: 140px;
   margin: 8px;
   text-align: center;
+  vertical-align: top;
+  font-family: sans-serif;
+  box-sizing: border-box;
 }
 
 album-card img {
   width: 100%;
+  aspect-ratio: 1 / 1;
+  object-fit: cover;
   border-radius: 8px;
+  display: block;
+  background: #f0f0f0;   /* 加载中显示灰底，避免闪白 */
 }
 
 album-card p {
   margin: 6px 0 0;
   font-size: 14px;
+  color: #333;
+  word-break: break-word;  /* 长标题换行，不撑破卡片 */
 }
