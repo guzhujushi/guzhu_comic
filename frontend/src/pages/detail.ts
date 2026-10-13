@@ -1,7 +1,7 @@
 // pages/detail.ts
 import { renderAlbumList } from '../components/album-list.js'
 import { renderEmpty, renderError } from '../components/states.js'
-import { icons, setIcon } from '../components/icons.js'
+import { icons, morphIcon, setIcon } from '../components/icons.js'
 import { loadSettings } from '../settings.js'
 import type { AppSettings } from '../settings.js'
 import type { AlbumDetail, AlbumProgress, CommentItem } from '../types.js'
@@ -30,13 +30,15 @@ export function albumPage(params: Record<string, string>): HTMLElement {
       return
     }
     try {
-      const [data, progress, cfg] = await Promise.all([
+      const [data, progress, fav, cfg] = await Promise.all([
         window.pywebview.api.get_album_detail(albumId),
         // 读不到进度不影响看详情，按"没读过"处理
         window.pywebview.api.get_album_progress(albumId).catch(() => null),
+        // 收藏态单独查本地表（不进详情缓存，那有 24h TTL）；查不到就当没收藏
+        window.pywebview.api.is_favorite(albumId).catch(() => false),
         loadSettings(),
       ])
-      renderDetail(data, progress, cfg.detail, el)
+      renderDetail(data, progress, fav, cfg.detail, el)
     } catch (err) {
       renderError(el, String(err), () => {
         renderSkeleton(el)
@@ -65,6 +67,7 @@ function renderSkeleton(container: HTMLElement): void {
 function renderDetail(
   data: AlbumDetail,
   progress: AlbumProgress | null,
+  fav: boolean,
   cfg: AppSettings['detail'],
   container: HTMLElement,
 ): void {
@@ -82,7 +85,11 @@ function renderDetail(
   const withSide = commentPreview > 0
 
   container.innerHTML = `
-    <button class="back-btn"><morph-icon size="15" stroke-width="1.8"></morph-icon><span>返回</span></button>
+    <div class="detail-top">
+      <button class="back-btn"><morph-icon size="15" stroke-width="1.8"></morph-icon><span>返回</span></button>
+      <span class="fav-hint"></span>
+      <button class="fav-btn" type="button"><morph-icon size="16" stroke-width="1.8"></morph-icon><span class="fav-label"></span></button>
+    </div>
     <div class="detail-layout${withSide ? ' has-side' : ''}">
       <div class="detail-main">
         <div class="detail-hero">
@@ -115,6 +122,7 @@ function renderDetail(
   if (readBtn) setIcon(readBtn, 'morph-icon', icons.read)
 
   container.querySelector('.back-btn')!.addEventListener('click', () => history.back())
+  paintFavorite(container, data, fav)
 
   // "开始阅读"/"继续阅读"：继续阅读直接跳到上次那一话，页码由阅读器自己恢复
   container.querySelector('.read-btn')?.addEventListener('click', () => {
@@ -139,6 +147,54 @@ function renderDetail(
 
   const sideEl = container.querySelector<HTMLElement>('.detail-side')
   if (sideEl) void paintComments(sideEl, data.id, commentPreview)
+}
+
+/**
+ * 收藏心形：点了先本地翻面（不等后端往返），写失败再翻回去。
+ * 收藏态是本地表的一条记录，跟详情缓存无关，所以每次进详情都重新问一次。
+ */
+function paintFavorite(container: HTMLElement, data: AlbumDetail, fav: boolean): void {
+  const btn = container.querySelector<HTMLButtonElement>('.fav-btn')!
+  const hintEl = container.querySelector<HTMLElement>('.fav-hint')!
+  const label = btn.querySelector<HTMLElement>('.fav-label')!
+  const ico = setIcon(btn, 'morph-icon', fav ? icons.heartOn : icons.heart)
+
+  let on = fav
+  let busy = false
+
+  const paint = (): void => {
+    btn.classList.toggle('on', on)
+    btn.title = on ? '取消收藏' : '加入收藏'
+    label.textContent = on ? '已收藏' : '收藏'
+    morphIcon(ico, on ? icons.heartOn : icons.heart)
+  }
+  paint()
+
+  btn.addEventListener('click', () => {
+    void (async () => {
+      if (busy) return
+      busy = true
+      hintEl.textContent = ''
+      const next = !on
+      on = next
+      paint()
+      try {
+        const api = window.pywebview?.api
+        if (!api) throw new Error('pywebview api 还没就绪')
+        const saved = await api.toggle_favorite(data.id, data.title, data.cover_url ?? '')
+        if (saved !== on) {   // 以后端返回的状态为准
+          on = saved
+          paint()
+        }
+      } catch (err) {
+        on = !next
+        paint()   // 回滚：界面别骗人
+        hintEl.textContent = `收藏失败：${String(err).replace(/^Error:\s*/, '')}`
+      } finally {
+        busy = false
+      }
+    })()
+  })
 }
 
 /** 章节列表：超过 collapseAfter 话就先只铺这些，剩下靠按钮摊开 */

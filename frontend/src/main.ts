@@ -7,6 +7,7 @@ import { loadSettings } from './settings.js'
 import { albumPage } from './pages/detail.js'
 import { readerPage } from './pages/reader.js'
 import { historyPage } from './pages/history.js'
+import { favoritesPage } from './pages/favorites.js'
 import { settingsPage } from './pages/settings.js'
 import { createIcon, icons } from './components/icons.js'
 import { morphIcon } from './components/icons.js'
@@ -20,6 +21,7 @@ const NAV_ITEMS = [
   { path: '/popular', label: '热门', icon: icons.popular, activeIcon: icons.popularOn },
   { path: '/search', label: '搜索', icon: icons.search, activeIcon: icons.searchDone },
   { path: '/history', label: '最近阅读', icon: icons.history, activeIcon: icons.historyOn },
+  { path: '/favorites', label: '收藏', icon: icons.heart, activeIcon: icons.heartOn },
   { path: '/settings', label: '设置', icon: icons.settings, activeIcon: icons.settingsOn },
 ]
 
@@ -65,6 +67,7 @@ syncNav()
 registerRoute('/album', albumPage)
 registerRoute('/read', readerPage)
 registerRoute('/history', historyPage)
+registerRoute('/favorites', favoritesPage)
 registerRoute('/settings', settingsPage)
 
 // 先等 pywebview 把 JS 桥注入好再开路由：否则首页会先闪一下"pywebview api 未就绪"

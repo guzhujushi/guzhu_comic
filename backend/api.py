@@ -143,6 +143,15 @@ class API:
                 "updated_at REAL NOT NULL, "
                 "PRIMARY KEY (album_id, photo_id))"
             )
+            # 收藏是纯本地表：不碰图源账号，所以放 data/（清缓存不会连它一起删掉）。
+            # 封面地址只在"加收藏"那一刻存一份，图源换线路后可能失效，当兜底用。
+            conn.execute(
+                "CREATE TABLE IF NOT EXISTS favorite ("
+                "album_id TEXT PRIMARY KEY, "
+                "title TEXT NOT NULL DEFAULT '', "
+                "cover_url TEXT NOT NULL DEFAULT '', "
+                "added_at REAL NOT NULL)"
+            )
         with sqlite3.connect(CACHE_DB) as conn:
             conn.execute(
                 "CREATE TABLE IF NOT EXISTS meta_cache ("
@@ -623,6 +632,68 @@ class API:
         if row is None:
             return None
         return {"photo_id": row[0], "page_index": int(row[1]), "title": row[2]}
+
+    @staticmethod
+    def _need_album_id(album_id: Any) -> str:
+        """收藏系列接口的入参校验：漫画 ID 必须是非空串"""
+        if album_id is None:              # str(None) 会变成 "None"，得先挡掉
+            raise ValueError("缺少漫画 ID")
+        aid = str(album_id).strip()
+        if not aid:
+            raise ValueError("缺少漫画 ID")
+        return aid
+
+    def is_favorite(self, album_id: str) -> bool:
+        """这部漫画在本地收藏里吗（只查本地表，不看图源账号）"""
+        aid = self._need_album_id(album_id)
+        with sqlite3.connect(DATA_DB) as conn:
+            row = conn.execute(
+                "SELECT 1 FROM favorite WHERE album_id = ?", (aid,)
+            ).fetchone()
+        return row is not None
+
+    def toggle_favorite(self, album_id: str, title: str = "", cover_url: str = "") -> bool:
+        """
+        切换收藏，返回切换后的状态（True = 已收藏）
+
+        title / cover_url 只在"加入收藏"那一下用得上，收藏页列表靠它显示。
+        收藏态故意不进 album 详情缓存（那个有 24h TTL），否则取消收藏后界面还显示已收藏。
+        """
+        aid = self._need_album_id(album_id)
+        with sqlite3.connect(DATA_DB) as conn:
+            exists = conn.execute(
+                "SELECT 1 FROM favorite WHERE album_id = ?", (aid,)
+            ).fetchone()
+            if exists is not None:
+                conn.execute("DELETE FROM favorite WHERE album_id = ?", (aid,))
+                return False
+            conn.execute(
+                "INSERT OR REPLACE INTO favorite (album_id, title, cover_url, added_at)"
+                " VALUES (?, ?, ?, ?)",
+                (aid, str(title or "").strip(), str(cover_url or ""), time.time()),
+            )
+            return True
+
+    def remove_favorite(self, album_id: str) -> None:
+        """取消收藏（收藏页的删除按钮用；本来就没收藏也不报错）"""
+        aid = self._need_album_id(album_id)
+        with sqlite3.connect(DATA_DB) as conn:
+            conn.execute("DELETE FROM favorite WHERE album_id = ?", (aid,))
+
+    def get_favorites(self, limit: int = 100, offset: int = 0) -> list[dict]:
+        """收藏列表，按收藏时间倒序；cover_url 是收藏那一刻的快照"""
+        limit = _cfg_int(limit, 100, 1, 500)
+        offset = _cfg_int(offset, 0, 0, 1000000)
+        with sqlite3.connect(DATA_DB) as conn:
+            rows = conn.execute(
+                "SELECT album_id, title, cover_url, added_at FROM favorite"
+                " ORDER BY added_at DESC LIMIT ? OFFSET ?",
+                (limit, offset),
+            ).fetchall()
+        return [
+            {"album_id": r[0], "title": r[1], "cover_url": r[2], "added_at": r[3]}
+            for r in rows
+        ]
 
     def get_settings(self) -> dict:
         """当前配置（含默认值）"""

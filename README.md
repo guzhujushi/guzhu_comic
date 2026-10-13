@@ -16,6 +16,7 @@
 - **左侧导航**：固定侧栏 + 品牌，窗口窄了自动只剩图标，当前页的图标会变形
 - **设置页**：`config.yaml` 里的常用项直接在窗口里改，带缓存占用显示与手动整理
 - **阅读进度**：本地持久化，属于用户数据，清缓存不会动它
+- **本地收藏**：详情页右上角一颗心，点一下即收藏（失败会自己翻回来）；「收藏」页按收藏时间倒序列出，卡片角上能取消。存在本机 `data/app.db`，**与图源账号无关、不需要登录**，清缓存也不会丢
 - **图片缓存**：章节图下载并解密到本地，二次打开秒加载、支持离线阅读
 - **缓存管理**：上限默认 2G，后台定时按「最久没看过」整话清理，也能一键清空
 - **窗口毛玻璃**：Windows 上窗口整体半透明，底层交给系统 DWM 画亚克力，桌面内容由系统模糊（`window.glass` 选 none / mica / acrylic / tabbed，`window.glass_opacity` 控透度）
@@ -32,7 +33,7 @@
 | 后端     | Python + [JMComic-Crawler-Python](https://github.com/hect0x7/JMComic-Crawler-Python) |
 | 桌面封装 | PyWebView（Windows 下使用 WebView2/Chromium），窗口毛玻璃走 DWM 亚克力 |
 | 前后端桥 | PyWebView `js_api` 直调（无 HTTP 中间层）          |
-| 本地存储 | SQLite（`data/app.db` 阅读进度、`cache/cache.db` 接口元数据）+ 文件系统（`cache/images` 章节图） |
+| 本地存储 | SQLite（`data/app.db` 阅读进度 + 本地收藏、`cache/cache.db` 接口元数据）+ 文件系统（`cache/images` 章节图） |
 | 图片服务 | Python `http.server` 本地静态服务（127.0.0.1，端口随机） |
 
 ## 环境要求
@@ -66,6 +67,7 @@ python main.py
 | 热门     | `#/popular`                     | 首页轮播（最火三部）+ 分类 chips + 榜单下拉 + 网格         |
 | 搜索     | `#/search`                      | 关键词搜索，整页是一块毛玻璃外壳                          |
 | 最近阅读 | `#/history`                     | 一部漫画一条（取最近读的那一话），按时间倒序，点卡片进详情页 |
+| 收藏     | `#/favorites`                   | 本地收藏，按收藏时间倒序，卡片角上可取消收藏              |
 | 设置     | `#/settings`                    | 改配置、看缓存占用、立即整理 / 清空缓存                  |
 | 详情     | `#/album?id=`                   | 漫画信息 + 章节列表 + 开始 / 继续阅读                    |
 | 阅读器   | `#/read?photo_id=&album_id=`    | 连续滚动 / 单页翻页，翻页时写进度；上下两条工具条默认隐藏，鼠标晃动唤出 |
@@ -75,13 +77,13 @@ python main.py
 ```text
 %USERPROFILE%\.jmreader\
 ├── data\
-│   └── app.db                # 用户数据：阅读进度（history 表），再生不出来
+│   └── app.db                # 用户数据：阅读进度（history 表）+ 本地收藏（favorite 表），再生不出来
 └── cache\
     ├── cache.db              # 接口元数据：搜索 / 榜单 / 详情 / 章节图列表
     └── images\<photo_id>\    # 章节图（已解密），一话一个目录
 ```
 
-- `data/` 只在翻页时写入，清缓存 / 整理缓存都不会碰它。
+- `data/` 只在翻页 / 收藏时写入，清缓存 / 整理缓存都不会碰它。
 - `cache/` 里的东西全是可再生的：删掉只是下次重新请求、重新下载。
 - 上限 `cache.max_size_mb` 默认 `2048`（2G），`0` 表示不限；占用按整个 `cache/` 目录算，设置页能看到当前用量。
 - 后台线程每 `cache.cleanup_interval` 秒（默认 600）检查一次，超过上限就从最久没看过的章节开始**整话**删，一直压到上限的 90%；正在看的章节和正在下载的章节留到最后才删。
@@ -125,7 +127,7 @@ guzhu_comic/
 ├── main.py                 # 入口：读 config.yaml 开窗，把 API 挂成 js_api
 ├── config.yaml             # 配置（设置页读写）
 ├── backend/
-│   ├── api.py              # 全部 js_api：搜索 / 榜单 / 详情 / 章节图 / 进度 / 缓存
+│   ├── api.py              # 全部 js_api：搜索 / 榜单 / 详情 / 评论 / 章节图 / 进度与收藏 / 缓存
 │   ├── config.py           # config.yaml 读写，缺的键用默认值补齐
 │   └── glass.py            # Windows 窗口毛玻璃：DWM 亚克力 + 窗口透明度
 └── frontend/
@@ -135,6 +137,6 @@ guzhu_comic/
         ├── settings.ts     # 前端读配置（进程内缓存一份）
         ├── webstatus.ts    # 等 pywebview 把桥注入好
         ├── pywebview.d.ts  # js_api 的类型声明
-        ├── pages/          # popular / search / detail / reader / history / settings
+        ├── pages/          # popular / search / detail / reader / history / favorites / settings
         └── components/     # album-card、album-list
 ```

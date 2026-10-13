@@ -13,10 +13,29 @@
 - [x] A3 详情页补字段（发布日期 / 更新日期 / 评论数）+「相关作品」卡片（2026-10-13）
 - [x] B1 详情页评论预览 —— 做成右侧评论区（只读、不需要登录）（2026-10-13）
 - [x] 详情页章节折叠 + 折叠时「跳到上次读到的那话」（2026-10-13）
-- [ ] B4 本地收藏 + 「我的收藏」页（**不登录**：本地 sqlite 表 + 详情页心形 + `#/favorites`）
+- [x] B4 本地收藏 + 「我的收藏」页（**不登录**：本地 sqlite 表 + 详情页心形 + `#/favorites`）（2026-10-13）
 - [ ] A4 「只看汉化」（必须先引入 `impl='html'` 的第二客户端，见评估 §3）
 - [ ] B3 整本离线下载（大工程，单独立项）
 - [x] 不做：一切账号体系（登录 / 网页端收藏 / 签到 / 发评论）—— 会落地账号凭据，有隐私风险（2026-10-13 定）
+
+## B4 改动清单（2026-10-13）
+
+后端（`backend/api.py`）
+
+- `_init_db()` 在 `DATA_DB`（`~/.jmreader/data/app.db`）建表 `favorite(album_id TEXT PRIMARY KEY, title, cover_url, added_at REAL)`。放 `data/` 而不是 `cache/`：收藏是再生不出来的用户数据，清缓存 / 定时清理都不动它。
+- 新增 4 个 js_api：`is_favorite(album_id)` → bool、`toggle_favorite(album_id, title='', cover_url='')` → 切换后的 bool、`remove_favorite(album_id)` → None（没收藏过也不报错）、`get_favorites(limit=100, offset=0)` → `[{album_id,title,cover_url,added_at}]`（按 `added_at` 倒序）。
+- 入参校验抽出 `_need_album_id()`：空串 / 纯空格 / `None` 一律 `ValueError("缺少漫画 ID")`（`str(None)` 会变成 `"None"`，所以 `None` 得单独挡）。
+- `get_favorites` 的 `limit` / `offset` 走 `_cfg_int` 容错（非法值回默认，不报错，和 `get_comments` 的 page 一致）。
+- **没有新配置项**（收藏不需要），所以这次不涉及「加配置改 5 处」。
+
+前端
+
+- `types.ts`：新增 `FavoriteItem`；`pywebview.d.ts`：新增 `FavoriteItem` + 4 个方法声明。
+- `components/icons.ts`：新增 `heart`(Heart) / `heartOn`(HeartPulse) / `trash`(Trash2) —— 图标仍然只从这一个出口出。
+- `pages/detail.ts`：顶部从单个「返回」变成 `.detail-top` 一行（返回在左、心形在右、中间留给出错提示）；载入时 `Promise.all` 多问一次 `is_favorite`（失败当"没收藏"，不影响详情）；`paintFavorite()` 做**乐观更新 + 失败回滚**，以后端返回的 bool 为准，`busy` 防连点。
+- `pages/favorites.ts`（新）：`#/favorites` 页，`get_favorites(200)` 铺卡片（`.fav-cell` 包 `<album-card>`），角上一个 `trash` 按钮取消收藏（`stopPropagation`，删完只改本地数组重画，不重拉全表）；空状态用 `renderEmpty` + 去热门；出错走页面顶部 `.fav-error`。
+- `main.ts`：`NAV_ITEMS` 加「收藏」一项（`heart` / `heartOn` 变形）、注册 `#/favorites` 路由。
+- `style.css`：新增 `.detail-top` / `.fav-hint` / `.fav-btn(.on)` 与 `.fav-cell` / `.fav-del` / `.fav-error`；已收藏态用暖色（`#ff6b81`），和阅读进度那个蓝色强调色区分开。
 
 ## 本轮（B1 + 章节折叠 + 配置项）改动清单（2026-10-13）
 
@@ -41,6 +60,19 @@
 - `frontend/src/style.css`：新增 `.detail-layout`（窗口窄于 1040px 自动退回单栏并取消 sticky）、`.chapter-actions`、`.detail-side` / `.side-title` / `.comment*`。注意 `button[hidden]` 要显式 `display: none`（`button` 的 `display: inline-flex` 会盖掉 `[hidden]`）。
 
 ## 验证记录（2026-10-13）
+
+B4（后端真调用，21 项全过；脚本 `tmp/_b4测试.py` 跑完已删）
+
+- 测法：把 `backend.api.DATA_DB` 指到临时库再 `API()`，**不往真实收藏里塞测试数据**，跑完删临时库。
+- 加 / 查 / 取消 / 重复取消：`toggle_favorite` 回 `True`→`is_favorite` True→再 toggle 回 `False`→`remove_favorite` 幂等不报错。
+- 列表：字段就是 `album_id/title/cover_url/added_at` 四个；`limit=2` 与 `offset=1` 分页正确；按 `added_at` 倒序。
+- 容错：`limit='abc', offset='xyz'` 回默认不报错；`title='  空格  '` 存进去是 `'空格'`。
+- 校验：`is_favorite('')` / `is_favorite('   ')` / `toggle_favorite('')` / `remove_favorite(None)` 全抛 `ValueError(缺少漫画 ID)`。
+- 建表：临时库里 `history` + `favorite` 两张表都在（老的库升级就是走 `CREATE TABLE IF NOT EXISTS`，不用迁移）。
+- 前端：`tsc --noEmit` 与 `npm run build` exit 0（CSS 24.69 kB / JS 73.29 kB，比上一轮 +0.92 kB / +3.59 kB）。
+- ⚠️ 没做：真窗口点一遍心形 / 收藏页删除 / 空状态 —— 需要用户的 5173 dev server。
+
+## B1 + 章节折叠 验证记录（2026-10-13）
 
 - `python -m py_compile backend/api.py`、`tsc --noEmit`、`npm run build` 全部 exit 0（CSS 23.77 kB / JS 69.70 kB）。
 - `get_comments('287234')`：第 1 页 total=4434、10 条、`has_more=True`；第 2 页与第 1 页内容不同；重复调用 0.002s 命中缓存；`page='abc'` 抛 `ValueError`，`page=0/-3` 容错成第 1 页；缓存键 `comments:287234:1|2`。
@@ -68,7 +100,9 @@
 - **2026-10-13**：文档按用户要求放 `tmp/`，不建 `docs/` 与根 `STATUS.md`。
 - **2026-10-13**：一切需要登录 / 落盘账号凭据的能力都不做（隐私风险）；收藏改做本地版（B4）。
 - **2026-10-13**：详情页的行为（折叠阈值、评论条数）都进 `config.yaml`，不留硬编码；新增配置严格按 5 处同步。
-- **2026-10-13**：收藏态别塞进 `album:<id>` 详情缓存（24h TTL），要单独查本地表（B4 实施时注意）。
+- **2026-10-13**：收藏态别塞进 `album:<id>` 详情缓存（24h TTL），要单独查本地表（B4 已按这条做：`is_favorite` 每次进详情现查）。
+- **2026-10-13**：收藏表放 `data/`（用户数据），不放 `cache/`；收藏行里的 `title` / `cover_url` 是加收藏那一刻的快照，图源换线路后封面可能失效 —— 换回线上的实时地址要每次请求详情，不划算，先接受这个代价。
+- **2026-10-13**：心形做"乐观更新 + 失败回滚"，`toggle_favorite` 返回切换后的状态，前端以它为准（不靠本地猜）。
 - **2026-10-13**：详情缓存里不放绝对封面地址（交接文档 §5.7）；代价是浏览器 HTTP 缓存命中率下降。
 - **2026-10-13**：排序对外只暴露语义名，jmcomic 短码不外泄。
 - **2026-10-13**：页面上的临时选择走 localStorage，不进 `config.yaml`。
@@ -77,6 +111,6 @@
 
 ## 下一步
 
-1. 用户真窗口确认详情页两栏版式与章节折叠。
-2. B4 本地收藏 + 「我的收藏」页。
-3. 之后：A4 只看汉化、B3 整本离线。
+1. 用户真窗口验收：详情页两栏版式 / 章节折叠 / 评论「看更多」；**B4 的心形与「收藏」页**（含空状态与卡片角上的删除）。
+2. A4「只看汉化」（必须先引入 `impl='html'` 的第二客户端，见评估 §3）。
+3. B3 整本离线下载（大工程，单独立项）。

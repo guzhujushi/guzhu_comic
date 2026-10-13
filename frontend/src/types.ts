@@ -73,3 +73,11 @@ export interface CommentPage {
   has_more: boolean
   items: CommentItem[]
 }
+
+/** 本地收藏的一条：封面地址是加收藏那一刻存的快照，图源换线路后可能失效 */
+export interface FavoriteItem {
+  album_id: string
+  title: string
+  cover_url: string
+  added_at: number
+}

@@ -512,6 +512,23 @@ album-card p {
 /* 卡片下面那行小字，比如最近阅读的"读到第 61 页" */
 album-card .album-sub { display: block; color: var(--faint); font-size: 12px; margin-top: 4px; }
 
+/* ============ 收藏页：卡片外壳要相对定位，好把"取消收藏"钉在角上 ============ */
+.fav-cell { position: relative; }
+.fav-cell .fav-del {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  padding: 4px;
+  border-radius: 8px;
+  background: rgba(0, 0, 0, .55);
+  border: 1px solid var(--border);
+  color: var(--muted);
+}
+.fav-cell:hover .fav-del { color: var(--text); border-color: var(--border-strong); }
+.fav-cell .fav-del:hover { color: #ff8080; border-color: #ff8080; background: rgba(0, 0, 0, .78); }
+.fav-cell .fav-del:disabled { opacity: .45; }
+.fav-error { margin: 0 0 14px; font-size: 13px; color: #ff8080; }
+
 /* ============ 详情页 ============ */
 .album-detail { position: relative; }
 
@@ -583,6 +600,23 @@ album-card .album-sub { display: block; color: var(--faint); font-size: 12px; ma
   font-size: 13px;
 }
 .back-btn:hover { background: var(--surface-2); border-color: var(--border-strong); color: var(--text); }
+
+/* 顶部一行：返回在左，收藏心形在右，中间那格留给出错提示 */
+.detail-top { display: flex; align-items: center; gap: 10px; }
+.fav-hint { flex: 1; min-width: 0; font-size: 12px; color: #ff8080; }
+.fav-btn {
+  flex: none;
+  background: transparent;
+  border-color: var(--border);
+  color: var(--muted);
+  padding: 6px 14px;
+  border-radius: 999px;
+  font-size: 13px;
+}
+.fav-btn:hover { background: var(--surface-2); border-color: var(--border-strong); color: var(--text); }
+/* 已收藏：全站只有阅读进度用强调色，这里给一点点暖色，免得跟进度条抢眼 */
+.fav-btn.on { color: #ff6b81; border-color: rgba(255, 107, 129, .5); background: rgba(255, 107, 129, .12); }
+.fav-btn.on:hover { background: rgba(255, 107, 129, .2); border-color: rgba(255, 107, 129, .7); color: #ff8b9c; }
 
 /* 开始 / 继续阅读 */
 .read-btn {

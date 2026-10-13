@@ -11,6 +11,13 @@ interface AlbumProgress {
   title: string
 }
 
+interface FavoriteItem {
+  album_id: string
+  title: string
+  cover_url: string
+  added_at: number
+}
+
 type RankRange = "day" | "week" | "month"
 type ComicCategory = "all" | "doujin" | "single" | "short" | "hanman" | "meiman";
 type SearchScope = "site" | "work" | "author" | "tag" | "actor";
@@ -25,6 +32,10 @@ interface PyApi {
   get_album_detail(album_id: string): Promise<AlbumDetail>
   get_chapter(photo_id: string): Promise<ChapterImages>
   get_comments(album_id: string, page?: number): Promise<CommentPage>
+  is_favorite(album_id: string): Promise<boolean>
+  toggle_favorite(album_id: string, title?: string, cover_url?: string): Promise<boolean>
+  remove_favorite(album_id: string): Promise<void>
+  get_favorites(limit?: number, offset?: number): Promise<FavoriteItem[]>
   save_progress(album_id: string, photo_id: string, page_index: number, title?: string, cover_url?: string): Promise<void>
   get_progress(album_id: string, photo_id: string): Promise<number>
   get_history(limit?: number): Promise<HistoryItem[]>
