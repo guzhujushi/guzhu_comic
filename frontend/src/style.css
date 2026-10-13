@@ -50,3 +50,20 @@ pre {
   overflow: auto;
   white-space: pre-wrap;
 }
+
+album-card {
+  display: inline-block;
+  width: 140px;
+  margin: 8px;
+  text-align: center;
+}
+
+album-card img {
+  width: 100%;
+  border-radius: 8px;
+}
+
+album-card p {
+  margin: 6px 0 0;
+  font-size: 14px;
+}

@@ -1,3 +1,5 @@
+import { AlbumCard } from './components/album.js'
+
 const app = document.querySelector<HTMLDivElement>('#app')!
 
 app.innerHTML = `
@@ -15,17 +17,14 @@ const keywordInput = document.querySelector<HTMLInputElement>('#keyword')!
 const searchBtn = document.querySelector<HTMLButtonElement>('#search-btn')!
 const resultEl = document.querySelector<HTMLPreElement>('#result')!
 
-function renderAlbums(albums: AlbumSummary[], container: HTMLElement) {
-  container.innerHTML = albums
-    .map(
-      album => `
-        <div class="album-card">
-          <img src="${album.cover_url ?? 'placeholder.png'}" alt="${album.title}" width="100" />
-          <p>${album.title}</p>
-        </div>
-      `
-    )
-    .join('')
+function renderAlbumList(albums: AlbumSummary[], container: HTMLElement) {
+  container.innerHTML = ''
+
+  for (const item of albums) {
+    const card = new AlbumCard()
+    card.setData(item)
+    container.appendChild(card)
+  }
 }
 
 async function doSearch(): Promise<void> {
@@ -43,7 +42,7 @@ async function doSearch(): Promise<void> {
   try {
     resultEl.textContent = '搜索中...'
     const data = await window.pywebview.api.search(keyword)
-    renderAlbums(data, resultEl)
+    renderAlbumList(data, resultEl)
   } catch (err) {
     resultEl.textContent = `搜索失败: ${String(err)}`
   }
