@@ -1,4 +1,4 @@
-import { AlbumCard } from '../components/album.js'
+import { renderAlbumList } from '../components/album-list.js';
 
 const TABS: { key: RankRange; label: string }[] = [
   { key: 'day', label: '日榜' },
@@ -76,13 +76,5 @@ for (const tab of TABS) {
 
 void loadRank('week', 'all')
 
-function renderAlbumList(albums: AlbumSummary[], container: HTMLElement): void {
-  container.innerHTML = ''
-  for (const item of albums) {
-    const card = new AlbumCard()
-    card.setData(item)
-    container.appendChild(card)
-  }
-}
 return el
 }

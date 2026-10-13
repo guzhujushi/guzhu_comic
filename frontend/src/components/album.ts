@@ -1,8 +1,4 @@
-export interface AlbumSummary {
-  id: string
-  title: string
-  cover_url?: string
-}
+import type { AlbumSummary } from '../types.js'
 
 export class AlbumCard extends HTMLElement {
   constructor() {

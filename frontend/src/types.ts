@@ -1,10 +1,10 @@
-interface Chapter {
+export interface Chapter {
   photo_id: string
   index: string
   title: string
 }
 
-interface AlbumDetail {
+export interface AlbumDetail {
   id: string
   title: string
   author: string
@@ -16,4 +16,10 @@ interface AlbumDetail {
   page_count: number
   cover_url: string
   chapters: Chapter[]
+}
+
+export interface AlbumSummary {
+  id: string
+  title: string
+  cover_url?: string
 }
