@@ -3,8 +3,9 @@ import { defineMorphIcon } from 'morphicons/element'
 import type { IconInput } from 'morphicons/element'
 import {
   ArrowLeft, BookOpen, Check, ChevronDown, ChevronLeft, ChevronRight, ChevronUp, Clock,
-  Database, Eraser, Flame, Heart, HeartPulse, List, Loader, Pause, Play, RefreshCw, Save, Search,
-  SearchCheck, Settings, SlidersHorizontal, Trash2, TrendingUp, Watch, X,
+  Database, Eraser, Flame, Heart, HeartPulse, List, Loader, MessageSquareText, MessagesSquare,
+  Pause, Play, RefreshCw, Save, Search, SearchCheck, Settings, SlidersHorizontal, Trash2, TrendingUp,
+  Watch, X,
 } from 'lucide'
 
 defineMorphIcon()
@@ -38,6 +39,8 @@ export const icons = {
   heart: Heart,
   heartOn: HeartPulse,
   trash: Trash2,
+  forum: MessagesSquare,
+  forumOn: MessageSquareText,
 } as const
 
 export type IconName = keyof typeof icons

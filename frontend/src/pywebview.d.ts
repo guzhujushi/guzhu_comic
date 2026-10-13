@@ -32,6 +32,8 @@ interface PyApi {
   get_album_detail(album_id: string): Promise<AlbumDetail>
   get_chapter(photo_id: string): Promise<ChapterImages>
   get_comments(album_id: string, page?: number): Promise<CommentPage>
+  get_forum(page?: number): Promise<ForumPage>
+  get_album_titles(album_ids: string[]): Promise<Record<string, string>>
   is_favorite(album_id: string): Promise<boolean>
   toggle_favorite(album_id: string, title?: string, cover_url?: string): Promise<boolean>
   remove_favorite(album_id: string): Promise<void>

@@ -25,7 +25,8 @@
   --radius-sm: 6px;
   --radius: 8px;
   --radius-lg: 10px;
-  --shadow: 0 12px 32px rgba(0, 0, 0, .55);   /* 只给浮层用，普通卡片不用 */
+  --shadow: 0 12px 32px rgba(0, 0, 0, .55);   /* 只给浮层用 */
+  --shadow-card: 0 18px 42px rgba(0, 0, 0, .8), 0 5px 14px rgba(0, 0, 0, .55);   /* 卡片鼠标悬浮抬起来那一下（暗底上淡投影几乎看不见，靠这层压暗 + 表面阶梯一起读） */
   --col: 960px;        /* 内容列宽，导航和页面共用，左右各一条边界线 */
   --col-pad: 20px;     /* 列内的左右留白 */
   --rail: 208px;       /* 左侧导航栏宽度 */
@@ -477,6 +478,7 @@ input:focus { outline: 2px solid var(--primary-soft); outline-offset: 1px; borde
 }
 
 album-card {
+  position: relative;   /* 悬浮放大时要能盖住旁边的卡片，靠 z-index 抬层 */
   display: block;
   width: auto;
   margin: 0;
@@ -486,9 +488,15 @@ album-card {
   border: 1px solid var(--border);
   border-radius: var(--radius);
   cursor: pointer;
-  transition: transform .18s, border-color .18s, background .18s;
+  transition: transform .18s, border-color .18s, background .18s, box-shadow .18s;
 }
-album-card:hover { transform: translateY(-3px); border-color: var(--border-strong); background: var(--surface-2); }
+album-card:hover {
+  z-index: 2;
+  transform: translateY(-4px) scale(1.06);
+  border-color: var(--border-strong);
+  background: var(--surface-3);   /* 往上走一格表面阶梯，"抬起来"才看得出来 */
+  box-shadow: var(--shadow-card);
+}
 album-card img {
   display: block;
   width: 100%;
@@ -599,7 +607,7 @@ album-card .album-sub { display: block; color: var(--faint); font-size: 12px; ma
   opacity: 1;
   filter: blur(0);
   transition: opacity .45s ease, filter .45s ease,
-    transform .18s, border-color .18s, background .18s;
+    transform .18s, border-color .18s, background .18s, box-shadow .18s;
   transition-delay: calc(var(--i, 0) * 55ms);
 }
 
@@ -785,6 +793,34 @@ album-card .album-sub { display: block; color: var(--faint); font-size: 12px; ma
 .comment-more:hover { color: var(--text); border-color: var(--border-strong); }
 .comment-more[hidden] { display: none; }
 .comment-hint { margin: 0; color: var(--faint); font-size: 12px; }
+
+/* ============ 论坛：全站评论流 ============ */
+/* 评论卡复用详情页评论区那一套（.comment / .comment-head / .comment-text 等），
+   这里只管论坛自己的两样：列表节奏、"来自本子"的封面条 */
+.forum-list { display: flex; flex-direction: column; gap: 12px; }
+
+.forum-album {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  margin-top: 10px;
+  padding: 6px 10px 6px 6px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--muted);
+  text-align: left;
+}
+.forum-album:hover { background: var(--surface-3); border-color: var(--border-strong); color: var(--text); }
+
+.forum-cover { flex: none; width: 34px; height: 46px; object-fit: cover; border-radius: var(--radius-xs); background: var(--surface-3); }
+.forum-album-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.forum-album-label { font-size: 11px; color: var(--faint); }
+.forum-album-title { font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.forum-more { margin-top: 18px; }
+.forum-hint { margin-top: 10px; text-align: center; }
 
 /* ============ 阅读器：整屏沉浸，顶部信息条 + 底部操作条都默认藏起来 ============ */
 body.reading #app { max-width: none; padding: 0; border-color: transparent; }

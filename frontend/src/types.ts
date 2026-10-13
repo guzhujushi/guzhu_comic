@@ -74,6 +74,25 @@ export interface CommentPage {
   items: CommentItem[]
 }
 
+/** 论坛（全站评论流）里的一条：album_id 为空串表示这条评论没挂本子 */
+export interface ForumComment {
+  comment_id: string
+  nickname: string
+  content: string
+  created_at: string
+  spoiler: boolean
+  reply: boolean
+  reply_count: number
+  album_id: string
+  cover_url: string
+}
+
+export interface ForumPage {
+  total: number
+  has_more: boolean
+  items: ForumComment[]
+}
+
 /** 本地收藏的一条：封面地址是加收藏那一刻存的快照，图源换线路后可能失效 */
 export interface FavoriteItem {
   album_id: string

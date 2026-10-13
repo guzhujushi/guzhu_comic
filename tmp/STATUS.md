@@ -15,6 +15,8 @@
 - [x] 详情页章节折叠 + 折叠时「跳到上次读到的那话」（2026-10-13）
 - [x] B4 本地收藏 + 「我的收藏」页（**不登录**：本地 sqlite 表 + 详情页心形 + `#/favorites`）（2026-10-13）
 - [x] 热门榜单改版：按分类分区（每类一行 / 右侧「更多」进分类页 / 卡片虚化入场 / 分类标签条与面板接成一块）（2026-10-13）
+- [x] 卡片悬浮手感：鼠标悬停再放大一点 + 加阴影（2026-10-13）
+- [x] B5 「论坛」页（= 全站评论流 `forum_pagination`，只读、不登录）：左侧导航「论坛」+ `#/forum`，评论下面挂进本子的封面条（2026-10-13）
 - [ ] A4 「只看汉化」（必须先引入 `impl='html'` 的第二客户端，见评估 §3）
 - [ ] B3 整本离线下载（大工程，单独立项）
 - [x] 不做：一切账号体系（登录 / 网页端收藏 / 签到 / 发评论）—— 会落地账号凭据，有隐私风险（2026-10-13 定）
@@ -116,6 +118,31 @@
 
 - 后端新增 `_SCOPE_MAP` / `_ORDER_BY_MAP`，`search()` 加 `scope` / `order_by`，`get_ranking()` 加 `order_by`（非法值抛 `ValueError`，缓存键带上新维度）。
 - 前端新增 `frontend/src/components/picker.ts`（榜单 / 排序 / 搜索范围共用的下拉），`search.ts` / `popular.ts` / `pywebview.d.ts` / `style.css` 同步。
+
+## B5 论坛页 改动清单（2026-10-13）
+
+- 后端 `backend/api.py` 新增两个 js_api：
+  - `get_forum(page=1)` → `{total, has_more, items:[{comment_id, nickname, content, created_at, spoiler, reply, reply_count, album_id, cover_url}]}`。走 `client.forum_pagination()`（API 客户端打 `/forum?mode=all&page=`，**只读、不用登录**）；缓存 `forum:<page>`、时长复用 `cache.comment_ttl`；**封面地址现拼不进缓存**（`_with_covers()` 是把缓存那套外挂一层，跟 `get_album_detail` 一个路子）；`has_more` 满一页且没到 `page_count` 才算 true（服务端封顶 5000 条 / 500 页）。
+  - `get_album_titles(album_ids)` → `{id: 标题}`。最多 30 个、并发 5，内部直接走 `get_album_detail`（**复用详情缓存，等于顺手预热**）；单个失败就跳过那个 ID，不抛。
+  - 没有新配置项；`likes` 实测 50 条全是 0（移动端接口不给），所以没进契约。
+- 前端：新增 `pages/forum.ts`（留言卡直接复用详情页评论区那套 `.comment*` 样式；「加载更多」复用 `.comment-more`）、`icons.ts` 加 `forum` / `forumOn`（`MessagesSquare` / `MessageSquareText`）、`main.ts` 加路由 `/forum` 与侧栏导航项「论坛」（排在「搜索」后面）、`types.ts` 加 `ForumComment` / `ForumPage`、`pywebview.d.ts` 加两个方法、`style.css` 加 `.forum-*` 一小段。
+- 交互细节：封面条先显示 `JM<id>`，`get_album_titles` 回来再换成真标题（失败就一直是 ID）；剧透的点击监听挂在**文字**上而不是整张卡（卡里有个封面按钮，免得一点就顺手摊开）；首屏失败给整页重试，翻页失败只在底下提示一行、已铺出来的不动；切走后晚回来的请求被 `alive` 丢掉。
+
+## 卡片悬浮手感（2026-10-13）
+
+- 用户点名：鼠标悬浮时卡片再大一点、加阴影。`album-card:hover` 从 `translateY(-3px)` 改成 `translateY(-4px) scale(1.06)`，背景由 `--surface-2` 提到 `--surface-3`，投影用新 token `--shadow-card`（`0 18px 42px rgba(0,0,0,.8), 0 5px 14px rgba(0,0,0,.55)`）。
+- 卡片本体加 `position: relative`、悬浮时 `z-index: 2`，放大后盖住旁边卡片而不是被后一张压住；`transition` 补上 `box-shadow .18s`（榜单入场那条过渡也一起补，否则投影会"啪"地跳出来）。
+- 验证：`npm run build` exit 0（CSS 27.03 kB / JS 77.12 kB）；无头截图核对过悬浮态（把构建产物里 `album-card:hover` 那段声明原文抠出来挂到固定卡片上截的，保证和真 hover 一致）。
+
+## B5 验证记录（2026-10-13）
+
+- `py_compile backend/api.py` / `tsc --noEmit` / `npm run build` 全 exit 0（CSS 27.84 kB / JS 81.11 kB，比上一轮 +0.81 kB / +3.99 kB）。
+- 后端（临时库跑，跑完删，不碰真缓存）：`get_forum(1)` → total 5000 / 10 条 / `has_more=True`；字段与设计一致；`album_id` 为空串那条 `cover_url` 也是空串，其余能拼出 `.../media/albums/<aid>.jpg`；第 1 页第二次调用 0.002s（命中缓存）；`get_forum(2)` 内容与第 1 页不同。
+- `get_album_titles`：8 个 ID 并发拉 2.28s、第二次走详情缓存 0.01s；重复 ID / 空串被去重；坏 ID（`999999999999`）返回 `{}` 不抛。容错：`get_forum('abc')` 抛 `ValueError("评论页码要是数字")`，`get_forum(0)` 当第 1 页；`get_album_titles('x')` 抛 `ValueError`。
+- 端到端（无头 Chrome + 真后端）：把 `frontend/dist` 拷到临时目录，页面里插一段 pywebview 桩走 HTTP 打到**真的 API 实例**上（临时目录的库和缓存），截图确认首页评论、封面、标题都对。后端调用日志证明整条链子通：
+  `get_settings` → `get_forum [1]` → `get_album_titles`（10 个 ID）→ 点「加载更多」→ `get_forum [2]` → `get_album_titles`（7 个 ID，另外 3 条没挂本子）→ 再点 → `get_forum [3]`。
+- 分支渲染用假数据截图核对过：没挂本子 → 不出现封面条；回评 / 「N 回复」两个小标签；剧透 → 文字糊住；拿不到封面 → 封面条只剩标题；`has_more=false` → 按钮藏起来、底下显示「到底了 —— 服务端只留最新的 5000 条评论」。
+- 没验的：真窗口（WebView2）里滚动手感、缩略图懒加载的实际观感 —— 交给用户。
 
 ## 决策记录
 

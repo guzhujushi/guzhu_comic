@@ -9,6 +9,7 @@ import { readerPage } from './pages/reader.js'
 import { historyPage } from './pages/history.js'
 import { favoritesPage } from './pages/favorites.js'
 import { categoryPage } from './pages/category.js'
+import { forumPage } from './pages/forum.js'
 import { settingsPage } from './pages/settings.js'
 import { createIcon, icons } from './components/icons.js'
 import { morphIcon } from './components/icons.js'
@@ -21,6 +22,7 @@ registerRoute('/search', searchPage)
 const NAV_ITEMS = [
   { path: '/popular', label: '热门', icon: icons.popular, activeIcon: icons.popularOn },
   { path: '/search', label: '搜索', icon: icons.search, activeIcon: icons.searchDone },
+  { path: '/forum', label: '论坛', icon: icons.forum, activeIcon: icons.forumOn },
   { path: '/history', label: '最近阅读', icon: icons.history, activeIcon: icons.historyOn },
   { path: '/favorites', label: '收藏', icon: icons.heart, activeIcon: icons.heartOn },
   { path: '/settings', label: '设置', icon: icons.settings, activeIcon: icons.settingsOn },
@@ -70,6 +72,7 @@ registerRoute('/read', readerPage)
 registerRoute('/history', historyPage)
 registerRoute('/favorites', favoritesPage)
 registerRoute('/category', categoryPage)
+registerRoute('/forum', forumPage)
 registerRoute('/settings', settingsPage)
 
 // 先等 pywebview 把 JS 桥注入好再开路由：否则首页会先闪一下"pywebview api 未就绪"

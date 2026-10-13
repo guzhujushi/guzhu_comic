@@ -489,6 +489,98 @@ class API:
         self._cache_set(key, data)
         return data
 
+    def get_forum(self, page: int = 1) -> dict:
+        """
+        论坛（全站评论流，只读、不需要登录），返回 {"total", "has_more", "items": [
+        {"comment_id", "nickname", "content", "created_at", "spoiler", "reply",
+         "reply_count", "album_id"}]}
+
+        album_id 为空串表示这条评论没挂本子；封面地址每次返回前现拼（域名会变），
+        所以缓存里不放。服务端把 total 封在 5000（= 500 页），翻到顶就别再要了。
+        """
+        try:
+            page = max(1, int(page))
+        except (TypeError, ValueError):
+            raise ValueError("评论页码要是数字") from None
+        key = f"forum:{page}"
+        cached = self._cache_get(key, self._comment_ttl)
+        if cached is not None:
+            return self._with_covers(cached)
+        try:
+            comment_page = self.client.forum_pagination(page=page)
+        except Exception as e:
+            raise RuntimeError(f"论坛获取失败: {e}") from e
+        items = []
+        for cm in comment_page:
+            album_id = str(cm.album_id or "").strip()
+            if album_id == "0":
+                album_id = ""
+            items.append({
+                "comment_id": str(cm.comment_id or ""),
+                "nickname": cm.nickname or cm.username or "匿名",
+                "content": cm.content or "",
+                "created_at": cm.created_at or "",
+                "spoiler": bool(cm.is_spoiler),
+                "reply": cm.parent_comment_id is not None,
+                "reply_count": len(cm.replies),   # 回评只报个数，不铺开
+                "album_id": album_id,
+            })
+        page_count = comment_page.page_count
+        data = {
+            "total": int(comment_page.total or 0),
+            # 满一页就当还有下一页；图源给了总页数就顺便按它封顶
+            "has_more": len(items) >= comment_page.page_size
+            and (page_count is None or page < page_count),
+            "items": items,
+        }
+        self._cache_set(key, data)
+        return self._with_covers(data)
+
+    @staticmethod
+    def _with_covers(data: dict) -> dict:
+        """缓存里的论坛数据 -> 返回给前端：封面地址现拼（图源域名会变，别写进缓存）"""
+        return {
+            **data,
+            "items": [
+                {
+                    **item,
+                    "cover_url": JmcomicText.get_album_cover_url(item["album_id"])
+                    if item.get("album_id") else "",
+                }
+                for item in data["items"]
+            ],
+        }
+
+    def get_album_titles(self, album_ids: list) -> dict:
+        """
+        批量把本子 ID 换成标题（论坛列表那排"来自《xxx》"用）。
+
+        走的是 get_album_detail 那套缓存，等于顺手把详情页预热了；单个失败就当
+        这个 ID 没有标题，不影响别的。一次最多 30 个，并发 5。
+        """
+        if not isinstance(album_ids, (list, tuple)):
+            raise ValueError("本子 ID 要传列表")
+        ids: list[str] = []
+        for raw in album_ids[:30]:
+            aid = str(raw).strip()
+            if aid and aid not in ids:
+                ids.append(aid)
+        if not ids:
+            return {}
+
+        def one(aid: str) -> tuple[str, str]:
+            try:
+                return aid, self.get_album_detail(aid)["title"]
+            except Exception:
+                return aid, ""
+
+        titles = {}
+        with ThreadPoolExecutor(max_workers=min(5, len(ids))) as pool:
+            for aid, title in pool.map(one, ids):
+                if title:
+                    titles[aid] = title
+        return titles
+
     def _start_img_server(self) -> str:
         """启动本地图片静态服务（只监听本机），返回 base url"""
         handler = partial(_QuietHandler, directory=str(CACHE_DIR))
