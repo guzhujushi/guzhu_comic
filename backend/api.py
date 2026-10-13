@@ -45,6 +45,7 @@ class API:
         (APP_DIR / "cache" / "images").mkdir(parents=True, exist_ok=True)
         self._init_db()
         self.img_base = self._start_img_server()
+        self._dl_lock = threading.Lock()
 
     def _init_db(self) -> None:
         with sqlite3.connect(DB_PATH) as conn:
@@ -214,10 +215,7 @@ class API:
         return f"http://127.0.0.1:{port}"
 
     def get_chapter(self, photo_id: str) -> dict:
-        """
-        章节图片：下载（解密）到本地，返回 {"photo_id", "images": [本地 http url]}
-        已下载过的直接复用，不重复请求
-        """
+        """返回 {"photo_id", "images"}；缺失图片后台下载，前端按需重试"""
         photo_id = str(photo_id).strip()
         img_dir = APP_DIR / "cache" / "images" / photo_id
         img_dir.mkdir(parents=True, exist_ok=True)
@@ -225,16 +223,29 @@ class API:
             photo = self.client.get_photo_detail(photo_id)
         except Exception as e:
             raise RuntimeError(f"章节获取失败: {e}") from e
-        urls = []
-        for img in photo:  # 迭代产生 JmImageDetail
+        images: list[str] = []
+        missing: list[tuple] = []
+        for img in photo:
             path = img_dir / img.filename
+            images.append(f"{self.img_base}/images/{photo_id}/{img.filename}")
             if not path.exists():
-                try:
-                    self.client.download_by_image_detail(img, str(path))
-                except Exception as e:
-                    raise RuntimeError(f"图片下载失败 {img.filename}: {e}") from e
-            urls.append(f"{self.img_base}/images/{photo_id}/{img.filename}")
-        return {"photo_id": photo_id, "images": urls}
+                missing.append((img, path))
+        if missing:
+            threading.Thread(target=self._download_images, args=(missing,), daemon=True).start()
+        return {"photo_id": photo_id, "images": images}
+
+    def _download_images(self, jobs: list[tuple]) -> None:
+        """后台下载；先写 .part 再改名，中断不留坏文件"""
+        for img, path in jobs:
+            if path.exists():
+                continue
+            tmp = path.with_suffix(path.suffix + ".part")
+            try:
+                with self._dl_lock:
+                    self.client.download_by_image_detail(img, str(tmp))
+                tmp.rename(path)
+            except Exception:
+                tmp.unlink(missing_ok=True)
 
     def save_progress(self, album_id: str, photo_id: str, page_index: int,
                     title: str = "", cover_url: str = "") -> None:

@@ -28,6 +28,7 @@ export function readerPage(params: Record<string, string>): HTMLElement {
   let coverUrl = ''
   let currentIndex = 0
   let saveTimer: number | undefined
+  let isRestoring = true
 
   void (async () => {
     if (!window.pywebview?.api) {
@@ -56,20 +57,53 @@ export function readerPage(params: Record<string, string>): HTMLElement {
     }
   })()
 
+  function armRetry(img: HTMLImageElement, src: string, attempts: number): void {
+    img.onerror = () => {
+        if (attempts >= 30 || !document.contains(img)) {
+        img.onerror = null
+        return
+        }
+        window.setTimeout(() => {
+        if (!document.contains(img)) return
+        armRetry(img, src, attempts + 1)
+        img.src = `${src}?r=${attempts}`  // query 变化强制重新请求
+        }, 2000)
+    }
+    }
+  
   function renderImages(): void {
     imgsEl.innerHTML = ''
     images.forEach((src, i) => {
-      const img = document.createElement('img')
-      img.src = src
-      img.alt = `第 ${i + 1} 页`
-      imgsEl.appendChild(img)
+        const img = document.createElement('img')
+        img.alt = `第 ${i + 1} 页`
+        armRetry(img, src, 0)
+        img.src = src
+        imgsEl.appendChild(img)
     })
-  }
+  }   
 
   function scrollToIndex(i: number): void {
     const target = imgsEl.children[i] as HTMLElement | undefined
     target?.scrollIntoView({ block: 'start' })
   }
+  // 替换原来的 requestAnimationFrame(() => scrollToIndex(currentIndex))
+void restoreScroll()
+
+async function restoreScroll(): Promise<void> {
+  try{
+    if (currentIndex === 0) return
+    const ahead = [...imgsEl.querySelectorAll('img')].slice(0, currentIndex + 1)
+    const timeout = new Promise((r) => setTimeout(r, 8000))
+     await Promise.race([
+        Promise.allSettled(ahead.map((i) => i.decode().catch(() => {}))),
+        timeout,
+    ])
+    scrollToIndex(currentIndex)
+}finally{
+    isRestoring = false
+}
+}
+
 
   function updatePageLabel(): void {
     pageEl.textContent = images.length ? `${currentIndex + 1} / ${images.length}` : ''
@@ -93,8 +127,11 @@ export function readerPage(params: Record<string, string>): HTMLElement {
   function currentVisibleIndex(): number {
     const mid = window.innerHeight / 2
     const imgs = imgsEl.querySelectorAll('img')
+    let candidate = currentIndex
     for (let i = 0; i < imgs.length; i++) {
-      if (imgs[i].getBoundingClientRect().bottom > mid) return i
+        const r = imgs[i].getBoundingClientRect()
+        if (r.top < mid && r.bottom > mid) return i  // 真正压住中线的那张
+        if (r.top < mid) candidate = i
     }
     return Math.max(0, imgs.length - 1)
   }
@@ -102,9 +139,10 @@ export function readerPage(params: Record<string, string>): HTMLElement {
   // 滚动时更新页码 + 节流保存；页面被路由移除后自动解绑
   const onScroll = () => {
     if (!document.contains(el)) {
-      window.removeEventListener('scroll', onScroll)
-      return
+        window.removeEventListener('scroll', onScroll)
+        return
     }
+    if (isRestoring) return
     const i = currentVisibleIndex()
     if (i !== currentIndex) {
       currentIndex = i
