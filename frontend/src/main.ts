@@ -18,12 +18,12 @@ nav.innerHTML = `
 `
 registerRoute('/album', albumPage)
 registerRoute('/read', readerPage)
-startRouter()
 
-// 等 pywebview 就绪（不阻塞页面渲染）
+// 先等 pywebview 把 JS 桥注入好再开路由：否则首页会先闪一下"pywebview api 未就绪"
 try {
   await waitForPywebview()
   console.log('pywebview 已就绪')
 } catch (err) {
-  console.error(err)
+  console.error(err)   // 真拿不到也别卡住，路由照跑，页面上会提示未就绪
 }
+startRouter()

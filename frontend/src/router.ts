@@ -7,6 +7,23 @@ interface Route {
 
 const routes: Route[] = []
 
+/** 当前页面注册的收尾函数（存进度、解绑监听之类），路由切走前统一执行 */
+const cleanups: (() => void)[] = []
+
+export function onUnmount(fn: () => void): void {
+  cleanups.push(fn)
+}
+
+function runCleanups(): void {
+  for (const fn of cleanups.splice(0)) {
+    try {
+      fn()
+    } catch (err) {
+      console.error(err)
+    }
+  }
+}
+
 export function registerRoute(path: string, handler: RouteHandler) {
   routes.push({ path, handler })
 }
@@ -30,6 +47,7 @@ function parseHash(): { path: string; params: Record<string, string> } {
 }
 
 function resolve() {
+  runCleanups()
   const { path, params } = parseHash()
 
   for (const route of routes) {
@@ -49,12 +67,12 @@ function resolve() {
 
 export function startRouter() {
   window.addEventListener('hashchange', resolve)
-  window.addEventListener('DOMContentLoaded', resolve)
 
-  // 如果页面打开时没有 hash，默认跳到 /popular
-  if (!window.location.hash) {
-    window.location.hash = '/popular'
-  } else {
+  // 没有 hash 就默认跳 /popular（赋值会触发 hashchange -> resolve）；
+  // 不再监听 DOMContentLoaded：它和首次 hashchange 会让首页被渲染两遍
+  if (window.location.hash) {
     resolve()
+  } else {
+    window.location.hash = '/popular'
   }
 }

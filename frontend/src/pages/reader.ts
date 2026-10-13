@@ -1,3 +1,5 @@
+import { onUnmount } from '../router.js'
+
 export function readerPage(params: Record<string, string>): HTMLElement {
   const el = document.createElement('div')
   el.className = 'reader'
@@ -24,14 +26,22 @@ export function readerPage(params: Record<string, string>): HTMLElement {
   const toolbarEl = el.querySelector<HTMLElement>('.reader-toolbar')!
   el.querySelector('.back-btn')!.addEventListener('click', () => history.back())
 
+  // 从详情页进来时窗口还停在上一个页面的滚动位置，先归零；
+  // 具体恢复到第几页交给 restoreScroll（此刻图片还没高度，滚了也会被夹回顶部）
+  window.scrollTo(0, 0)
+
   let images: string[] = []
   let title = ''
   let coverUrl = ''
   let currentIndex = 0
-  let saveTimer: number | undefined
-  let restoring = true      // 进度恢复完成前，滚动事件不许覆盖页码
+  let progressReady = false   // 上次进度读出来之前，currentIndex 是无意义的 0
   let suppressScroll = false
   let restoreCancelled = false
+
+  // 整页还没被图片撑开时，滚动位置会被浏览器夹回顶部，算出来的页码没有意义
+  function pageScrollable(): boolean {
+    return document.documentElement.scrollHeight > window.innerHeight + 4
+  }
 
   void (async () => {
     try {
@@ -53,13 +63,13 @@ export function readerPage(params: Record<string, string>): HTMLElement {
       titleEl.textContent = title || `章节 ${photoId}`
       renderImages()
       currentIndex = Math.min(Math.max(0, startIndex), Math.max(0, images.length - 1))
+      progressReady = true
       updatePageLabel()
       // 必须等图片把高度撑起来之后再滚，否则 scrollIntoView 会被夹在顶部
       await restoreScroll()
     } catch (err) {
+      // 章节没加载出来就别动进度：progressReady 保持 false，后面所有存进度都会被跳过
       imgsEl.innerHTML = `<p class="empty-hint">加载失败: ${String(err)}</p>`
-    } finally {
-      restoring = false
     }
   })()
 
@@ -107,7 +117,7 @@ export function readerPage(params: Record<string, string>): HTMLElement {
   async function restoreScroll(): Promise<void> {
     if (currentIndex <= 0) return   // 本来就是第 1 页，不用滚
     const ahead = [...imgsEl.querySelectorAll('img')].slice(0, currentIndex + 1)
-    const deadline = Date.now() + 20000
+    const deadline = Date.now() + 8000
     while (Date.now() < deadline && !restoreCancelled) {
       if (ahead.every((img) => img.complete && img.naturalHeight > 0)) break
       await new Promise((r) => setTimeout(r, 200))
@@ -123,19 +133,22 @@ export function readerPage(params: Record<string, string>): HTMLElement {
     pageEl.textContent = images.length ? `${currentIndex + 1} / ${images.length}` : ''
   }
 
-  function scheduleSave(): void {
-    if (saveTimer !== undefined) window.clearTimeout(saveTimer)
-    saveTimer = window.setTimeout(() => {
-      void window.pywebview?.api?.save_progress(albumId, photoId, currentIndex, title, coverUrl)
-    }, 1000)
+  /**
+   * 存进度。页码只在翻页时才变，所以直接存、不做防抖：
+   * 关窗口太快时，"1s 防抖"和 pagehide 里那次异步桥调用都来不及落库。
+   */
+  function saveProgress(): void {
+    if (!progressReady) return   // 进度还没读出来时 currentIndex 还是 0，存下去就把库里的值抹了
+    void window.pywebview?.api?.save_progress(albumId, photoId, currentIndex, title, coverUrl)
   }
 
   function goTo(i: number): void {
     if (!images.length) return
+    restoreCancelled = true   // 用户主动翻页，别再把他拽回"上次那一页"
     currentIndex = Math.max(0, Math.min(images.length - 1, i))
     scrollToIndex(currentIndex)
     updatePageLabel()
-    scheduleSave()
+    saveProgress()
   }
 
 function currentVisibleIndex(): number {
@@ -156,19 +169,21 @@ function currentVisibleIndex(): number {
         window.removeEventListener('scroll', onScroll)
         return
     }
-    if (suppressScroll) return
-    if (restoring) {
-      // 图片还没撑开时按可见位置算出来必然是 0，不能用它覆盖页码；
-      // 这次事件要么是 scrollIntoView 漏出来的，要么是用户提前滚了 —— 放弃这次恢复
-      restoreCancelled = true
-      restoring = false
-    }
+    // 以下三种 scroll 事件一律不算数：
+    //   1. suppressScroll：我们自己 scrollIntoView 触发的；
+    //   2. 进度还没从库里读出来：此刻 currentIndex 是初始的 0；
+    //   3. 整页还没被图片撑开：滚动位置会被浏览器夹回顶部，算出来必然第 1 页
+    //      —— 这就是"每次进章节都从第 1 页开始"的根因（路由换页时 #app 被清空、
+    //      文档变矮、滚动被夹回，浏览器就会发这么一次事件）。
+    // 反过来，只要页面已经能滚，用户的滚动就算数：立刻更新页码并落库。
+    if (suppressScroll || !progressReady || !pageScrollable()) return
+    restoreCancelled = true   // 页面能滚了说明用户自己在动，放弃还没执行的恢复
     const i = currentVisibleIndex()
     if (i !== currentIndex) {
       currentIndex = i
       updatePageLabel()
+      saveProgress()
     }
-    scheduleSave()
   }
   window.addEventListener('scroll', onScroll, { passive: true })
 
@@ -196,14 +211,18 @@ function currentVisibleIndex(): number {
     else if (x > 0.7) goTo(currentIndex + 1)
   })
 
-  // 切走/关闭页面时存一次
-  const onHide = () => {
-    // 进度还没恢复出来就关窗口/切路由时，currentIndex 还是初始的 0，
-    // 这一存就把库里的真实进度抹成第 1 页了
-    if (restoring) return
-    void window.pywebview?.api?.save_progress(albumId, photoId, currentIndex, title, coverUrl)
-  }
+  // 关窗口 / 刷新时 pagehide 会触发（路由切走不会）
+  const onHide = () => saveProgress()
   window.addEventListener('pagehide', onHide)
+
+  // 路由切走（点"返回"、改 hash）时收尾：存一次进度 + 解绑所有 window 监听
+  onUnmount(() => {
+    restoreCancelled = true
+    saveProgress()
+    window.removeEventListener('scroll', onScroll)
+    window.removeEventListener('keydown', onKey)
+    window.removeEventListener('pagehide', onHide)
+  })
 
   return el
 }
