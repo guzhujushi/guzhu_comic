@@ -85,3 +85,12 @@ album-card p {
 }
 
 album-card { cursor: pointer; }
+
+.reader { max-width: 800px; margin: 0 auto; }
+.reader-toolbar {
+  position: sticky; top: 0; z-index: 10;
+  display: flex; align-items: center; gap: 12px;
+  padding: 8px 12px; background: #1a1a1a; color: #eee;
+}
+.reader-title { flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.reader-images img { display: block; width: 100%; }

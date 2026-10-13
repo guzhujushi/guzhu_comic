@@ -29,3 +29,11 @@ export interface ChapterImages {
   images: string[]
 }
 
+export interface HistoryItem {
+  album_id: string
+  photo_id: string
+  page_index: number
+  title: string
+  cover_url: string
+  updated_at: number
+}

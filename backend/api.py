@@ -54,6 +54,16 @@ class API:
                 "data_json TEXT NOT NULL, "
                 "fetched_at REAL NOT NULL)"
             )
+            conn.execute(
+                "CREATE TABLE IF NOT EXISTS history ("
+                "album_id TEXT NOT NULL, "
+                "photo_id TEXT NOT NULL, "
+                "page_index INTEGER NOT NULL DEFAULT 0, "
+                "title TEXT NOT NULL DEFAULT '', "
+                "cover_url TEXT NOT NULL DEFAULT '', "
+                "updated_at REAL NOT NULL, "
+                "PRIMARY KEY (album_id, photo_id))"
+            )
 
     def _cache_get(self, key: str, ttl: float) -> list | None:
         """命中且未过期返回数据，否则返回 None"""
@@ -225,3 +235,44 @@ class API:
                     raise RuntimeError(f"图片下载失败 {img.filename}: {e}") from e
             urls.append(f"{self.img_base}/images/{photo_id}/{img.filename}")
         return {"photo_id": photo_id, "images": urls}
+
+    def save_progress(self, album_id: str, photo_id: str, page_index: int,
+                    title: str = "", cover_url: str = "") -> None:
+        """保存阅读进度；title/cover_url 给首页"继续阅读"列表展示用"""
+        with sqlite3.connect(DB_PATH) as conn:
+            conn.execute(
+                "INSERT OR REPLACE INTO history"
+                " (album_id, photo_id, page_index, title, cover_url, updated_at)"
+                " VALUES (?, ?, ?, ?, ?, ?)",
+                (str(album_id), str(photo_id), int(page_index),
+                title, cover_url, time.time()),
+            )
+
+    def get_progress(self, album_id: str, photo_id: str) -> int:
+        """返回上次看到的页码（从 0 开始），没有记录返回 0"""
+        with sqlite3.connect(DB_PATH) as conn:
+            row = conn.execute(
+                "SELECT page_index FROM history WHERE album_id=? AND photo_id=?",
+                (str(album_id), str(photo_id)),
+            ).fetchone()
+        return int(row[0]) if row else 0
+
+    def get_history(self, limit: int = 10) -> list[dict]:
+        """最近阅读，按更新时间倒序"""
+        with sqlite3.connect(DB_PATH) as conn:
+            rows = conn.execute(
+                "SELECT album_id, photo_id, page_index, title, cover_url, updated_at"
+                " FROM history ORDER BY updated_at DESC LIMIT ?",
+                (int(limit),),
+            ).fetchall()
+        return [
+            {
+                "album_id": r[0],
+                "photo_id": r[1],
+                "page_index": r[2],
+                "title": r[3],
+                "cover_url": r[4],
+                "updated_at": r[5],
+            }
+            for r in rows
+        ]

@@ -13,6 +13,9 @@ interface PyApi {
   clear_cache(): Promise<{ meta_rows: number; cover_files: number }>
   get_album_detail(album_id: string): Promise<AlbumDetail>
   get_chapter(photo_id: string): Promise<ChapterImages>
+  save_progress(album_id: string, photo_id: string, page_index: number, title?: string, cover_url?: string): Promise<void>
+  get_progress(album_id: string, photo_id: string): Promise<number>
+  get_history(limit?: number): Promise<HistoryItem[]>
 }
 
 interface PyWebview {
