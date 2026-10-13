@@ -224,6 +224,10 @@ input:focus { outline: 2px solid var(--primary-soft); outline-offset: 1px; borde
   border-color: rgba(255, 255, 255, .14);
 }
 
+/* 搜索页的筛选行：范围 + 排序，用的还是"文字 + 箭头"那套下拉 */
+.search-filters { display: flex; align-items: center; flex-wrap: wrap; gap: 4px; margin: -14px 0 20px; }
+.search-filters-hint { color: var(--faint); font-size: 12px; margin-right: 2px; }
+
 /* ============ 空状态 / 骨架屏 ============ */
 .empty-state {
   grid-column: 1 / -1;      /* 落在卡片网格里也占满一整行 */
@@ -420,6 +424,9 @@ input:focus { outline: 2px solid var(--primary-soft); outline-offset: 1px; borde
 
 /* 榜单选择器比分类低一级：没有底，只是文字 + 箭头，点开才是菜单 */
 .rank-picker { position: relative; }
+
+/* 榜单 + 排序两个下拉并排：都比分类低一级 */
+.rank-pickers { display: flex; align-items: center; gap: 2px; }
 
 .rank-btn {
   gap: 4px;
@@ -620,6 +627,41 @@ album-card .album-sub { display: block; color: var(--faint); font-size: 12px; ma
   border-color: var(--primary-line);
   color: var(--primary);
 }
+
+/* ============ 详情页：正文 + 右侧评论区（评论只读，剧透默认盖住） ============ */
+.detail-layout { display: grid; grid-template-columns: minmax(0, 1fr); gap: 22px; }
+.detail-layout.has-side { grid-template-columns: minmax(0, 1fr) 300px; }
+/* 列宽不够（窗口窄）就退回单栏，评论区挪到章节下面 */
+@media (max-width: 1040px) {
+  .detail-layout.has-side { grid-template-columns: minmax(0, 1fr); }
+  .detail-side { position: static; }
+}
+
+/* 章节折叠：默认只铺前几话，剩下的点按钮摊开 */
+.chapter-actions { display: flex; flex-wrap: wrap; justify-content: center; gap: 10px; margin-top: 10px; }
+.chapter-actions button {
+  background: var(--surface-2); border: 1px solid var(--border); color: var(--muted);
+  font-size: 13px; padding: 6px 14px; border-radius: 999px;
+}
+.chapter-actions button:hover { background: var(--surface-3); color: var(--text); }
+.chapter-actions button[hidden] { display: none; }
+
+.detail-side { position: sticky; top: 26px; align-self: start; }
+.side-title { display: flex; align-items: baseline; gap: 8px; margin: 0 0 12px; font-size: 15px; font-weight: 600; color: #d8d8d8; }
+.side-title span { color: var(--faint); font-size: 12px; font-weight: 400; }
+.comment-list { display: flex; flex-direction: column; gap: 10px; }
+.comment { padding: 10px 12px; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); }
+.comment-head { display: flex; align-items: baseline; gap: 6px; }
+.comment-user { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; color: var(--text-soft); }
+.comment-tag { flex: none; padding: 0 4px; font-size: 11px; color: var(--faint); border: 1px solid var(--border); border-radius: 4px; }
+.comment-date { flex: none; font-size: 11px; color: var(--faint); }
+.comment-text { margin: 6px 0 0; font-size: 13px; line-height: 1.6; color: var(--text-soft); white-space: pre-wrap; word-break: break-word; }
+.comment.spoiler .comment-text { filter: blur(4px); cursor: pointer; user-select: none; }
+.comment.spoiler.revealed .comment-text { filter: none; cursor: auto; }
+.comment-more { width: 100%; margin-top: 12px; padding: 7px 0; font-size: 13px; color: var(--muted); background: transparent; border: 1px dashed var(--border); border-radius: var(--radius); }
+.comment-more:hover { color: var(--text); border-color: var(--border-strong); }
+.comment-more[hidden] { display: none; }
+.comment-hint { margin: 0; color: var(--faint); font-size: 12px; }
 
 /* ============ 阅读器：整屏沉浸，顶部信息条 + 底部操作条都默认藏起来 ============ */
 body.reading #app { max-width: none; padding: 0; border-color: transparent; }

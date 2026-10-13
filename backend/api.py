@@ -74,6 +74,25 @@ _CATEGORY_MAP = {
     "meiman": JmMagicConstants.CATEGORY_MEIMAN,  # 美漫
 }
 
+# 搜索范围：五个 search_* 方法签名完全一致，只有 main_tag 不同，按名字分发就行
+_SCOPE_MAP = {
+    "site": "search_site",       # 站内（大杂烩）
+    "work": "search_work",       # 作品名
+    "author": "search_author",   # 作者
+    "tag": "search_tag",         # 标签
+    "actor": "search_actor",     # 登场角色
+}
+
+# 排序：前端只传语义名，jmcomic 的短码不透出去（图源改短码只动这里）
+_ORDER_BY_MAP = {
+    "latest": JmMagicConstants.ORDER_BY_LATEST,      # 最新
+    "views": JmMagicConstants.ORDER_BY_VIEW,         # 观看
+    "likes": JmMagicConstants.ORDER_BY_LIKE,         # 收藏
+    "score": JmMagicConstants.ORDER_BY_SCORE,        # 评分
+    "images": JmMagicConstants.ORDER_BY_PICTURE,     # 图片数
+    "comments": JmMagicConstants.ORDER_BY_COMMENT,   # 评论数
+}
+
 class API:
     def __init__(self):
         # 缓存时长 / 下载并发数都来自 config.yaml（设置页可改，重启窗口后生效）
@@ -85,6 +104,7 @@ class API:
         self._album_ttl = _cfg_int(cfg["cache"]["album_ttl"], 86400, 0, 30 * 86400)
         self._search_ttl = _cfg_int(cfg["cache"]["search_ttl"], 3600, 0, 30 * 86400)
         self._ranking_ttl = _cfg_int(cfg["cache"]["ranking_ttl"], 3600, 0, 30 * 86400)
+        self._comment_ttl = _cfg_int(cfg["cache"]["comment_ttl"], 600, 0, 30 * 86400)
 
         self.client = JmOption.default().new_jm_client()
         self._init_db()
@@ -172,19 +192,32 @@ class API:
                 (key, json.dumps(data, ensure_ascii=False), time.time()),
             )
 
-    def search(self, keyword: str, page: int = 1) -> list[dict[str, str]]:
+    def search(self, keyword: str, page: int = 1, scope: str = "site",
+               order_by: str = "latest") -> list[dict[str, str]]:
         """
-        搜索漫画，返回 [{"id", "title", "cover_url"}]，结果缓存 1 小时
+        搜索漫画，返回 [{"id", "title", "cover_url"}]
+
+        scope 取 _SCOPE_MAP 的键（站内 / 作品名 / 作者 / 标签 / 角色），
+        order_by 取 _ORDER_BY_MAP 的键；两者都进缓存键，换条件就是另一批结果
         """
         keyword = keyword.strip()
         if not keyword:
             return []
-        key = f"search:{keyword}:{page}"
+        if scope not in _SCOPE_MAP:
+            raise ValueError(f"未知搜索范围: {scope}")
+        if order_by not in _ORDER_BY_MAP:
+            raise ValueError(f"未知排序: {order_by}")
+        # 缓存键带上范围与排序：换个范围就是另一批结果，不能共用缓存
+        key = f"search:{scope}:{order_by}:{keyword}:{page}"
         cached = self._cache_get(key, self._search_ttl)
         if cached is not None:
             return cached
         try:
-            result_page = self.client.search_site(search_query=keyword, page=page)
+            result_page = getattr(self.client, _SCOPE_MAP[scope])(
+                search_query=keyword,
+                page=page,
+                order_by=_ORDER_BY_MAP[order_by],
+            )
         except Exception as e:
             raise RuntimeError(f"搜索失败: {e}") from e
         data = [
@@ -198,16 +231,20 @@ class API:
         self._cache_set(key, data)
         return data
 
-    def get_ranking(self, time_range: str, category: str = "all", page: int = 1) -> list[dict[str, str]]:
+    def get_ranking(self, time_range: str, category: str = "all", page: int = 1,
+                    order_by: str = "views") -> list[dict[str, str]]:
         """
         排行榜：time_range 取 "day"/"week"/"month"，
         category 取 "all"/"doujin"/"single"/"short"/"hanman"/"meiman"
+        order_by 取 _ORDER_BY_MAP 的键（默认按观看，和以前一样）
         """
         if time_range not in _TIME_MAP:
             raise ValueError(f"未知榜单类型: {time_range}，应为 day/week/month")
         if category not in _CATEGORY_MAP:
             raise ValueError(f"未知分类: {category}")
-        key = f"ranking:{time_range}:{category}:{page}"
+        if order_by not in _ORDER_BY_MAP:
+            raise ValueError(f"未知排序: {order_by}")
+        key = f"ranking:{time_range}:{category}:{order_by}:{page}"
         cached = self._cache_get(key, self._ranking_ttl)
         if cached is not None:
             return cached
@@ -216,7 +253,7 @@ class API:
                 page=page,
                 time=_TIME_MAP[time_range],
                 category=_CATEGORY_MAP[category],
-                order_by=JmMagicConstants.ORDER_BY_VIEW,
+                order_by=_ORDER_BY_MAP[order_by],
             )
         except Exception as e:
             raise RuntimeError(f"榜单获取失败: {e}") from e
@@ -350,34 +387,95 @@ class API:
 
     def get_album_detail(self, album_id: str) -> dict:
         """
-        漫画详情，返回 {"id", "title", "author", "authors", "description",
-        "tags", "likes", "views", "page_count", "cover_url",
+        漫画详情，返回 {"id", "title", "author", "authors", "description", "tags",
+        "likes", "views", "comment_count", "pub_date", "update_date", "page_count",
+        "cover_url", "related": [{"id", "title", "author", "cover_url"}],
         "chapters": [{"photo_id", "index", "title"}]}
+
+        缓存里只放不随域名变的东西，封面地址（本子的和相关的）每次返回前现拼。
         """
         album_id = str(album_id).strip()
-        key = f"album:{album_id}"
-        cached = self._cache_get(key, self._album_ttl)
+        # v2：老缓存没有发布日期 / 评论数 / 相关作品，加字段就换键，免得读到缺字段的旧数据
+        key = f"album:v2:{album_id}"
+        data = self._cache_get(key, self._album_ttl)
+        if data is None:
+            try:
+                album = self.client.get_album_detail(album_id)
+            except Exception as e:
+                raise RuntimeError(f"详情获取失败: {e}") from e
+            data = {
+                "id": str(album.album_id),
+                "title": album.name,
+                "author": album.author,          # 第一作者
+                "authors": list(album.authors),  # 全部作者
+                "description": album.description,
+                "tags": list(album.tags),
+                "likes": str(album.likes),
+                "views": str(album.views),
+                "comment_count": str(album.comment_count),
+                "pub_date": album.pub_date,      # 发布日期
+                "update_date": album.update_date,  # 更新日期，图源没给时是 "0"
+                "page_count": album.page_count,
+                "related": [
+                    {
+                        "id": str(rel["id"]),
+                        "title": rel.get("name", ""),
+                        "author": rel.get("author", ""),
+                    }
+                    for rel in (album.related_list or [])
+                    if isinstance(rel, dict) and rel.get("id")
+                ],
+                "chapters": [
+                    {"photo_id": str(pid), "index": str(pindex), "title": pname}
+                    for pid, pindex, pname in album.episode_list
+                ],
+            }
+            self._cache_set(key, data)
+        # 封面地址现拼：图源域名会变（FLAG_API_CLIENT_AUTO_UPDATE_DOMAIN），别把绝对地址写进缓存
+        return {
+            **data,
+            "cover_url": JmcomicText.get_album_cover_url(album_id),
+            "related": [
+                {**rel, "cover_url": JmcomicText.get_album_cover_url(rel["id"])}
+                for rel in data.get("related", [])
+            ],
+        }
+
+    def get_comments(self, album_id: str, page: int = 1) -> dict:
+        """
+        本子评论（只读，不需要登录），返回 {"total", "has_more", "items": [
+        {"nickname", "content", "created_at", "spoiler", "reply"}]}
+
+        评论更新快，所以缓存时长单独用 cache.comment_ttl（默认 10 分钟）。
+        """
+        album_id = str(album_id).strip()
+        try:
+            page = max(1, int(page))
+        except (TypeError, ValueError):
+            raise ValueError("评论页码要是数字") from None
+        key = f"comments:{album_id}:{page}"
+        cached = self._cache_get(key, self._comment_ttl)
         if cached is not None:
             return cached
         try:
-            album = self.client.get_album_detail(album_id)
+            comment_page = self.client.album_pagination(album_id, page=page)
         except Exception as e:
-            raise RuntimeError(f"详情获取失败: {e}") from e
+            raise RuntimeError(f"评论获取失败: {e}") from e
+        items = [
+            {
+                "nickname": cm.nickname or cm.username or "匿名",
+                "content": cm.content or "",
+                "created_at": cm.created_at or "",
+                "spoiler": bool(cm.is_spoiler),
+                "reply": cm.parent_comment_id is not None,
+            }
+            for cm in comment_page
+        ]
         data = {
-            "id": str(album.album_id),
-            "title": album.name,
-            "author": album.author,          # 第一作者
-            "authors": list(album.authors),  # 全部作者
-            "description": album.description,
-            "tags": list(album.tags),
-            "likes": str(album.likes),
-            "views": str(album.views),
-            "page_count": album.page_count,
-            "cover_url": JmcomicText.get_album_cover_url(album_id),
-            "chapters": [
-                {"photo_id": str(pid), "index": str(pindex), "title": pname}
-                for pid, pindex, pname in album.episode_list
-            ],
+            "total": int(comment_page.total or 0),
+            # 满一页就当还有下一页，前端靠它决定"看更多"要不要留着
+            "has_more": len(items) >= comment_page.page_size,
+            "items": items,
         }
         self._cache_set(key, data)
         return data
@@ -591,6 +689,14 @@ class API:
             if "auto_scroll" in reader:
                 cfg["reader"]["auto_scroll"] = _setting_int(reader["auto_scroll"], 0, 1000, "自动滚屏速度")
 
+            detail = settings.get("detail") or {}
+            if "chapters_collapse" in detail:
+                cfg["detail"]["chapters_collapse"] = _setting_int(
+                    detail["chapters_collapse"], 0, 500, "章节折叠阈值")
+            if "comment_preview" in detail:
+                cfg["detail"]["comment_preview"] = _setting_int(
+                    detail["comment_preview"], 0, 50, "评论预览条数")
+
             download = settings.get("download") or {}
             if "workers" in download:
                 cfg["download"]["workers"] = _setting_int(download["workers"], 1, 32, "下载并发数")
@@ -601,6 +707,7 @@ class API:
                 ("album_ttl", "漫画详情缓存时长", 0, 30 * 86400),
                 ("search_ttl", "搜索缓存时长", 0, 30 * 86400),
                 ("ranking_ttl", "榜单缓存时长", 0, 30 * 86400),
+                ("comment_ttl", "评论缓存时长", 0, 30 * 86400),
                 ("max_size_mb", "缓存上限", 0, 102400),
                 ("cleanup_interval", "定时清理间隔", 30, 86400),
             ):

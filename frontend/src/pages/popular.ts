@@ -1,9 +1,11 @@
-import { renderAlbumList } from '../components/album-list.js';
-import { renderAlbumSkeleton, renderError } from '../components/states.js';
-import { renderHero, renderHeroSkeleton } from '../components/hero.js';
-import type { HeroHandle } from '../components/hero.js';
-import { icons, morphIcon, setIcon } from '../components/icons.js';
-import { onUnmount } from '../router.js';
+import { renderAlbumList } from '../components/album-list.js'
+import { createPicker } from '../components/picker.js'
+import { renderAlbumSkeleton, renderError } from '../components/states.js'
+import { renderHero, renderHeroSkeleton } from '../components/hero.js'
+import type { HeroHandle } from '../components/hero.js'
+import { icons, setIcon } from '../components/icons.js'
+import { onUnmount } from '../router.js'
+import { loadState, pickKey, saveState } from '../store.js'
 
 const RANGES: { key: RankRange; label: string }[] = [
   { key: 'day', label: '日榜' },
@@ -18,7 +20,37 @@ const CATEGORIES: { key: ComicCategory; label: string }[] = [
   { key: 'short', label: '短篇' },
   { key: 'hanman', label: '韩漫' },
   { key: 'meiman', label: '美漫' },
-];
+]
+
+// 榜单排序：对应后端 get_ranking() 的 order_by
+const SORTS: { key: SortOrder; label: string }[] = [
+  { key: 'views', label: '按观看' },
+  { key: 'likes', label: '按收藏' },
+  { key: 'score', label: '按评分' },
+  { key: 'images', label: '按图片数' },
+  { key: 'comments', label: '按评论' },
+  { key: 'latest', label: '按最新' },
+]
+
+const RANGE_KEYS = RANGES.map((item) => item.key)
+const CATEGORY_KEYS = CATEGORIES.map((item) => item.key)
+const SORT_KEYS = SORTS.map((item) => item.key)
+
+interface PopularPrefs {
+  range: RankRange
+  category: ComicCategory
+  sort: SortOrder
+}
+
+/** 上次看的榜单 / 分类 / 排序：刷新页面、重开窗口都记得住，认不出的值回退默认 */
+function loadPrefs(): PopularPrefs {
+  const saved = loadState<Partial<PopularPrefs>>('popular', {})
+  return {
+    range: pickKey(saved.range, RANGE_KEYS, 'week'),
+    category: pickKey(saved.category, CATEGORY_KEYS, 'all'),
+    sort: pickKey(saved.sort, SORT_KEYS, 'views'),
+  }
+}
 
 export function popularPage(): HTMLElement {
   const el = document.createElement('div')
@@ -38,12 +70,9 @@ export function popularPage(): HTMLElement {
     <div class="hero"></div>
     <div class="rank-bar">
       <div class="chip-row popular-cats"></div>
-      <div class="rank-picker">
-        <button type="button" class="rank-btn" aria-haspopup="true" aria-expanded="false">
-          <span class="rank-label"></span>
-          <morph-icon class="rank-caret" size="14" stroke-width="1.8" aria-hidden="true"></morph-icon>
-        </button>
-        <div class="rank-menu" hidden></div>
+      <div class="rank-pickers">
+        <div class="range-slot"></div>
+        <div class="sort-slot"></div>
       </div>
     </div>
     <h2 class="section-title popular-rest" hidden>其余作品</h2>
@@ -54,39 +83,35 @@ export function popularPage(): HTMLElement {
   const listEl = el.querySelector<HTMLDivElement>('.album-list')!
   const catsEl = el.querySelector<HTMLDivElement>('.popular-cats')!
   const moreEl = el.querySelector<HTMLHeadingElement>('.popular-rest')!
-  const pickerBtn = el.querySelector<HTMLButtonElement>('.rank-btn')!
-  const menuEl = el.querySelector<HTMLDivElement>('.rank-menu')!
-  const labelEl = el.querySelector<HTMLSpanElement>('.rank-label')!
-  const caret = setIcon(el, '.rank-caret', icons.down)
   setIcon(el, '.home-search-ico', icons.search)
 
-  let current = { range: 'week' as RankRange, category: 'all' as ComicCategory }
+  const prefs = loadPrefs()
+  let current: PopularPrefs = prefs
   let hero: HeroHandle | null = null
 
-  function openMenu(open: boolean): void {
-    menuEl.hidden = !open
-    pickerBtn.setAttribute('aria-expanded', String(open))
-    morphIcon(caret, open ? icons.up : icons.down)
-  }
+  // 榜单（日 / 周 / 月）和排序是同一个下拉控件：点哪个都按当前条件重拉一次
+  const rangePicker = createPicker(RANGES, (key) => { void loadRank(key, current.category, current.sort) })
+  const sortPicker = createPicker(SORTS, (key) => { void loadRank(current.range, current.category, key) })
+  el.querySelector('.range-slot')!.appendChild(rangePicker.el)
+  el.querySelector('.sort-slot')!.appendChild(sortPicker.el)
 
-  /** chips 和下拉里的选中态、按钮上的字，都跟着 current 走 */
+  /** chips 和两个下拉里的选中态、按钮上的字，都跟着 current 走 */
   function markActive(): void {
     for (const btn of Array.from(catsEl.querySelectorAll('button'))) {
       btn.classList.toggle('active', (btn as HTMLButtonElement).dataset.category === current.category)
     }
-    for (const btn of Array.from(menuEl.querySelectorAll('button'))) {
-      btn.classList.toggle('active', (btn as HTMLButtonElement).dataset.range === current.range)
-    }
-    labelEl.textContent = RANGES.find((range) => range.key === current.range)?.label ?? ''
+    rangePicker.set(current.range)
+    sortPicker.set(current.sort)
   }
 
   /** 点重试就按当前选中的条件再拉一次 */
   function retry(): void {
-    void loadRank(current.range, current.category)
+    void loadRank(current.range, current.category, current.sort)
   }
 
-  async function loadRank(range: RankRange, category: ComicCategory): Promise<void> {
-    current = { range, category }
+  async function loadRank(range: RankRange, category: ComicCategory, sort: SortOrder): Promise<void> {
+    current = { range, category, sort }
+    saveState('popular', current)   // 换一次记一次，下次进首页就直接是这个榜单
     markActive()
     hero?.destroy()
     hero = null
@@ -100,8 +125,8 @@ export function popularPage(): HTMLElement {
       renderHeroSkeleton(heroEl)
       renderAlbumSkeleton(listEl)
       moreEl.hidden = true
-      const data = await window.pywebview.api.get_ranking(range, category)
-      if (current.range !== range || current.category !== category) return
+      const data = await window.pywebview.api.get_ranking(range, category, 1, sort)
+      if (current.range !== range || current.category !== category || current.sort !== sort) return
       if (data.length === 0) {
         heroEl.innerHTML = ''
         renderAlbumList([], listEl, {
@@ -124,7 +149,7 @@ export function popularPage(): HTMLElement {
         renderAlbumList(rest, listEl)
       }
     } catch (err) {
-      if (current.range !== range || current.category !== category) return
+      if (current.range !== range || current.category !== category || current.sort !== sort) return
       heroEl.innerHTML = ''
       moreEl.hidden = true
       renderError(listEl, String(err), retry)
@@ -138,22 +163,9 @@ export function popularPage(): HTMLElement {
     btn.textContent = cat.label
     btn.dataset.category = cat.key
     btn.addEventListener('click', () => {
-      void loadRank(current.range, cat.key)
+      void loadRank(current.range, cat.key, current.sort)
     })
     catsEl.appendChild(btn)
-  }
-
-  // 榜单：收进下拉，别跟分类抢级别
-  for (const range of RANGES) {
-    const btn = document.createElement('button')
-    btn.type = 'button'
-    btn.textContent = range.label
-    btn.dataset.range = range.key
-    btn.addEventListener('click', () => {
-      openMenu(false)
-      void loadRank(range.key, current.category)
-    })
-    menuEl.appendChild(btn)
   }
 
   // 首页的搜索入口：点一下就进搜索页，按 / 也一样
@@ -170,26 +182,23 @@ export function popularPage(): HTMLElement {
   }
   window.addEventListener('keydown', onSlash)
 
-  pickerBtn.addEventListener('click', (event) => {
-    event.stopPropagation()
-    openMenu(menuEl.hasAttribute('hidden'))
-  })
-
-  const closeMenu = () => openMenu(false)
+  const closeMenus = (): void => { rangePicker.close(); sortPicker.close() }
   const onKey = (event: KeyboardEvent) => {
-    if (event.key === 'Escape') openMenu(false)
+    if (event.key === 'Escape') closeMenus()
   }
-  document.addEventListener('click', closeMenu)
+  document.addEventListener('click', closeMenus)
   window.addEventListener('keydown', onKey)
 
   onUnmount(() => {
     hero?.destroy()
-    document.removeEventListener('click', closeMenu)
+    document.removeEventListener('click', closeMenus)
     window.removeEventListener('keydown', onKey)
     window.removeEventListener('keydown', onSlash)
   })
 
-  void loadRank('week', 'all')
+  // 进来先按上次的选择拉一次（没有记过就是默认的周榜 + 全部 + 按观看）
+  markActive()
+  void loadRank(prefs.range, prefs.category, prefs.sort)
 
   return el
 }

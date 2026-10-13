@@ -16,6 +16,9 @@ reader:
   page_gap: 0
   auto_scroll: 0
   width: 1080
+detail:
+  chapters_collapse: 20
+  comment_preview: 5
 download:
   workers: 8
 cache:
@@ -23,5 +26,6 @@ cache:
   album_ttl: 86400
   search_ttl: 3600
   ranking_ttl: 3600
+  comment_ttl: 600
   max_size_mb: 2048
   cleanup_interval: 600

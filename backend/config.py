@@ -29,6 +29,10 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "auto_scroll": 0,
         "width": 1080,
     },
+    "detail": {
+        "chapters_collapse": 20,   # 章节数超过这个就先折叠（0 = 全部展开）
+        "comment_preview": 5,      # 右侧评论区先显示几条（0 = 不显示评论区）
+    },
     "download": {
         "workers": 8,
     },
@@ -37,6 +41,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "album_ttl": 86400,
         "search_ttl": 3600,
         "ranking_ttl": 3600,
+        "comment_ttl": 600,
         "max_size_mb": 2048,
         "cleanup_interval": 600,
     },

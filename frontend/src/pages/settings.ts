@@ -46,6 +46,13 @@ const GROUPS: { title: string; fields: FieldDef[] }[] = [
     ],
   },
   {
+    title: '详情页',
+    fields: [
+      { path: 'detail.chapters_collapse', label: '章节超过几话就折叠', type: 'number', min: 0, max: 500, hint: '0 = 全部展开；折叠后还能一键展开，或直接跳到上次读到的那话' },
+      { path: 'detail.comment_preview', label: '右侧评论区先显示几条', type: 'number', min: 0, max: 50, hint: '0 = 不显示评论区；评论只读，不需要登录' },
+    ],
+  },
+  {
     title: '下载与缓存',
     fields: [
       { path: 'download.workers', label: '图片下载并发数', type: 'number', min: 1, max: 32, hint: '太大容易被图源限速', restart: true },
@@ -53,6 +60,7 @@ const GROUPS: { title: string; fields: FieldDef[] }[] = [
       { path: 'cache.album_ttl', label: '漫画详情缓存（秒）', type: 'number', min: 0, max: 2592000, restart: true },
       { path: 'cache.search_ttl', label: '搜索缓存（秒）', type: 'number', min: 0, max: 2592000, restart: true },
       { path: 'cache.ranking_ttl', label: '榜单缓存（秒）', type: 'number', min: 0, max: 2592000, restart: true },
+      { path: 'cache.comment_ttl', label: '评论缓存（秒）', type: 'number', min: 0, max: 2592000, restart: true },
       { path: 'cache.max_size_mb', label: '缓存上限（MB）', type: 'number', min: 0, max: 102400, hint: '2048 就是 2G，0 = 不限；章节图和接口缓存都算在里面', restart: true },
       { path: 'cache.cleanup_interval', label: '定时清理间隔（秒）', type: 'number', min: 30, max: 86400, hint: '后台每隔这么久检查一次，超上限就删最久没看的章节图', restart: true },
     ],

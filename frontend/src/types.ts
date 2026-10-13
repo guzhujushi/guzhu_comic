@@ -4,6 +4,14 @@ export interface Chapter {
   title: string
 }
 
+/** 相关作品：详情页里"顺藤摸瓜"的那排卡片 */
+export interface RelatedAlbum {
+  id: string
+  title: string
+  author: string
+  cover_url: string
+}
+
 export interface AlbumDetail {
   id: string
   title: string
@@ -15,6 +23,10 @@ export interface AlbumDetail {
   views: string
   page_count: number
   cover_url: string
+  comment_count: string
+  pub_date: string
+  update_date: string
+  related: RelatedAlbum[]
   chapters: Chapter[]
 }
 
@@ -45,4 +57,19 @@ export interface AlbumProgress {
   photo_id: string
   page_index: number
   title: string
+}
+
+/** 一条评论：只读预览，剧透的默认用 CSS 盖住 */
+export interface CommentItem {
+  nickname: string
+  content: string
+  created_at: string
+  spoiler: boolean
+  reply: boolean
+}
+
+export interface CommentPage {
+  total: number
+  has_more: boolean
+  items: CommentItem[]
 }

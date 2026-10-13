@@ -18,12 +18,17 @@ export interface AppSettings {
     auto_scroll: number
     width: number
   }
+  detail: {
+    chapters_collapse: number
+    comment_preview: number
+  }
   download: { workers: number }
   cache: {
     photo_ttl: number
     album_ttl: number
     search_ttl: number
     ranking_ttl: number
+    comment_ttl: number
     max_size_mb: number
     cleanup_interval: number
   }
@@ -40,9 +45,10 @@ export const DEFAULT_SETTINGS: AppSettings = {
     restore_progress: true, click_to_page: true,
     mode: 'webtoon', background: 'dark', page_gap: 0, auto_scroll: 0, width: 1080,
   },
+  detail: { chapters_collapse: 20, comment_preview: 5 },
   download: { workers: 8 },
   cache: {
-    photo_ttl: 86400, album_ttl: 86400, search_ttl: 3600, ranking_ttl: 3600,
+    photo_ttl: 86400, album_ttl: 86400, search_ttl: 3600, ranking_ttl: 3600, comment_ttl: 600,
     max_size_mb: 2048, cleanup_interval: 600,
   },
 }
@@ -62,6 +68,7 @@ export async function loadSettings(force = false): Promise<AppSettings> {
       window: { ...DEFAULT_SETTINGS.window, ...raw.window },
       dev: { ...DEFAULT_SETTINGS.dev, ...raw.dev },
       reader: { ...DEFAULT_SETTINGS.reader, ...raw.reader },
+      detail: { ...DEFAULT_SETTINGS.detail, ...raw.detail },
       download: { ...DEFAULT_SETTINGS.download, ...raw.download },
       cache: { ...DEFAULT_SETTINGS.cache, ...raw.cache },
     }
