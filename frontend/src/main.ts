@@ -4,6 +4,7 @@ import { popularPage } from './pages/popular.js'
 import { searchPage } from './pages/search.js'
 import { waitForPywebview } from './webstatus.js'
 import { albumPage } from './pages/detail.js'
+import { readerPage } from './pages/reader.js'
 
 // 注册路由
 registerRoute('/popular', popularPage)
@@ -18,6 +19,7 @@ nav.innerHTML = `
   registerRoute('/popular', popularPage)
   registerRoute('/search', searchPage)
   registerRoute('/album', albumPage)
+  registerRoute('/read', readerPage)
   startRouter()
 
   // 等 pywebview 就绪（不阻塞页面渲染）
