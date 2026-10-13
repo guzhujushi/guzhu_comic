@@ -48,6 +48,10 @@ export function searchPage(params: Record<string, string>): HTMLElement {
 
 function renderAlbumList(albums: AlbumSummary[], container: HTMLElement) {
   container.innerHTML = ''
+    if (albums.length === 0) {
+    container.innerHTML = '<p class="empty-hint">这个分类暂时没有上榜作品，换个时间或分类看看</p>'
+    return
+  }
   for (const item of albums) {
     const card = new AlbumCard()
     card.setData(item)

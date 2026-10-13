@@ -51,6 +51,12 @@ pre {
   white-space: pre-wrap;
 }
 
+.empty-hint {
+  text-align: center;
+  color: #888;
+  padding: 48px 0;
+}
+
 album-card {
   display: inline-block;
   width: 140px;
