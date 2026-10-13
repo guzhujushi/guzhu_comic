@@ -147,3 +147,39 @@ class API:
                 f.unlink()
                 n_files += 1
         return {"meta_rows": n_rows, "cover_files": n_files}
+
+    ALBUM_TTL = 86400
+
+    def get_album_detail(self, album_id: str) -> dict:
+        """
+        漫画详情，返回 {"id", "title", "author", "authors", "description",
+        "tags", "likes", "views", "page_count", "cover_url",
+        "chapters": [{"photo_id", "index", "title"}]}
+        """
+        album_id = str(album_id).strip()
+        key = f"album:{album_id}"
+        cached = self._cache_get(key, self.ALBUM_TTL)
+        if cached is not None:
+            return cached
+        try:
+            album = self.client.get_album_detail(album_id)
+        except Exception as e:
+            raise RuntimeError(f"详情获取失败: {e}") from e
+        data = {
+            "id": str(album.album_id),
+            "title": album.name,
+            "author": album.author,          # 第一作者
+            "authors": list(album.authors),  # 全部作者
+            "description": album.description,
+            "tags": list(album.tags),
+            "likes": str(album.likes),
+            "views": str(album.views),
+            "page_count": album.page_count,
+            "cover_url": JmcomicText.get_album_cover_url(album_id),
+            "chapters": [
+                {"photo_id": str(pid), "index": str(pindex), "title": pname}
+                for pid, pindex, pname in album.episode_list
+            ],
+        }
+        self._cache_set(key, data)
+        return data
