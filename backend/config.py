@@ -13,6 +13,8 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "width": 1200,
         "height": 800,
         "min_size": [800, 600],
+        "glass": "acrylic",   # none / mica / acrylic / tabbed（Win11 22H2+）
+        "glass_opacity": 0.92,
     },
     "dev": {
         "url": "http://localhost:5173",
@@ -25,6 +27,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "background": "dark",
         "page_gap": 0,
         "auto_scroll": 0,
+        "width": 1080,
     },
     "download": {
         "workers": 8,

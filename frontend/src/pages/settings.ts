@@ -1,4 +1,5 @@
 import { DEFAULT_SETTINGS, loadSettings } from '../settings.js'
+import { icons, morphIcon, setIcon } from '../components/icons.js'
 import type { AppSettings } from '../settings.js'
 
 /** 设置页的字段表：以后加配置项，加一行就行 */
@@ -8,6 +9,7 @@ interface FieldDef {
   type: 'text' | 'number' | 'bool' | 'pair'
   min?: number
   max?: number
+  step?: number
   hint?: string
   restart?: boolean     // 改完要重开窗口才生效
 }
@@ -20,6 +22,8 @@ const GROUPS: { title: string; fields: FieldDef[] }[] = [
       { path: 'window.width', label: '窗口宽度', type: 'number', min: 400, max: 5000, restart: true },
       { path: 'window.height', label: '窗口高度', type: 'number', min: 400, max: 5000, restart: true },
       { path: 'window.min_size', label: '最小尺寸（宽、高）', type: 'pair', min: 200, max: 5000, restart: true },
+      { path: 'window.glass', label: '窗口毛玻璃', type: 'text', hint: 'none / mica / acrylic / tabbed，acrylic 最像毛玻璃；Win11 22H2 起才有效', restart: true },
+      { path: 'window.glass_opacity', label: '窗口不透明度', type: 'number', min: 0.35, max: 1, step: 0.01, hint: '1 = 完全不透明；0.9 左右又透又看得清字', restart: true },
     ],
   },
   {
@@ -37,6 +41,7 @@ const GROUPS: { title: string; fields: FieldDef[] }[] = [
       { path: 'reader.mode', label: '阅读模式', type: 'text', hint: 'webtoon = 连续滚动，single = 单页翻页（阅读器里改是立即生效）' },
       { path: 'reader.background', label: '背景色', type: 'text', hint: 'dark / black / gray / light' },
       { path: 'reader.page_gap', label: '页间距（像素）', type: 'number', min: 0, max: 64, hint: '只在连续滚动模式有效' },
+      { path: 'reader.width', label: '阅读器图片宽度（像素）', type: 'number', min: 0, max: 2400, hint: '漫画列最多这么宽，0 = 铺满窗口；进阅读器时生效' },
       { path: 'reader.auto_scroll', label: '自动滚屏速度（像素/秒）', type: 'number', min: 0, max: 1000, hint: '0 = 关；只在连续滚动模式有效' },
     ],
   },
@@ -86,17 +91,28 @@ export function settingsPage(): HTMLElement {
     <form class="settings-form"></form>
     <p class="cache-usage"></p>
     <div class="settings-actions">
-      <button type="button" class="save-btn">保存</button>
-      <button type="button" class="reload-btn">重新读取</button>
-      <button type="button" class="trim-cache-btn">立即整理缓存</button>
-      <button type="button" class="clear-cache-btn">清空缓存</button>
+      <button type="button" class="save-btn"><morph-icon size="16" stroke-width="1.8"></morph-icon><span>保存</span></button>
+      <button type="button" class="reload-btn"><morph-icon size="16" stroke-width="1.8"></morph-icon><span>重新读取</span></button>
+      <button type="button" class="trim-cache-btn"><morph-icon size="16" stroke-width="1.8"></morph-icon><span>立即整理缓存</span></button>
+      <button type="button" class="clear-cache-btn"><morph-icon size="16" stroke-width="1.8"></morph-icon><span>清空缓存</span></button>
       <span class="settings-status"></span>
     </div>
     <p class="settings-note">缓存（章节图、封面、接口数据）删了会重新下；阅读记录在 data 目录里，清缓存不会碰它。</p>
+    <div class="about-card">
+      <img class="about-avatar" src="/apple-touch-icon.png" alt="" />
+      <div>
+        <p class="about-title">孤竹漫画 Guzhu Comic</p>
+        <p class="about-sub">PyWebView + Vite 写的本地漫画阅读器，图源走 JMComic-Crawler-Python；阅读记录和图片都只存在这台机器上。</p>
+      </div>
+    </div>
   `
 
   const formEl = el.querySelector<HTMLFormElement>('.settings-form')!
   const statusEl = el.querySelector<HTMLElement>('.settings-status')!
+  const saveIco = setIcon(el, '.save-btn morph-icon', icons.save)
+  const reloadIco = setIcon(el, '.reload-btn morph-icon', icons.reload)
+  setIcon(el, '.trim-cache-btn morph-icon', icons.trim)
+  setIcon(el, '.clear-cache-btn morph-icon', icons.cache)
   const usageEl = el.querySelector<HTMLElement>('.cache-usage')!
   const api = () => window.pywebview?.api
 
@@ -144,9 +160,14 @@ export function settingsPage(): HTMLElement {
       statusEl.textContent = 'pywebview api 未就绪'
       return
     }
-    fill(await loadSettings(true))
-    statusEl.textContent = ''
-    void refreshUsage()
+    reloadIco.classList.add('spin')
+    try {
+      fill(await loadSettings(true))
+      statusEl.textContent = ''
+      void refreshUsage()
+    } finally {
+      reloadIco.classList.remove('spin')
+    }
   }
 
   /** 缓存占用：超上限的话顺手把"立即整理"按钮点亮 */
@@ -172,12 +193,18 @@ export function settingsPage(): HTMLElement {
         return
       }
       statusEl.textContent = '保存中...'
+      morphIcon(saveIco, icons.reload)
+      saveIco.classList.add('spin')
       try {
         await api()!.save_settings(collect())
         fill(await loadSettings(true))
         statusEl.textContent = '已保存（标「重启生效」的重开窗口后生效）'
+        saveIco.classList.remove('spin')
+        morphIcon(saveIco, icons.saved)   // 保存按钮的图标打个勾
       } catch (err) {
         statusEl.textContent = err instanceof Error ? err.message : String(err)
+        saveIco.classList.remove('spin')
+        morphIcon(saveIco, icons.save)
       }
     })()
   })
@@ -247,6 +274,7 @@ function buildRow(field: FieldDef): HTMLElement {
       input.dataset.index = String(index)
       if (field.min !== undefined) input.min = String(field.min)
       if (field.max !== undefined) input.max = String(field.max)
+      if (field.step !== undefined) input.step = String(field.step)
       row.appendChild(input)
     }
   } else {
@@ -255,6 +283,7 @@ function buildRow(field: FieldDef): HTMLElement {
     input.dataset.path = field.path
     if (field.min !== undefined) input.min = String(field.min)
     if (field.max !== undefined) input.max = String(field.max)
+    if (field.step !== undefined) input.step = String(field.step)
     row.appendChild(input)
   }
 

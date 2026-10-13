@@ -32,7 +32,7 @@ export function historyPage(): HTMLElement {
         })),
         listEl,
         {
-          icon: '🕒',
+          avatar: true,
           title: '还没有阅读记录',
           hint: '去「热门」里挑一本，读过之后这里就有了',
           actionLabel: '去热门',

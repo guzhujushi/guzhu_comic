@@ -30,6 +30,17 @@ def _setting_int(value: Any, lo: int, hi: int, name: str) -> int:
     return n
 
 
+def _setting_float(value: Any, lo: float, hi: float, name: str) -> float:
+    """设置页提交的小数，非法直接报错"""
+    try:
+        n = float(value)
+    except (TypeError, ValueError):
+        raise ValueError(f"{name}要填数字") from None
+    if not (lo <= n <= hi):
+        raise ValueError(f"{name}要在 {lo}~{hi} 之间")
+    return round(n, 2)
+
+
 class _QuietHandler(SimpleHTTPRequestHandler):
     """去掉 http.server 的请求日志，免得刷屏"""
     def log_message(self, *args):
@@ -543,6 +554,14 @@ class API:
                     _setting_int(size[0], 200, 5000, "最小宽度"),
                     _setting_int(size[1], 200, 5000, "最小高度"),
                 ]
+            if "glass" in win:
+                glass_kind = str(win["glass"]).strip().lower()
+                if glass_kind not in ("none", "mica", "acrylic", "tabbed"):
+                    raise ValueError("窗口毛玻璃只能是 none / mica / acrylic / tabbed")
+                cfg["window"]["glass"] = glass_kind
+            if "glass_opacity" in win:
+                cfg["window"]["glass_opacity"] = _setting_float(
+                    win["glass_opacity"], 0.35, 1.0, "窗口不透明度")
 
             dev = settings.get("dev") or {}
             if "url" in dev:
@@ -567,6 +586,8 @@ class API:
                 cfg["reader"]["background"] = reader["background"]
             if "page_gap" in reader:
                 cfg["reader"]["page_gap"] = _setting_int(reader["page_gap"], 0, 64, "页间距")
+            if "width" in reader:
+                cfg["reader"]["width"] = _setting_int(reader["width"], 0, 2400, "阅读器图片宽度")
             if "auto_scroll" in reader:
                 cfg["reader"]["auto_scroll"] = _setting_int(reader["auto_scroll"], 0, 1000, "自动滚屏速度")
 

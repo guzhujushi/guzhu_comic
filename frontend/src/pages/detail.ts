@@ -1,5 +1,6 @@
 // pages/detail.ts
 import { renderEmpty, renderError } from '../components/states.js'
+import { icons, setIcon } from '../components/icons.js'
 import type { AlbumDetail, AlbumProgress } from '../types.js'
 
 export function albumPage(params: Record<string, string>): HTMLElement {
@@ -9,7 +10,7 @@ export function albumPage(params: Record<string, string>): HTMLElement {
   const albumId = params.id ?? ''
   if (!albumId) {
     renderEmpty(el, {
-      icon: '🧭',
+      avatar: true,
       title: '缺少漫画 ID',
       hint: '从热门或者搜索里点一本进来吧',
       actionLabel: '去热门',
@@ -67,7 +68,7 @@ function renderDetail(data: AlbumDetail, progress: AlbumProgress | null, contain
   const cover = (data.cover_url ?? '').replace(/"/g, '%22')
 
   container.innerHTML = `
-    <button class="back-btn">← 返回</button>
+    <button class="back-btn"><morph-icon size="15" stroke-width="1.8"></morph-icon><span>返回</span></button>
     <div class="detail-hero">
       <img class="detail-cover" src="${cover}" alt="" />
       <h1 class="page-title detail-title">${escapeHtml(data.title)}</h1>
@@ -75,7 +76,7 @@ function renderDetail(data: AlbumDetail, progress: AlbumProgress | null, contain
       <p class="detail-meta">👀 ${escapeHtml(data.views)}　❤️ ${escapeHtml(data.likes)}</p>
       <div class="tags">${data.tags.map((t) => `<span class="tag">${escapeHtml(t)}</span>`).join('')}</div>
     </div>
-    ${startChapter ? `<button class="read-btn">${readLabel}</button>` : ''}
+    ${startChapter ? `<button class="read-btn"><morph-icon size="18" stroke-width="1.8"></morph-icon><span>${readLabel}</span></button>` : ''}
     <p class="desc">${escapeHtml(data.description)}</p>
     <h2 class="section-title">章节（${data.chapters.length}）</h2>
     <div class="chapter-list"></div>
@@ -83,6 +84,10 @@ function renderDetail(data: AlbumDetail, progress: AlbumProgress | null, contain
 
   // 虚化层用 --cover 当背景，一路渐隐到背景色
   if (cover) container.querySelector<HTMLElement>('.detail-hero')!.style.setProperty('--cover', `url("${cover}")`)
+
+  setIcon(container, '.back-btn morph-icon', icons.back)
+  const readBtn = container.querySelector('.read-btn')
+  if (readBtn) setIcon(readBtn, 'morph-icon', icons.read)
 
   container.querySelector('.back-btn')!.addEventListener('click', () => history.back())
 

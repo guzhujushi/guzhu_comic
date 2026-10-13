@@ -3,6 +3,8 @@ window:
   width: 1200
   height: 800
   min_size: [800, 600]
+  glass: acrylic
+  glass_opacity: 0.92
 dev:
   url: http://localhost:5173
   debug: true
@@ -13,6 +15,7 @@ reader:
   background: dark
   page_gap: 0
   auto_scroll: 0
+  width: 1080
 download:
   workers: 8
 cache:

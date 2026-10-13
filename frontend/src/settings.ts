@@ -1,6 +1,13 @@
 /** 应用设置：读的是后端 config.yaml，进程内缓存一份（保存后用 loadSettings(true) 重新拉） */
 export interface AppSettings {
-  window: { title: string; width: number; height: number; min_size: number[] }
+  window: {
+    title: string
+    width: number
+    height: number
+    min_size: number[]
+    glass: 'none' | 'mica' | 'acrylic' | 'tabbed'
+    glass_opacity: number
+  }
   dev: { url: string; debug: boolean }
   reader: {
     restore_progress: boolean
@@ -9,6 +16,7 @@ export interface AppSettings {
     background: 'dark' | 'black' | 'gray' | 'light'
     page_gap: number
     auto_scroll: number
+    width: number
   }
   download: { workers: number }
   cache: {
@@ -23,11 +31,14 @@ export interface AppSettings {
 
 /** 和后端 DEFAULT_CONFIG 保持一致：桥没就绪或读失败时兜底，别让页面直接炸 */
 export const DEFAULT_SETTINGS: AppSettings = {
-  window: { title: 'Guzhu Comic', width: 1200, height: 800, min_size: [800, 600] },
+  window: {
+    title: 'Guzhu Comic', width: 1200, height: 800, min_size: [800, 600],
+    glass: 'none', glass_opacity: 0.92,   // 浏览器里没有 DWM，兜底不要玻璃
+  },
   dev: { url: 'http://localhost:5173', debug: true },
   reader: {
     restore_progress: true, click_to_page: true,
-    mode: 'webtoon', background: 'dark', page_gap: 0, auto_scroll: 0,
+    mode: 'webtoon', background: 'dark', page_gap: 0, auto_scroll: 0, width: 1080,
   },
   download: { workers: 8 },
   cache: {

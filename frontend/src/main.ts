@@ -3,32 +3,61 @@ import { registerRoute, startRouter } from './router.js'
 import { popularPage } from './pages/popular.js'
 import { searchPage } from './pages/search.js'
 import { waitForPywebview } from './webstatus.js'
+import { loadSettings } from './settings.js'
 import { albumPage } from './pages/detail.js'
 import { readerPage } from './pages/reader.js'
 import { historyPage } from './pages/history.js'
 import { settingsPage } from './pages/settings.js'
+import { createIcon, icons } from './components/icons.js'
+import { morphIcon } from './components/icons.js'
 
 // 注册路由
 registerRoute('/popular', popularPage)
 registerRoute('/search', searchPage)
 
-// 顶部导航：内容列和页面同宽，链接居中
+// 左侧导航栏：品牌 + 链接；当前页的图标会变个形
+const NAV_ITEMS = [
+  { path: '/popular', label: '热门', icon: icons.popular, activeIcon: icons.popularOn },
+  { path: '/search', label: '搜索', icon: icons.search, activeIcon: icons.searchDone },
+  { path: '/history', label: '最近阅读', icon: icons.history, activeIcon: icons.historyOn },
+  { path: '/settings', label: '设置', icon: icons.settings, activeIcon: icons.settingsOn },
+]
+
 const nav = document.querySelector<HTMLElement>('#nav')!
 nav.innerHTML = `
-  <div class="nav-inner">
-    <a href="#/popular" data-path="/popular">热门</a>
-    <a href="#/search" data-path="/search">搜索</a>
-    <a href="#/history" data-path="/history">最近阅读</a>
-    <a href="#/settings" data-path="/settings">设置</a>
+  <div class="nav-brand">
+    <img class="brand-avatar" src="/apple-touch-icon.png" alt="" />
+    <div class="brand-text">
+      <span class="brand-mark">孤竹漫画</span>
+      <span class="brand-sub">Guzhu Comic</span>
+    </div>
   </div>
+  <nav class="nav-links"></nav>
 `
+const navInner = nav.querySelector<HTMLElement>('.nav-links')!
+const navIcons = new Map<string, HTMLElement>()
+
+for (const item of NAV_ITEMS) {
+  const a = document.createElement('a')
+  a.href = `#${item.path}`
+  a.dataset.path = item.path
+  const ico = createIcon(item.icon, { size: 16 })
+  const text = document.createElement('span')
+  text.textContent = item.label
+  a.append(ico, text)
+  navIcons.set(item.path, ico)
+  navInner.appendChild(a)
+}
 
 // 详情页 / 阅读器不从导航进来，就不标高亮，免得跟来路对不上
 function syncNav(): void {
   const path = (window.location.hash.slice(1) || '/popular').split('?')[0]
-  nav.querySelectorAll<HTMLAnchorElement>('a').forEach((a) => {
-    a.classList.toggle('active', a.dataset.path === path)
-  })
+  for (const item of NAV_ITEMS) {
+    const a = navInner.querySelector<HTMLAnchorElement>(`a[data-path="${item.path}"]`)!
+    const on = a.dataset.path === path
+    a.classList.toggle('active', on)
+    morphIcon(navIcons.get(item.path)!, on ? item.activeIcon : item.icon)
+  }
 }
 window.addEventListener('hashchange', syncNav)
 syncNav()
@@ -45,4 +74,9 @@ try {
 } catch (err) {
   console.error(err)   // 真拿不到也别卡住，路由照跑，页面上会提示未就绪
 }
+// 窗口开着毛玻璃的话（config.yaml 的 window.glass），页面自己也留点透明度，
+// DWM 在窗口后面画的那层模糊才透得上来
+const boot = await loadSettings()
+document.documentElement.dataset.glass = boot.window.glass === 'none' ? 'off' : 'on'
+
 startRouter()

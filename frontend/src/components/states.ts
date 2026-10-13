@@ -2,6 +2,7 @@
 
 export interface EmptyOptions {
   icon?: string
+  avatar?: boolean   // 用项目头像当插图，别给 emoji
   title: string
   hint?: string
   actionLabel?: string
@@ -12,7 +13,7 @@ export interface EmptyOptions {
 export function renderEmpty(container: HTMLElement, opts: EmptyOptions): void {
   container.innerHTML = `
     <div class="empty-state">
-      <div class="empty-icon">${opts.icon ?? '📭'}</div>
+      ${opts.avatar ? '<img class="empty-avatar" src="/apple-touch-icon.png" alt="" />' : `<div class="empty-icon">${opts.icon ?? '📭'}</div>`}
       <p class="empty-title"></p>
       <p class="empty-sub"></p>
       <button type="button" class="empty-action"></button>
