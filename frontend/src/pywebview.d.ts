@@ -5,10 +5,11 @@ interface AlbumSummary {
 }
 
 type RankRange = "day" | "week" | "month"
+type ComicCategory = "all" | "doujin" | "single" | "short" | "hanman" | "meiman";
 
 interface PyApi {
   search(keyword: string): Promise<AlbumSummary[]>
-  get_ranking(time_range: str, page?: number): Promis<AlbumSummary[]>
+  get_ranking(time_range: RankRange, category?: ComicCategory, page?: number): Promis<AlbumSummary[]>
   clear_cache(): Promise<{ meta_rows: number; cover_files: number }>
 }
 

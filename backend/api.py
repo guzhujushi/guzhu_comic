@@ -18,6 +18,16 @@ _TIME_MAP = {
     "week": JmMagicConstants.TIME_WEEK,
     "month": JmMagicConstants.TIME_MONTH,
 }
+
+_CATEGORY_MAP = {
+    "all": JmMagicConstants.CATEGORY_ALL,       # 全部
+    "doujin": JmMagicConstants.CATEGORY_DOUJIN,  # 同人
+    "single": JmMagicConstants.CATEGORY_SINGLE,  # 单本
+    "short": JmMagicConstants.CATEGORY_SHORT,    # 短篇
+    "hanman": JmMagicConstants.CATEGORY_HANMAN,  # 韩漫
+    "meiman": JmMagicConstants.CATEGORY_MEIMAN,  # 美漫
+}
+
 class API:
     def __init__(self):
         self.client = JmOption.default().new_jm_client()
@@ -92,14 +102,16 @@ class API:
         self._cache_set(key, data)
         return data
 
-    def get_ranking(self, time_range: str, page: int = 1) -> list[dict[str, str]]:
+    def get_ranking(self, time_range: str, category: str = "all", page: int = 1) -> list[dict[str, str]]:
         """
-        排行榜：time_range 取 "day" / "week" / "month"
-        返回 [{"id", "title", "cover"}]，cover 为本地路径
+        排行榜：time_range 取 "day"/"week"/"month"，
+        category 取 "all"/"doujin"/"single"/"short"/"hanman"/"meiman"
         """
         if time_range not in _TIME_MAP:
             raise ValueError(f"未知榜单类型: {time_range}，应为 day/week/month")
-        key = f"ranking:{time_range}:{page}"
+        if category not in _CATEGORY_MAP:
+            raise ValueError(f"未知分类: {category}")
+        key = f"ranking:{time_range}:{category}:{page}"
         cached = self._cache_get(key, RANKING_TTL)
         if cached is not None:
             return cached
@@ -107,7 +119,7 @@ class API:
             result_page = self.client.categories_filter(
                 page=page,
                 time=_TIME_MAP[time_range],
-                category=JmMagicConstants.CATEGORY_ALL,
+                category=_CATEGORY_MAP[category],
                 order_by=JmMagicConstants.ORDER_BY_VIEW,
             )
         except Exception as e:
