@@ -8,6 +8,7 @@ import { albumPage } from './pages/detail.js'
 import { readerPage } from './pages/reader.js'
 import { historyPage } from './pages/history.js'
 import { favoritesPage } from './pages/favorites.js'
+import { categoryPage } from './pages/category.js'
 import { settingsPage } from './pages/settings.js'
 import { createIcon, icons } from './components/icons.js'
 import { morphIcon } from './components/icons.js'
@@ -68,6 +69,7 @@ registerRoute('/album', albumPage)
 registerRoute('/read', readerPage)
 registerRoute('/history', historyPage)
 registerRoute('/favorites', favoritesPage)
+registerRoute('/category', categoryPage)
 registerRoute('/settings', settingsPage)
 
 // 先等 pywebview 把 JS 桥注入好再开路由：否则首页会先闪一下"pywebview api 未就绪"

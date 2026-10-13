@@ -529,6 +529,95 @@ album-card .album-sub { display: block; color: var(--faint); font-size: 12px; ma
 .fav-cell .fav-del:disabled { opacity: .45; }
 .fav-error { margin: 0 0 14px; font-size: 13px; color: #ff8080; }
 
+/* ============ 热门榜单：hero + 分类标签条 + 面板 ============ */
+/* 分类标签条是"标签"，下面的面板是"标签的内容"：当前那个标签和面板同底色、
+   底边压住面板的上边线，看着就是贴在一起的一整块（#/popular 与 #/category 共用） */
+.board { margin: 20px 0 0; }
+.board-head { display: flex; align-items: flex-end; justify-content: space-between; gap: 12px; padding: 0 10px; }
+.board-tabs { display: flex; flex-wrap: wrap; gap: 4px; }
+
+.board-tab {
+  position: relative;
+  padding: 8px 16px;
+  background: transparent;
+  border: 1px solid transparent;
+  border-bottom: none;
+  border-radius: var(--radius) var(--radius) 0 0;
+  color: var(--muted);
+  font-size: 14px;
+  font-weight: 400;
+}
+.board-tab:hover { background: var(--surface-2); color: var(--text); }
+.board-tab.active {
+  z-index: 2;
+  margin-bottom: -1px;                      /* 盖住面板的上边线 */
+  background: var(--surface);
+  border-color: var(--border);
+  border-bottom: 1px solid var(--surface);  /* 和面板同色，接缝就没了 */
+  color: var(--text);
+  font-weight: 500;
+}
+
+.board-tools { display: flex; align-items: center; gap: 2px; padding-bottom: 7px; }
+
+.board-panel {
+  position: relative;
+  z-index: 1;
+  padding: 18px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+.board-empty { margin: 0 0 4px; }
+.board-empty[hidden] { display: none; }
+
+/* 下面各分类的横条 */
+.cat-section[hidden] { display: none; }
+.cat-section + .cat-section { margin-top: 22px; padding-top: 20px; border-top: 1px solid var(--border); }
+
+.cat-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin: 0 0 12px; }
+.cat-name { margin: 0; font-size: 15px; font-weight: 600; letter-spacing: .5px; color: #d8d8d8; }
+
+.cat-more {
+  gap: 2px;
+  padding: 4px 8px;
+  background: transparent;
+  border-color: transparent;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 400;
+}
+.cat-more:hover { background: var(--surface-2); color: var(--text); }
+
+/* 一个分类就一行：几张由 --cols 决定（JS 按面板宽度算好写进 style） */
+.cat-row { grid-template-columns: repeat(var(--cols, 5), minmax(0, 1fr)); }
+
+/* 卡片虚化入场：这一段进视口那一下才从模糊里浮出来，每张错开一点 */
+.board-panel .reveal album-card { opacity: 0; filter: blur(10px); }
+.board-panel .reveal.in album-card {
+  opacity: 1;
+  filter: blur(0);
+  transition: opacity .45s ease, filter .45s ease,
+    transform .18s, border-color .18s, background .18s;
+  transition-delay: calc(var(--i, 0) * 55ms);
+}
+
+/* 分类页：返回 + 「加载更多」 */
+.cat-back { margin: 0 0 10px; }
+.load-more { display: flex; justify-content: center; align-items: center; margin: 20px 0 0; }
+.load-more button {
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  color: var(--muted);
+  font-size: 13px;
+  padding: 7px 18px;
+  border-radius: 999px;
+}
+.load-more button:hover { background: var(--surface-3); color: var(--text); }
+.load-more button[disabled] { opacity: .6; }
+.load-hint { color: var(--faint); font-size: 12px; }
+
 /* ============ 详情页 ============ */
 .album-detail { position: relative; }
 
@@ -929,5 +1018,7 @@ pre { background: var(--surface-2); padding: 16px; border-radius: var(--radius);
 /* 系统开了「减弱动效」就都别动 */
 @media (prefers-reduced-motion: reduce) {
   .skeleton, .album-skeleton, .album-skeleton::after, .detail-skeleton::after, .spin { animation: none; }
+  .board-panel .reveal album-card,
+  .board-panel .reveal.in album-card { opacity: 1; filter: none; transition: none; }
   .hero-card { transition: none; }
 }
