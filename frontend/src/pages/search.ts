@@ -208,9 +208,28 @@ export function searchPage(params: Record<string, string>): HTMLElement {
     window.location.hash = '#/popular'
   }
 
-  async function doSearch(): Promise<void> {
+  /**
+   * 把"现在搜的是什么"写进地址栏：`#/search?q=…`。
+   *
+   * 用 replaceState 而不是赋 hash，两个原因：
+   *  ① 换关键词不该在历史里堆一串（`?q=a` → `?q=ab` → …），想退出去得按好几下；
+   *  ② 从详情页点「返回」时回到的就是这条**带关键词**的记录 —— 挂载时按 `params.q` 重搜一遍，
+   *     结果和输入框都还在（用户报的 bug 就是这个：以前地址里没词，返回只剩一个空搜索页）。
+   * 赋 hash 还会顺带触发 hashchange 把整页重渲染一遍，那是白跑 —— 屏幕上的东西已经对了。
+   */
+  function syncUrl(keyword: string): void {
+    const next = keyword ? `#/search?q=${encodeURIComponent(keyword)}` : '#/search'
+    if (window.location.hash !== next) window.history.replaceState(null, '', next)
+  }
+
+  /**
+   * restore=true 是"按地址栏还原"那条路（从详情返回 / 刷新 / 直接打开链接）：这种情况**不记搜索记录** ——
+   * 记录里的次数与时间是推荐画像的输入，跟着返回键刷上去就失真了。
+   */
+  async function doSearch(restore = false): Promise<void> {
     const keyword = keywordInput.value.trim()
     if (!keyword) {
+      syncUrl('')   // 词清空了就别在地址里留着上一次的，免得刷新 / 返回又冒出一个搜过的东西
       renderEmpty(listEl, { avatar: true, title: '先输入关键词', hint: '作者名、作品名都行' })
       keywordInput.focus()
       return
@@ -220,7 +239,8 @@ export function searchPage(params: Record<string, string>): HTMLElement {
       renderError(listEl, 'pywebview api 还没就绪', () => void doSearch())
       return
     }
-    rememberRecent(keyword)
+    if (!restore) rememberRecent(keyword)
+    syncUrl(keyword)
     try {
       renderAlbumSkeleton(listEl, 5)
       // 搜索时放大镜变成转圈的加载图标，回来再变回放大镜 / 打勾
@@ -277,9 +297,9 @@ export function searchPage(params: Record<string, string>): HTMLElement {
   // 推荐段跟首页同一套（一期不吃本次关键词），进来就开始铺
   rec.load()
 
-  // 如果 URL 带了 q，自动搜一次
+  // 如果 URL 带了 q，自动搜一次（从详情返回 / 刷新 / 手改地址都走这条，不记新记录）
   if (params.q) {
-    void doSearch()
+    void doSearch(true)
   } else {
     paintIdle()
     // 路由要等这个函数返回后才把节点挂上，所以聚焦得等下一帧
