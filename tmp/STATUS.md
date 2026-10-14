@@ -49,6 +49,8 @@
   + `frontend/index.html` 标题 `frontend` → `Guzhu Comic`
   + 跨平台兜底用例 `tmp/_check_platform_failopen.py`（非 Windows 上 glass / 单实例 / WebView2 三条都得放行）
   + 攒完改动**只打一次包**并过 Defender / VirusTotal：exe 2/75 报、zip 0/75 报，国内杀软全放行（见下面「第二次出包」）
+- [x] 加固 + **第四次出包（2026-10-14，发布版，给同学用之前）**：图片文件名收口（`_img_name`）+ 本地服务 **Host 白名单**
+  + 运行足迹 / 中文路径 / 打包态 Host 三类验收（见下面「第三次出包」「第四次出包」）
 
 ## 打包落地（P0 迁移）+ 杀软检测（2026-10-14）
 
@@ -137,8 +139,8 @@
   `_check_exe_single.py` 也改成**从配置读期望标题**。
 
 **产物**（`scripts/build_exe.ps1`，onedir **39.2 MB** / zip **20.1 MB**，构建约 26 秒）：
-- `build_out/GuzhuComic/GuzhuComic.exe`（SHA256 `BF755DC1E738F1CF2162FC38C245F4D312972A17D1601078DF10C2EC3866B2B3`，7.19 MB）
-- `build_out/GuzhuComic-0.1.0-win64.zip`（SHA256 `FED239FD89412F20862423B24BE59D81BC1E1A9BD9249B44D56144086D43D590`）
+- `build_out/GuzhuComic/GuzhuComic.exe`（SHA256 `BF755DC1E738F1CF2162FC38C245F4D312972A17D1601078DF10C2EC3866B2B3`，7.19 MB）**← 已被下面的第三次出包取代**
+- `build_out/GuzhuComic-0.1.0-win64.zip`（SHA256 `FED239FD89412F20862423B24BE59D81BC1E1A9BD9249B44D56144086D43D590`）**← 同上**
 - `build_work/app.ico` 现在**真的有 256×256 那一帧**（16/24/32/48/64/128/180/256，实测读回没错）。
 
 **打包态验收（真 exe，三份都全绿）**：
@@ -175,6 +177,84 @@
   PowerShell 直接解析失败（`Unexpected token ')'`，报在注释块里，看着像内容坏了其实是 BOM）。改 `.ps1` 一律"先剥 BOM 再补一个"。
 - `_check_exe_real.py` 会**删掉** `~/.jmreader/config.yaml` 与 `webview/`（它验的就是真首启）—— 跑它之前心里有数：
   阅读记录在 `data/app.db`（不动），但 localStorage 里的主题 / 偏好会回到默认。
+
+### 第三次出包：文件名收口 + 运行足迹验收（2026-10-14，给同学用之前）
+*(这一版的产物已被下面的第四次出包取代 —— 第三次之后又补了 Host 白名单)*
+
+用户问："不会污染我朋友本机的 Python 环境、内外几乎隔离、安全性都有保障对吧" —— 这类话不能凭感觉答，
+所以这一轮做的是**逐条去查**，查出一条真洞并堵上：
+
+**查出来的洞：图片文件名来自图源，我们直接拿来拼路径**
+- `img.filename` 是 jmcomic 从**图源页面里那个字符串**切出来的（`jm_entity.py` 的 `data_original[x+1:y]` 加后缀），
+  也就是远端说了算；而 `api.py` 里有 6 处 `目录 / img.filename`（缓存预加载、整本下载各三处）。
+  名字里带 `\\` 或 `..` 时，Windows 会把它当路径 → **图源（或它经过的 CDN）被投毒就能往下载 / 缓存目录外面写文件**。
+  正常数据碰不到（实测 207 张全是 `00001.webp` 这种），但这是个真权限越界，代价又低，所以堵掉。
+- 收口方式：新增 `_img_name(img)`——只取最后一段（`a/b/00001.webp` → `00001.webp`）；末尾是点/空格、
+  带 `<>:"|?*` 或控制字符、是 `.`/`..`/空的，一律退回**按序号命名**（`00007.webp`，后缀尽量保住，
+  因为 jmcomic 按后缀选解码方式、`.gif` 那条路跟别的图不一样）。6 处拼路径全走它，缓存里存的文件名也跟着变了。
+- 回归：`tmp/_check_hardening.py` 新增「图片文件名收口」一组（正常名原样返回 / 正反斜杠穿越 / `..` / `...` /
+  末尾空格 / 非法字符 / 控制字符 / 拼出来的路径必须还在目标目录里）；`tmp/_net_chapter_names.py` 拿真图源跑
+  端到端（207 张、名字一个没改、缓存目录里落的就是 `00001.webp…`）。
+
+**运行足迹：把"不污染本机"变成可复现的证据**（`tmp/_check_exe_footprint.py`，6/6）
+- 做法：把包放进受控环境跑一次（假 `USERPROFILE` + 假 `TEMP`），前后 diff。
+- 结果：新文件 **206 个，全部在 `<home>/.jmreader` 里**（config.yaml / data / cache / logs / webview 202 个）；
+  `<home>` 下**没有别的落点**；假 `%TEMP%` **0 个新文件**（onedir 不解压）；**程序自己的目录 0 个新文件**
+  （所以放只读位置也能跑）；注册表**没新增卸载项**、**没动 HKCU 的 PATH**。
+- 局限：只对比了这几个能控制的目录，`%LOCALAPPDATA%` 里的 WebView2 运行时缓存之类没做全盘 diff。
+
+**这一轮同时查过、没问题的**
+- 本地服务只绑 `127.0.0.1`（`backend/server.py` 里是 `ThreadingHTTPServer(("127.0.0.1", candidate), ...)`），
+  **不是 `0.0.0.0`** → 局域网里别人访问不到。`/images`、`/downloads` 两个静态根的路径穿越已有回归（`_check_imgserver.py`）。
+- **Host 白名单**（这条是第三次出包**之后**才补的，见「第四次出包」）：`_QuietHandler._host_ok` 只认
+  `127.0.0.1` / `localhost` / `[::1]`（带端口可以），其余 403 —— 不查这条的话 "DNS rebinding" 是通的：
+  恶意页面把自己的域名解析到 127.0.0.1，浏览器就当成同源，于是能读走 `/images`、`/downloads`。
+- 前端把图源返回的文本一律当不可信：`escapeHtml()` 进模板、`textContent` 兜底；封面地址单独把 `"` 转成 `%22`
+  （它既要进 `src=""` 又要进 `style --cover: url("")`）。全库扫了一遍 `innerHTML` 里的插值，剩下没走转义的都是本地常量/布尔。
+- 包内无遥测、无自动更新、无远程加载代码；只连图源站点（curl_cffi，HTTPS 校验证书）+ WebView2 加载本地 dist。
+
+**产物（第三次）**
+- `build_out/GuzhuComic/GuzhuComic.exe`（SHA256 `A733D6F622B03F83C9AC0A0681AF9A91421143D270A9E2678598CC85B3EC12C1`，7.02 MB）**← 已被第四次出包取代**
+- `build_out/GuzhuComic-0.1.0-win64.zip`（SHA256 `5404CCED1DC910D38E05D20D958A74918A68E9F46D944F011BF1328F72182433`，20.1 MB）**← 同上**
+- 验收：`_check_exe_package`（页面回报 `kids=1|rec=shown|cards=10|resume=shown|rows=30`）、`_check_exe_single`（6/6）、
+  `_check_exe_nonascii_path`（6/6）、`_check_exe_footprint`（6/6）、`_check_hardening` / `_check_api_smoke` / `_check_imgserver` 全绿。
+  **这一轮没跑 `_check_exe_real.py`** —— 它会清掉本机 `~/.jmreader/config.yaml` 与 `webview/`，
+  而"真首启"这件事已经被 `_check_exe_footprint`（假用户目录）覆盖，就不必再动自己的数据。
+- Defender：onedir / exe / zip 三处仍 **no threats**。VirusTotal（75 引擎）：**zip 0/75**（66 无检出 / 7 不支持 /
+  2 超时；VT 把这个 zip 认成 "Python Wheel package"，因为它里头是一堆 `.py` + `dist-info` —— 不影响判定）；
+  **裸 exe 2/75**，还是 `APEX` 与 `Skyhigh: BehavesLike.Win64.Backdoor.vc` 那两家行为启发式，与上一版判定完全一致；
+  大厂（Microsoft / Kaspersky / ESET / BitDefender / Symantec / TrendMicro / Sophos / Fortinet / Google /
+  CrowdStrike / SentinelOne …）与国内（火绒 / 腾讯 / 金山 / 瑞星 / 阿里 / 安天 / 江民 / 深信服）全部 clean。
+  **注意**：zip 那种"容器判定干净"和"解压出来的 exe 判定"要分开看 —— 同学解压后落盘的是 exe，别人机器上的杀软看的是那个 exe。
+
+**还没验的**（别当结论）：本机那个 WebView2 运行时缓存的落点（`%LOCALAPPDATA%`）没查；
+同机"别的进程能读本地服务"这件事只做了代码级判断（`127.0.0.1` + 无鉴权），没写攻击用例去逼。
+### 第四次出包（最终，发布版）：Host 白名单 + 打包态 Host 验收（2026-10-14）
+
+第三次出包之后又补了一处加固 —— **本地静态服务的 Host 头只能是自己**（挡浏览器侧的 DNS rebinding），
+所以重打了一次包。**这一版就是发给同学的那一版**。
+
+- 代码：`backend/server.py::_QuietHandler._host_ok()` —— Host 只认 `127.0.0.1` / `localhost` / `[::1]`（`:端口` 可有可无），
+  其余一律 403；`do_GET` / `do_HEAD` 各拦一道；不带 Host 的请求（HTTP/1.0 口径）放行。目录列表本来就禁着。
+- 新增**打包态**用例 `tmp/_check_exe_host.py`（8/8）：拿**真 exe** 起的服务、换 `Host` 头打同一台机器 ——
+  `127.0.0.1:47753` / `localhost:47753` / `[::1]:47753` → 200；`evil.test`、`127.0.0.1.evil.test`、`my.localhost` → 403
+  （`/index.html` 与 `/images/…` 各打一次）；不带 Host → 200。**这也是"最后一次改动确实进了包"的唯一证据** ——
+  包内模块压缩在 PYZ 里，grep 字符串搜不出来，只能功能验（第一版想靠搜字符串确认，白搜了两轮）。
+- 时间戳也对得上：`backend/server.py` 18:35:42 改完 → 18:36:29 出包（`--clean` 全量重建）。
+- 验收：`_check_exe_host`（8/8）、`_check_exe_package`（页面回报 `kids=1|rec=shown|cards=10|resume=shown|rows=30`）、
+  `_check_exe_single`（6/6）、`_check_exe_nonascii_path`（6/6）、`_check_exe_footprint`（6/6）、
+  `_check_hardening` / `_check_imgserver` / `_check_api_smoke` 全绿。
+- Defender：onedir / exe / zip 三处仍 **no threats**。
+- VirusTotal（75 引擎）：**zip 0/75**（64 无检出 / 7 不支持 / 3 失败 / 1 超时）；**裸 exe 3/75** ——
+  `APEX: Malicious`、`Skyhigh: BehavesLike.Win64.Backdoor.vc`（这两家前两版也是它俩，判定一致）+ 这一版多的一家
+  `Zillya: Trojan.Blank.Script.2228`（乌克兰小厂；报的名字里带 "Script" 而样本是 PE 二进制，属它那套启发式的口径，
+  已触发一次重新分析复核，判定没变）。大厂（Microsoft / Kaspersky / ESET / BitDefender / Symantec / TrendMicro /
+  Sophos / Fortinet / Palo Alto / Google / CrowdStrike / SentinelOne …）与国内（火绒 / 腾讯 / 金山 / 瑞星 / 阿里 /
+  安天 / 江民 / 深信服）全 clean。
+- **产物（最终）**：
+  - `build_out/GuzhuComic/GuzhuComic.exe`（SHA256 `F9F472FEFF4BE9588CE70EC6E879203547D2D6162CE422F047EA331E88982ABF`，6.86 MiB）
+  - `build_out/GuzhuComic-0.1.0-win64.zip`（SHA256 `EED8632782F017345FEAFCA60C3A97007C5648AFF6033ADAD5E58B09AED09C1E`，20.1 MB）
+- **zip 与 exe 要分开看**：同学解压后落盘的是 exe，别人机器上的杀软看的是那个 exe（不是 zip）。分发时给 zip + 校验和。
 
 ### 直连可用性实测：**不需要科学上网**（2026-10-14）
 
@@ -797,4 +877,7 @@
 6. ~~开场动画~~ —— **2026-10-14 已完成**（设计 `tmp/开场动画设计.md`，调研 `tmp/开场动画调研.md`）。真机验收两件事：① 现在的落位是「字标取代 `孤竹漫画` 整行，下面 `Guzhu Comic` 不动」，若要的是只换掉「孤竹」留下「漫画」（`GuZhu漫画`），改一处文案即可；② 毛玻璃开着时开场那一下的底色（设计稿 §3.4）。
 
 7. ~~**打包 P0 落码**~~ —— **2026-10-14 已完成**（见上面「打包落地」一节）：出包 + 真 exe 验收通过（见 `tmp/打包分发设计.md` §4 / §11 的原方案）：`backend/paths.py`（配置 + dist 路径统一入口）+ `backend/server.py`（本地静态服务，端口 47753 + 回退）+ `main.py` 按 `dev.use_dev_server` 选 URL + `API(base_url=...)` + `webview.start(private_mode=False, storage_path=...)`。验收：`scripts/build_exe.ps1` 出包 → 双击 → 走一遍首页 / 搜索 / 详情 / 阅读 / 最近阅读 / 设置 → 重开确认主题与偏好还在。
-8. 打包 P1：补 256×256 图标源图、单实例检测、WebView2 缺失提示、日志落盘。别做自动更新（无签名 + 自动下 exe = 误报与安全双重坑）。
+8. ~~**打包 P1**~~ —— **2026-10-14 已完成**（256×256 图标源图 / 单实例检测 / WebView2 缺失提示 / 日志落盘）。
+9. ~~**加固 + 第四次出包（发布版）**~~ —— **2026-10-14 已完成**：见上面「第四次出包」与 `tmp/交接文档.md` §0.5
+   （产物哈希 / 验收证据 / 待提交清单 / 没验证的边界）。
+   别做自动更新（无签名 + 自动下 exe = 误报与安全双重坑）。

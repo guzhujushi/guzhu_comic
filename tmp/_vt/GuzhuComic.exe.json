@@ -1,9 +1,9 @@
 {
-  "sha256": "bf755dc1e738f1cf2162fc38c245f4d312972a17d1601078df10c2ec3866b2b3",
+  "sha256": "f9f472feff4be9588ce70ec6e879203547d2d6162ce422f047ea331e88982abf",
   "stats": {
-    "malicious": 2,
+    "malicious": 3,
     "suspicious": 0,
-    "undetected": 69,
+    "undetected": 68,
     "harmless": 0,
     "timeout": 0,
     "confirmed-timeout": 0,
@@ -19,6 +19,11 @@
     [
       "Skyhigh",
       "BehavesLike.Win64.Backdoor.vc",
+      "malicious"
+    ],
+    [
+      "Zillya",
+      "Trojan.Blank.Script.2228",
       "malicious"
     ]
   ]

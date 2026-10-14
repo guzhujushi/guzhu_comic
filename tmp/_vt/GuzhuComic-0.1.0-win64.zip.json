@@ -1,13 +1,13 @@
 {
-  "sha256": "fed239fd89412f20862423b24be59d81bc1e1a9bd9249b44d56144086d43d590",
+  "sha256": "eed8632782f017345feafca60c3a97007c5648aff6033adad5e58b09aed09c1e",
   "stats": {
     "malicious": 0,
     "suspicious": 0,
-    "undetected": 66,
+    "undetected": 64,
     "harmless": 0,
-    "timeout": 2,
+    "timeout": 1,
     "confirmed-timeout": 0,
-    "failure": 0,
+    "failure": 3,
     "type-unsupported": 7
   },
   "hits": []

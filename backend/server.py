@@ -46,6 +46,36 @@ class _QuietHandler(SimpleHTTPRequestHandler):
             self.send_header("Cache-Control", "no-store, must-revalidate")
         super().end_headers()
 
+    # Host 只认本机回环（见下面 _host_ok 的注释）
+    _ALLOWED_HOSTS = ("127.0.0.1", "localhost", "[::1]", "::1")
+
+    def _host_ok(self) -> bool:
+        """
+        Host 头必须是本机回环，否则 403。
+
+        不查这一条的话 "DNS rebinding" 那条路是通的：恶意页面把域名解析到 127.0.0.1，
+        浏览器就认为跟它同源，于是能读走 /images、/downloads 里的东西。Host 里带端口
+        （127.0.0.1:47753）是正常的，这里只看主机名那一段；HTTP/1.0 那种不带 Host 的
+        放行（浏览器不会这么发）。
+        """
+        raw = (self.headers.get("Host") or "").strip().lower()
+        if not raw:
+            return True
+        host = raw.split("]")[0] + "]" if raw.startswith("[") else raw.rsplit(":", 1)[0]
+        return host in self._ALLOWED_HOSTS
+
+    def do_GET(self):
+        if not self._host_ok():
+            self.send_error(403, "Forbidden host")
+            return
+        super().do_GET()
+
+    def do_HEAD(self):
+        if not self._host_ok():
+            self.send_error(403, "Forbidden host")
+            return
+        super().do_HEAD()
+
     def list_directory(self, path: str):
         """
         目录列表一律不给：这个服务只是给页面取图用的，列目录等于把 cache/images 和离线下载

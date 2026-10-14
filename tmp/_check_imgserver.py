@@ -38,9 +38,12 @@ threading.Thread(target=server.serve_forever, daemon=True).start()
 base = "http://127.0.0.1:%d" % server.server_address[1]
 
 
-def get(path):
+def get(path, host=None):
+    req = urllib.request.Request(base + path)
+    if host is not None:
+        req.add_header("Host", host)
     try:
-        with urllib.request.urlopen(base + path, timeout=5) as r:
+        with urllib.request.urlopen(req, timeout=5) as r:
             return r.status, r.read()
     except urllib.error.HTTPError as e:
         return e.code, b""
@@ -83,7 +86,20 @@ def no_traversal():
 
 check("目录列表已关闭", listing_off)
 check("正常取图不受影响", files_ok)
+def host_guard():
+    port = server.server_address[1]
+    for host in ("127.0.0.1:%d" % port, "localhost:%d" % port, "127.0.0.1"):
+        code, body = get("/root.jpg", host=host)
+        assert code == 200 and body == b"ROOT", f"Host={host} 应当照常放行，实际 {code}"
+    for host in ("evil.com", "evil.com:%d" % port, "127.0.0.1.evil.com:%d" % port, "0.0.0.0:%d" % port):
+        code, body = get("/root.jpg", host=host)
+        assert code == 403, f"Host={host} 应当被拒（DNS rebinding），实际 {code}"
+        code, body = get("/downloads/422866/530000/1.jpg", host=host)
+        assert code == 403, f"Host={host} 走 /downloads 也应当被拒，实际 {code}"
+
+
 check("路径穿越出不去", no_traversal)
+check("Host 只认本机回环（挡 DNS rebinding）", host_guard)
 
 server.shutdown()
 import shutil

@@ -200,6 +200,37 @@ def misc_guards():
     expect(len(apimod.API.get_recommendations(rec, "home", 5, ["1"])["items"]) == 0, "exclude 命中的应被剔掉")
 
 
+def img_name_guards():
+    """
+    图片文件名收口：`img.filename` 来自图源页面，远端塞路径也不能写到目录外面去。
+    """
+    class Img:
+        def __init__(self, filename, index=1):
+            self.filename = filename
+            self.index = index
+
+    name = apimod._img_name
+    expect(name(Img("00001.webp")) == "00001.webp", "正常的 webp 名字原样返回")
+    expect(name(Img("01111.jpg", 5)) == "01111.jpg", "正常的 jpg 名字原样返回")
+    expect(name(Img("007.gif")) == "007.gif", "gif 名字原样返回（jmcomic 按后缀选解码）")
+    expect(name(Img("a/b/00001.webp")) == "00001.webp", "带目录段的名字只取最后一段")
+    expect(name(Img("..\\..\\evil.webp", 7)) == "evil.webp", "反斜杠穿越被砍掉")
+    expect(name(Img("../../evil.webp", 7)) == "evil.webp", "正斜杠穿越被砍掉")
+    expect(name(Img("a\\b\\..\\..\\x.png", 3)) == "x.png", "混合穿越也只留文件名")
+    expect(name(Img("", 9)) == "00009.jpg", "空名字退回序号命名")
+    expect(name(Img("..", 4)) == "00004.jpg", "'..' 退回序号命名")
+    expect(name(Img("...", 4)) == "00004.jpg", "末尾点是点（Windows 会吃掉）也退回序号")
+    expect(name(Img("00001.webp ", 4)) == "00004.webp", "末尾空格退回序号，但后缀保住")
+    expect(name(Img("a?b.webp", 6)) == "00006.webp", "带非法字符（?）退回序号")
+    expect(name(Img("x.webp\x00", 2)) == "00002.webp", "带控制字符退回序号")
+    folder = Path(tempfile.mkdtemp(prefix="gz_name_"))
+    for raw in ("..\\..\\evil.webp", "../../evil.webp", "a\\..\\..\\b.png", "...", ".."):
+        out = (folder / name(Img(raw, 7))).resolve()
+        expect(out.parent == folder.resolve(), "%r 解析后仍在目标目录里（得到 %s）" % (raw, out))
+
+
+check("图片文件名收口（图源给的名字不许带路径）", img_name_guards)
+
 check("start_download / get_recommendations 入参兜底", misc_guards)
 
 cfgmod.CONFIG_PATH = real_config_path

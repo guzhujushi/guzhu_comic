@@ -1,5 +1,5 @@
 {
-  "sha256": "bf755dc1e738f1cf2162fc38c245f4d312972a17d1601078df10c2ec3866b2b3",
+  "sha256": "a733d6f622b03f83c9ac0a0681af9a91421143d270a9e2678598cc85b3ec12c1",
   "stats": {
     "malicious": 2,
     "suspicious": 0,
@@ -91,10 +91,10 @@
       "category": "undetected",
       "result": null
     },
-    "Zillya": {
+    "VIPRE": {
       "method": "blacklist",
-      "engine_name": "Zillya",
-      "engine_version": "2.0.0.5707",
+      "engine_name": "VIPRE",
+      "engine_version": "6.0.0.35",
       "engine_update": "20261013",
       "category": "undetected",
       "result": null
@@ -110,7 +110,7 @@
     "K7AntiVirus": {
       "method": "blacklist",
       "engine_name": "K7AntiVirus",
-      "engine_version": "14.85.61119",
+      "engine_version": "14.85.61122",
       "engine_update": "20261014",
       "category": "undetected",
       "result": null
@@ -144,6 +144,14 @@
       "engine_name": "Arcabit",
       "engine_version": "2025.0.0.23",
       "engine_update": "20261014",
+      "category": "undetected",
+      "result": null
+    },
+    "huorong": {
+      "method": "blacklist",
+      "engine_name": "huorong",
+      "engine_version": "4d1646c:4d1646c:cce89bf:cce89bf",
+      "engine_update": "20261013",
       "category": "undetected",
       "result": null
     },
@@ -275,10 +283,10 @@
       "category": "undetected",
       "result": null
     },
-    "VIPRE": {
+    "Zillya": {
       "method": "blacklist",
-      "engine_name": "VIPRE",
-      "engine_version": "6.0.0.35",
+      "engine_name": "Zillya",
+      "engine_version": "2.0.0.5707",
       "engine_update": "20261013",
       "category": "undetected",
       "result": null
@@ -296,14 +304,6 @@
       "engine_name": "McAfeeD",
       "engine_version": "1.2.0.16534",
       "engine_update": "20261014",
-      "category": "undetected",
-      "result": null
-    },
-    "SentinelOne": {
-      "method": "blacklist",
-      "engine_name": "SentinelOne",
-      "engine_version": "7.8.0.2",
-      "engine_update": "20260924",
       "category": "undetected",
       "result": null
     },
@@ -383,7 +383,7 @@
       "method": "blacklist",
       "engine_name": "Kingsoft",
       "engine_version": "None",
-      "engine_update": "20261013",
+      "engine_update": "20261014",
       "category": "undetected",
       "result": null
     },
@@ -430,7 +430,7 @@
     "GData": {
       "method": "blacklist",
       "engine_name": "GData",
-      "engine_version": "GD:27.46348AVA:64.32069",
+      "engine_version": "GD:27.46350AVA:64.32069",
       "engine_update": "20261014",
       "category": "undetected",
       "result": null
@@ -531,11 +531,11 @@
       "category": "undetected",
       "result": null
     },
-    "huorong": {
+    "SentinelOne": {
       "method": "blacklist",
-      "engine_name": "huorong",
-      "engine_version": "4d1646c:4d1646c:cce89bf:cce89bf",
-      "engine_update": "20261013",
+      "engine_name": "SentinelOne",
+      "engine_version": "7.8.0.2",
+      "engine_update": "20260924",
       "category": "undetected",
       "result": null
     },
@@ -579,10 +579,10 @@
       "category": "undetected",
       "result": null
     },
-    "Trustlook": {
+    "Avast-Mobile": {
       "method": "blacklist",
-      "engine_name": "Trustlook",
-      "engine_version": "1.0",
+      "engine_name": "Avast-Mobile",
+      "engine_version": "261014-02",
       "engine_update": "20261014",
       "category": "type-unsupported",
       "result": null
@@ -603,10 +603,10 @@
       "category": "type-unsupported",
       "result": null
     },
-    "Avast-Mobile": {
+    "Trustlook": {
       "method": "blacklist",
-      "engine_name": "Avast-Mobile",
-      "engine_version": "261014-02",
+      "engine_name": "Trustlook",
+      "engine_version": "1.0",
       "engine_update": "20261014",
       "category": "type-unsupported",
       "result": null

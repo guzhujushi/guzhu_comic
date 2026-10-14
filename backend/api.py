@@ -66,6 +66,36 @@ def _setting_section(settings: dict, name: str, label: str) -> dict:
 # 写冲突时等多久（秒）：整本下载逐话写库、界面同时存进度，默认的 5 秒偶尔不够
 DB_TIMEOUT = 15.0
 
+# 文件名里不许出现的字符（Windows 的路径分隔符、通配符、控制字符）
+_BAD_NAME_CHARS = frozenset('<>:"|?*' + "".join(chr(c) for c in range(32)))
+
+
+def _img_name(img: Any) -> str:
+    """
+    图源给的图片文件名 → 只取"纯文件名"，一个路径分隔符都不许留。
+
+    `img.filename` 是 jmcomic 从**图源页面里那个字符串**切出来的（`data_original[x+1:y]` 加上后缀），
+    也就是远端说了算。而下游是 `目录 / name` 这么拼的 —— 名字里只要有 `\\` 或 `..`，那就成了
+    "图源（或它经过的 CDN）被投毒就能往下载 / 缓存目录外面写文件"。所以这一层必须自己收口：
+
+      * 只认最后一段（`a/b/00001.webp` → `00001.webp`），分隔符与 `..` 一律进不来；
+      * 后缀尽量保住（jmcomic 按后缀决定解码方式，`.gif` 那条路跟别的图不一样）；
+      * 名字实在不能用（空 / `.` / `..` / 带非法字符）就按序号命名 —— 图源正常给的本就是
+        `00001.webp` 这种，退回序号只是换个名字，图画本身不受影响。
+    """
+    raw = str(getattr(img, "filename", "") or "")
+    tail = raw.replace("\\", "/").split("/")[-1]
+    # 末尾的点和空格在 Windows 上会被偷偷吃掉（"... " 会变成空名），所以也算不可用
+    if tail and tail not in (".", "..") and tail == tail.rstrip(" .") \
+            and not (set(tail) & _BAD_NAME_CHARS):
+        return tail
+    # 非法字符先剔掉再看后缀：本来叫 x.webp\x00 的，还能认出是 .webp（解码方式跟后缀走）
+    clean = "".join(ch for ch in tail if ch not in _BAD_NAME_CHARS).rstrip(" .")
+    suffix = Path(clean).suffix
+    if not suffix or "/" in suffix or "\\" in suffix:
+        suffix = ".jpg"
+    return f"{int(getattr(img, 'index', 0) or 0):05d}{suffix}"
+
 
 def _db(path: Path) -> sqlite3.Connection:
     """
@@ -929,13 +959,13 @@ class API:
                 photo = self._jm.get_photo_detail(photo_id)
             except Exception as e:
                 raise RuntimeError(f"章节获取失败: {e}") from e
-            files = [img.filename for img in photo]
+            files = [_img_name(img) for img in photo]
             self._cache_set(key, files)
             if offline is None:
                 missing = [
-                    (img, img_dir / img.filename)
-                    for img in photo
-                    if not (img_dir / img.filename).exists()
+                    (img, img_dir / name)
+                    for img, name in zip(photo, files)
+                    if not (img_dir / name).exists()
                 ]
                 if missing:
                     self._spawn_download(photo_id, missing)
@@ -988,11 +1018,12 @@ class API:
                     return  # 网络不通就留着下次进章节再补
                 # 顺手把文件名列表也缓存了（get_chapter 也这么写）：预加载靠它判断
                 # "开头那几张已经在磁盘上"，不用每次都去网络问一遍
-                self._cache_set(f"photo:{photo_id}", [img.filename for img in photo])
+                names = [_img_name(img) for img in photo]
+                self._cache_set(f"photo:{photo_id}", names)
                 jobs = [
-                    (img, img_dir / img.filename)
-                    for img in photo
-                    if not (img_dir / img.filename).exists()
+                    (img, img_dir / name)
+                    for img, name in zip(photo, names)
+                    if not (img_dir / name).exists()
                 ]
             if limit is not None:
                 jobs = jobs[:limit]
@@ -1338,13 +1369,14 @@ class API:
             photo = self._jm.get_photo_detail(photo_id)
         except Exception:
             return False, self._count_files(folder), len(names or [])
-        files = [img.filename for img in photo]
+        files = [_img_name(img) for img in photo]
         self._cache_set(f"photo:{photo_id}", files)   # 下次续传就能跳过已下完的话
         # 目录得自己建：jmcomic 碰上不存在的目录是"静默不落盘"（请求照发、异常照吞、文件没有）
         folder.mkdir(parents=True, exist_ok=True)
-        jobs = [(img, folder / img.filename) for img in photo if not (folder / img.filename).exists()]
+        pairs = list(zip(photo, files))
+        jobs = [(img, folder / name) for img, name in pairs if not (folder / name).exists()]
         self._download_images_batched(jobs, pause)
-        missing = [img.filename for img in photo if not (folder / img.filename).exists()]
+        missing = [name for _img, name in pairs if not (folder / name).exists()]
         return (not missing), len(files) - len(missing), len(files)
 
     def _count_files(self, folder: Path, recursive: bool = False) -> int:

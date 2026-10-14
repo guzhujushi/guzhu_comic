@@ -44,7 +44,7 @@ PROBE = """<script>
     if (!api || !api.save_settings) return false;
     try { api.save_settings({ window: { title: text } }); return true; } catch (e) { return false; }
   }
-  [5000, 9000].forEach(function(ms){ setTimeout(function(){ send(snap()); }, ms); });
+  [5000, 9000, 15000].forEach(function(ms){ setTimeout(function(){ send(snap()); }, ms); });
   window.addEventListener('pywebviewready', function(){ setTimeout(function(){ send(snap()); }, 1500); });
 })();
 </script>"""
@@ -105,8 +105,13 @@ def main():
             except OSError:
                 text = ""
             if "PROBE|" in text:
-                payload = [ln for ln in text.splitlines() if "PROBE|" in ln][0].strip()
-                break
+                latest = [ln for ln in text.splitlines() if "PROBE|" in ln][0].strip()
+                payload = latest
+                # 网络慢的时候 9 秒那张快照可能就是空的（5 类榜单 + 推荐都得现拉），所以这里等到
+                # "推荐卡与横条都真有了"才收工，最迟 40 秒 —— 判定的是"铺得出来"，不是"9 秒时必须铺好"
+                got = dict(kv.split("=", 1) for kv in latest.split("|")[1:])
+                if int(got.get("cards", "0")) > 0 and int(got.get("rows", "0")) > 0:
+                    break
         if proc.poll() is not None:
             print("FAIL  exe 自己退了，退出码 " + str(proc.returncode), flush=True)
             return False
