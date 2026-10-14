@@ -149,6 +149,9 @@
 - **日志在冻结态实测可用**（这次新加的，日志本身就是验收对象）：`~/.jmreader/logs/app.log` 里能看到 banner——
   `孤竹漫画启动：frozen=True python=3.14.6` / 配置路径 / 加载地址 / 窗口参数，接着是 jmcomic 的
   `【api.setting】change APP_VERSION from [2.1.7] to [2.1.11]`（topic 折进去了、**没有重复行、没有格式报错**）。
+- **中文路径 / 中文用户名也验了**（`tmp/_check_exe_nonascii_path.py`，6/6）：同学把 zip 解压到「漫画 工具」这种带中文与空格的目录、
+  以及 `C:\Users\张三` 这种中文用户目录（靠给子进程改 `USERPROFILE` 模拟）—— 窗口起得来、静态服务照喂 dist、
+  首启把 `config.yaml` 与 `logs/app.log` 写进中文用户目录。这是"发给别人用"最容易被问到的场景，所以专门建了用例。
 - 旧回归重跑全绿：`_check_hero_dedupe` / `_check_coldstart` / `_check_bridge_wipe` / `_check_nav` / `_check_history` /
   `_check_reader_sheet` / `_check_router_guard` / `_check_hardening` / `_check_imgserver` / `_check_api_smoke` /
   `_check_webview2` / `_check_webview2_gate` / `_check_single_instance`；`tsc && vite build` exit 0。
