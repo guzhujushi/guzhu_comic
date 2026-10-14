@@ -187,8 +187,51 @@ body { margin: 0; min-height: 100vh; padding-left: var(--rail); }
 /* 两个入口平分一行：rail 窄了先一起收缩，不会一个撑破、另一个被挤下去 */
 .nav-foot-row a { flex: 1 1 0; min-width: 0; }
 
-/* 主题开关：长相跟上面那排链接一致，压在底部那对下面 */
-.nav-theme {
+/* 左下角的「继续阅读」：一张卡（封面 + 标题 + 读到第几页）+ 一个按钮，都指同一条记录 */
+.nav-resume { display: flex; flex-direction: column; gap: 6px; margin-bottom: 8px; }
+/* `display: flex` 会盖掉 hidden 属性那条 UA 规则（作者样式一律赢），得自己补一句 */
+.nav-resume[hidden] { display: none; }
+
+/* 卡片整块可点：边框 + 表面色跟 album-card 一个语系，但小一号（rail 只有 208px）。
+   选择器必须带 #nav 前缀 —— 它是个 <a>，会被 `#nav a`（含 :hover）按 id 权重压过去 */
+#nav .resume-card {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 7px 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--text);
+  text-decoration: none;
+  transition: background .15s, border-color .15s, transform .15s;
+}
+#nav .resume-card:hover { background: var(--surface-2); border-color: var(--border-strong); }
+#nav .resume-card:active { transform: scale(.97); }
+.resume-cover {
+  flex: none;
+  display: block;
+  width: 34px;
+  height: 46px;
+  border-radius: 6px;
+  object-fit: cover;
+  background: var(--surface-3);
+}
+/* min-width: 0 是给省略号留的：flex 子项默认不肯缩到内容宽度以下 */
+.resume-text { display: block; min-width: 0; }
+.resume-title {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+  font-size: 12.5px;
+  line-height: 1.35;
+}
+.resume-sub { display: block; margin-top: 3px; color: var(--faint); font-size: 11px; }
+
+/* 主题开关与「继续阅读」按钮：长相跟上面那排链接一致，压在底部那排下面 */
+.nav-theme,
+.nav-resume-go {
   display: flex;
   align-items: center;
   gap: 10px;
@@ -200,10 +243,13 @@ body { margin: 0; min-height: 100vh; padding-left: var(--rail); }
   font-family: inherit;
   font-size: 14px;
   font-weight: 400;
+  /* <button> 的 UA 样式把它锁成居中的，跟上面那排左对齐的链接对不上，显式靠左 */
+  justify-content: flex-start;
   text-align: left;
   box-shadow: none;
 }
-.nav-theme:hover { background: var(--surface); color: var(--text); }
+.nav-theme:hover,
+.nav-resume-go:hover { background: var(--surface); color: var(--text); }
 #nav a.active { background: var(--surface-2); color: var(--text); font-weight: 500; }
 
 /* ============ 内容列：定宽居中，左右有边界线 ============ */
@@ -1413,9 +1459,18 @@ pre { background: var(--surface-2); padding: 16px; border-radius: var(--radius);
   /* 64px 宽横着排塞不下两个入口：底部那对也竖着排 */
   .nav-foot-row { flex-direction: column; }
   .nav-foot-row a { flex: none; }
-  /* 主题开关也要跟着只留图标：它的文字是 <span>，不像上面那排 <a> 那样已经被盖住了。
-     不盖的话「深浅」两个字会在 64px 里竖着折行，把导航栏顶破（所以按钮上有 title 兜底） */
-  .nav-theme span { display: none; }
+  /* 主题开关 /「继续阅读」按钮也要跟着只留图标：它们的文字是 <span>，不像上面那排 <a>
+     那样已经被盖住了。不盖的话「深浅」「继续阅读」会在 64px 里竖着折行，把导航栏顶破
+     （所以按钮上有 title / aria-label 兜底） */
+  .nav-theme span,
+  .nav-resume-go span { display: none; }
+  /* 64px 里那张卡没有活路：横向的两样东西都塞不下，直接藏掉，只留按钮。
+     带 #nav 前缀是因为基础规则写的是 `#nav .resume-card { display: flex }`，权重更高 */
+  #nav .resume-card { display: none; }
+  .nav-resume { margin-bottom: 4px; }
+  /* 只剩图标了，跟上面那排一样居中 */
+  .nav-theme,
+  .nav-resume-go { justify-content: center; padding: 10px 0; }
 }
 
 /* ============ 动效与材质（2026-10-14） ============
@@ -1490,6 +1545,8 @@ body.reading .paper-grain { opacity: .42; }
   button,
   album-card,
   .nav-theme,
+  .nav-resume-go,
+  #nav .resume-card,
   .paper-grain { transition: none; }
   .board-panel .reveal album-card,
   .board-panel .reveal.in album-card { opacity: 1; filter: none; transition: none; }

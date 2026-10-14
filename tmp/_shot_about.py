@@ -8,12 +8,17 @@ REPO = r"D:\guzhu_comic"
 OUT = os.path.join(REPO, "tmp", "_ui")
 CHROME = r"C:\Program Files\Google\Chrome\Application\chrome.exe"
 
+HISTORY = ("[{album_id:'422866',photo_id:'530000',page_index:41,"
+           "title:'测试用漫画标题，故意长一点看两行截断',"
+           "cover_url:'/apple-touch-icon.png',updated_at:1750000000}]")
+
 STUB = """
 var stub = {
   get_settings: function () { return Promise.resolve({}); },
   prefetch_home: function () { return Promise.resolve(null); },
   get_ranking: function () { return Promise.resolve([]); },
   get_albums: function () { return Promise.resolve([]); },
+  get_history: function () { return Promise.resolve(HISTORY_JS); },
   get_recommendations: function () { return Promise.resolve({ items: [], cold: true }); }
 };
 window.pywebview = { api: new Proxy(stub, {
@@ -26,10 +31,10 @@ window.pywebview = { api: new Proxy(stub, {
 """
 
 SHOTS = [
-    ("about", "#/about", 1200, 900, ""),
-    ("about-light", "#/about", 1200, 900, "document.documentElement.dataset.theme='light';"),
-    ("popular", "#/popular", 1200, 900, ""),
-    ("narrow", "#/about", 1040, 800, ""),
+    ("nav-resume", "#/popular", 1200, 900, HISTORY, ""),
+    ("nav-resume-narrow", "#/popular", 1040, 800, HISTORY, ""),
+    ("nav-resume-empty", "#/popular", 1200, 900, "[]", ""),
+    ("nav-resume-light", "#/popular", 1200, 900, HISTORY, "document.documentElement.dataset.theme='light';"),
 ]
 
 
@@ -45,11 +50,9 @@ def main():
     tmp = os.path.join(tempfile.gettempdir(), "gz_preview")
     shutil.rmtree(tmp, ignore_errors=True)
     shutil.copytree(os.path.join(REPO, "frontend", "dist"), tmp)
-    open(os.path.join(tmp, "stub.js"), "w", encoding="utf-8", newline="\n").write(STUB)
     idx = os.path.join(tmp, "index.html")
     html = open(idx, encoding="utf-8").read().replace("</head>", '<script src="/stub.js"></script></head>', 1)
     assert "stub.js" in html
-    open(idx, "w", encoding="utf-8", newline="").write(html)
 
     port = free_port()
     httpd = http.server.ThreadingHTTPServer(
@@ -59,10 +62,12 @@ def main():
     profile = os.path.join(tempfile.gettempdir(), "gz_preview_chrome")
     shutil.rmtree(profile, ignore_errors=True)
     try:
-        for name, frag, w, h, extra in SHOTS:
+        for name, frag, w, h, hist, extra in SHOTS:
+            open(os.path.join(tmp, "stub.js"), "w", encoding="utf-8", newline="\n").write(
+                STUB.replace("HISTORY_JS", hist))
             body = ("<script>setTimeout(function(){%s},2000);</script>" % extra) if extra else ""
             open(idx, "w", encoding="utf-8", newline="").write(html.replace("</body>", body + "</body>", 1))
-            png = os.path.join(OUT, "v7-%s.png" % name)
+            png = os.path.join(OUT, "v8-%s.png" % name)
             cmd = [CHROME, "--headless=new", "--disable-gpu", "--hide-scrollbars",
                    "--user-data-dir=" + profile, "--screenshot=" + png,
                    "--window-size=%d,%d" % (w, h), "--virtual-time-budget=9000",

@@ -29,10 +29,23 @@
       空状态漫画气泡、阅读纸纹（feTurbulence 噪点层）、暗/浅双主题 + `clip-path: circle()` 圆形揭示、封面 → 阅读器共享元素转场（2026-10-14）
 - [x] 不做：一切账号体系（登录 / 网页端收藏 / 签到 / 发评论）—— 会落地账号凭据，有隐私风险（2026-10-13 定）
 - [x] 打包分发评估（`tmp/打包分发设计.md`）：onedir 方案 / 端口 47753 / 本地静态服务挂 `frontend/dist` / 误报清单 / 跨平台边界；配套 `scripts/build_exe.ps1` + `tmp/_probe_exe.py`（2026-10-14，冻结态实测通过：开窗、桥往返、30 张卡、localStorage 可写、38.9 MB）
+- [x] 左下角「继续阅读」：一张卡（最近读过的那本 + 封面 + 读到第几页）+ 一个按钮，点了直接进阅读器落回上次那页；没读过就整块藏起来（2026-10-14）
+- [x] README 页首加「亮点」段（数据不出本地 / 能反复读 / 接着上次看 / 推荐真算 / 无广告 / 现代桌面壳…）（2026-10-14）
 - [x] 导航栏「设置」移到底部左下角 + 新增「关于」页（`#/about`：能干什么 / 怎么用 / 数据在哪，README 的用户视角精简版）（2026-10-14）
 - [ ] 打包 P0 落码（待办）：`backend/paths.py` + `backend/server.py` + `main.py` 起静态服务 + `config.yaml` 的 `dev.use_dev_server` / `server.port` + `private_mode=False, storage_path=~/.jmreader/webview`
 - [ ] 打包 P1（待办）：256×256 的 `.ico` 源图、单实例检测、WebView2 Runtime 缺失提示、日志落盘 `~/.jmreader/logs/`
 
+## 左下角「继续阅读」+ README 亮点 改动清单（2026-10-14）
+
+用户要两件事：**左下角加一个「继续阅读」按钮**（显示最近阅读里时间最近的那本，上面渲染卡片）+ **把项目亮点写到 README 最显眼的位置**。
+**还是没打包**。用户没点具体条目，按对他最有利的挑了：数据不出本地 / 能反复读 / 接着上次看 / 推荐真算 / 无广告无账号 / 现代桌面壳 / 坏一格不连累整页 / 离线优先。
+
+- `frontend/src/resume.ts`（新）：`createResume()` → `{el, refresh}`。卡片（封面 + 两行标题 + 读到第 N 页）和按钮都指向 `#/read?photo_id=&album_id=`（阅读器自己会落回上次那页）；`get_history(1)` 拿第一条，`loading` 标志挡并发，拿不到就保留上一次、首次失败保持隐藏。
+- `frontend/src/main.ts`：`prepend` 到 `.nav-foot`（在关于 / 设置上面）；桥就绪后 `refresh()` 一次，之后每次 `hashchange` 再刷一次。
+- `frontend/src/style.css`：`.nav-resume` / `#nav .resume-card` / `.resume-cover` / `.nav-resume-go`（跟主题开关共用一套按钮外观，顺便把 `<button>` 被 UA 锁成居中的内容改成靠左）；窄屏藏卡片、按钮只留图标。
+- `README.md`：新增 `## 亮点` 段（放在页首、正文第一件事），页面表补「关于」路由，左侧导航那条补「继续阅读」。
+- 验收：`tsc --noEmit` + `npm run build` exit 0；无头 Chrome 截图（`tmp/_ui/v8-*.png`：有记录 / 无记录 / 窄屏 / 浅色）+ 点按钮读 `location.hash` 的功能核对（`tmp/_check_nav.py`）。
+- 踩到的坑（都写进 `tmp/交接文档.md` §5.16）：`display:flex` 盖掉 `hidden` 的 UA 规则、`<button>` 内容被 UA 居中、`#nav a` 权重压过 `.resume-card`、`a.href` 是绝对地址不能当 hash 用。
 ## 导航左下角（关于 / 设置）改动清单（2026-10-14）
 
 用户要两件事：**「设置」挪到左侧导航栏左下角** + **在它旁边加「关于」**，点开是一页 README 的精简版。

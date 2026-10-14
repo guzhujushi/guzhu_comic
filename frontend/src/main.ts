@@ -15,6 +15,7 @@ import { categoryPage } from './pages/category.js'
 import { forumPage } from './pages/forum.js'
 import { settingsPage } from './pages/settings.js'
 import { aboutPage } from './pages/about.js'
+import { createResume } from './resume.js'
 import { createIcon, icons } from './components/icons.js'
 import { morphIcon } from './components/icons.js'
 import { currentTheme, setTheme } from './theme.js'
@@ -89,7 +90,13 @@ themeBtn.className = 'nav-theme'
 const themeIcon = createIcon(icons.themeDark, { size: 16 })
 const themeLabel = document.createElement('span')
 themeBtn.append(themeIcon, themeLabel)
-nav.querySelector<HTMLElement>('.nav-foot')!.appendChild(themeBtn)
+const navFoot = nav.querySelector<HTMLElement>('.nav-foot')!
+navFoot.appendChild(themeBtn)
+
+// 「继续阅读」摆在这一摞的最上面（卡片 + 按钮）：它牵着「最近阅读」里时间最近的那一条，
+// 点一下接着上次那页看。没读过就整块藏起来，不留空位。
+const resume = createResume()
+navFoot.prepend(resume.el)
 
 function paintThemeButton(): void {
   const dark = currentTheme() === 'dark'
@@ -114,6 +121,15 @@ function syncNav(): void {
   }
 }
 window.addEventListener('hashchange', syncNav)
+// 换页就刷一次「继续阅读」。再补一次 500ms 后的：阅读器退出时先发 `save_progress`
+// 再改 hash，两条桥调用在 Python 侧是两个线程，偶尔会抢在写库前读到旧页码 ——
+// 这张卡写着"读到第几页"，差一页一眼就看得出来（本地 sqlite 一条 20 行的查询，不心疼）。
+let resumeSettle = 0
+window.addEventListener('hashchange', () => {
+  void resume.refresh()
+  window.clearTimeout(resumeSettle)
+  resumeSettle = window.setTimeout(() => void resume.refresh(), 500)
+})
 syncNav()
 
 registerRoute('/album', albumPage)
@@ -135,6 +151,8 @@ try {
   // 所以问它要 —— 自己再读一遍 localStorage 早晚会读岔，预热的是另一把 cache key 就白拉了。
   const prefs = homePrefs()
   void api.prefetch_home(prefs.range, prefs.sort).catch(() => undefined)
+  // 桥就绪才拉得动「继续阅读」那张卡（它要读 data/app.db 的 history 表）
+  void resume.refresh()
 } catch (err) {
   console.error(err)   // 真拿不到也别卡住，路由照跑，页面上会提示未就绪
 }
