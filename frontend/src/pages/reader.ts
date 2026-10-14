@@ -2,6 +2,7 @@ import { onUnmount } from '../router.js'
 import { icons, morphIcon, setIcon } from '../components/icons.js'
 import { loadSettings } from '../settings.js'
 import { warmChapterStart } from '../prefetch.js'
+import { currentTheme, setTheme } from '../theme.js'
 import type { AppSettings } from '../settings.js'
 import type { Chapter } from '../types.js'
 
@@ -226,6 +227,7 @@ export function readerPage(params: Record<string, string>): HTMLElement {
   // 阅读设置面板：改动立即生效，同时写回 config.yaml
   const MODES: [string, string][] = [['webtoon', '连续滚动'], ['single', '单页翻页']]
   const BACKGROUNDS: [string, string][] = [['dark', '深色'], ['black', '纯黑'], ['gray', '灰'], ['light', '浅色']]
+  const THEMES: [string, string][] = [['dark', '深色'], ['light', '浅色']]
   const toOptions = (items: [string, string][]) =>
     items.map(([value, label]) => `<option value="${value}">${label}</option>`).join('')
 
@@ -239,6 +241,7 @@ export function readerPage(params: Record<string, string>): HTMLElement {
       <div class="opt-grid">
         <label class="reader-opt"><span>阅读模式</span><select class="opt-mode">${toOptions(MODES)}</select></label>
         <label class="reader-opt"><span>背景色</span><select class="opt-bg">${toOptions(BACKGROUNDS)}</select></label>
+        <label class="reader-opt"><span>界面主题</span><select class="opt-theme">${toOptions(THEMES)}</select></label>
         <label class="reader-opt"><span>页间距</span><input class="opt-gap" type="number" min="0" max="64" /></label>
         <label class="reader-opt"><span>图片宽度</span><input class="opt-width" type="number" min="0" max="2400" /></label>
         <label class="reader-opt"><span>自动滚屏</span><input class="opt-auto" type="number" min="0" max="1000" /></label>
@@ -258,6 +261,7 @@ export function readerPage(params: Record<string, string>): HTMLElement {
   const pick = <T extends HTMLElement>(sel: string) => settingsEl.querySelector<T>(sel)!
   const modeSel = pick<HTMLSelectElement>('.opt-mode')
   const bgSel = pick<HTMLSelectElement>('.opt-bg')
+  const themeSel = pick<HTMLSelectElement>('.opt-theme')
   const gapInput = pick<HTMLInputElement>('.opt-gap')
   const widthInput = pick<HTMLInputElement>('.opt-width')
   const autoInput = pick<HTMLInputElement>('.opt-auto')
@@ -282,6 +286,13 @@ export function readerPage(params: Record<string, string>): HTMLElement {
   autoInput.addEventListener('change', () => { void saveReader({ auto_scroll: Number(autoInput.value) }) })
   clickBox.addEventListener('change', () => { void saveReader({ click_to_page: clickBox.checked }) })
   restoreBox.addEventListener('change', () => { void saveReader({ restore_progress: restoreBox.checked }) })
+
+  // 界面主题跟 config.yaml 无关（只记在本机），所以不走 saveReader，也不进 fillPanel
+  themeSel.value = currentTheme()
+  themeSel.addEventListener('change', () => {
+    const next = themeSel.value === 'light' ? 'light' : 'dark'
+    setTheme(themeSel, next)
+  })
 
   async function saveReader(partial: Record<string, unknown>): Promise<void> {
     const api = window.pywebview?.api

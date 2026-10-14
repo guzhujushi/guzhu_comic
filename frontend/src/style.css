@@ -1,4 +1,4 @@
-/* ============ 设计变量：Raycast 暗色系统（单一暗色 + 表面阶梯） ============ */
+/* ============ 设计变量：Raycast 双主题系统（暗色默认 + 浅色，表面阶梯） ============ */
 /* 层级靠“越亮越近”的表面阶梯和 1px 发丝线，不靠投影；强调色只给加载 / 焦点 / 进度 */
 :root {
   --bg: #07080a;            /* canvas 画布 */
@@ -31,6 +31,32 @@
   --col-pad: 20px;     /* 列内的左右留白 */
   --rail: 208px;       /* 左侧导航栏宽度 */
 
+  /* 动效：会动的只有 transform / opacity，颜色一律瞬时切换 */
+  --ease-spring: cubic-bezier(.34, 1.56, .64, 1);
+  --ease-out: cubic-bezier(.22, .61, .36, 1);
+  --dur-fast: .14s;
+  --dur: .22s;
+  --dur-slow: .34s;
+
+  /* 材质：近影 + 远影两层读作"厚度"，inset 那一像素是"边缘的高光" */
+  --depth-1: 0 1px 2px -1px rgba(0, 0, 0, .7), 0 10px 26px -14px rgba(0, 0, 0, .95);
+  --depth-2: 0 2px 4px -1px rgba(0, 0, 0, .62), 0 22px 48px -18px rgba(0, 0, 0, 1);
+  --edge: inset 0 1px 0 rgba(255, 255, 255, .07);
+  --edge-strong: inset 0 1px 0 rgba(255, 255, 255, .15);
+
+  /* 网点：全站唯一的加载纹理（骨架屏 / 等待 / 进度条都是它） */
+  --dots: radial-gradient(circle at 50% 50%, rgba(255, 255, 255, .085) 1.1px, transparent 1.7px);
+  --dots-ink: radial-gradient(circle at 50% 50%, rgba(122, 198, 255, .5) 1.3px, transparent 1.9px);
+  --dots-size: 8px;
+
+  /* 材质：极淡的一层垫底 + 1px 内描边 */
+  --tint: rgba(255, 255, 255, .03);
+  --ring: rgba(255, 255, 255, .08);
+  /* 毛玻璃块（.glass）的三件套，浅色主题要换一整套 */
+  --glass-bg: rgba(255, 255, 255, .055);
+  --glass-border: rgba(255, 255, 255, .12);
+  --glass-shadow: inset 0 1px 0 rgba(255, 255, 255, .12), 0 18px 40px -22px rgba(0, 0, 0, .85);
+
   font-family: system-ui, sans-serif;
   color: var(--text);
   background: var(--bg);
@@ -47,6 +73,61 @@
   --surface-hover: rgba(38, 39, 41, .62);
   --border: rgba(255, 255, 255, .09);
   --border-strong: rgba(255, 255, 255, .18);
+}
+
+/* ============ 浅色主题：同一套变量名，换个配色 ============ */
+/* 暗色是"越亮越近"，浅色反过来"越白越近"，所以表面阶梯往下走：surface 最白，越小的块越灰。
+   写在这儿必须排在 :root[data-glass="on"] 后面 —— 两者权重一样，靠顺序定胜负。 */
+:root[data-theme="light"] {
+  --bg: #eef0f3;
+  --bg-soft: #f5f6f8;
+  --surface: #ffffff;
+  --surface-2: #f6f7f9;
+  --surface-3: #e9ebef;
+  --surface-hover: #e2e5ea;
+  --border: #d8dbe1;
+  --border-strong: rgba(0, 0, 0, .2);
+  --text: #14161a;
+  --action: #1b1d22;        /* 主操作：浅色下反过来，黑底白字 */
+  --action-fg: #ffffff;
+  --action-pressed: #34383f;
+  --text-soft: #3a3f46;
+  --muted: #5b616a;
+  --faint: #868d97;
+  --primary: #0b6ecb;       /* 浅底上把强调色压深一点，原来的亮蓝在浅色上飘 */
+  --primary-soft: rgba(11, 110, 203, .12);
+  --primary-line: rgba(11, 110, 203, .45);
+  --ok: #10804c;
+  --warn: #8f6200;
+  --shadow: 0 12px 32px rgba(24, 30, 40, .16);
+  --shadow-card: 0 18px 42px rgba(24, 30, 40, .18), 0 5px 14px rgba(24, 30, 40, .12);
+
+  /* 材质：浅色下"厚度"是浅灰投影，边缘高光还是白的一像素 */
+  --depth-1: 0 1px 2px -1px rgba(24, 30, 40, .18), 0 10px 26px -14px rgba(24, 30, 40, .28);
+  --depth-2: 0 2px 4px -1px rgba(24, 30, 40, .16), 0 22px 48px -18px rgba(24, 30, 40, .34);
+  --edge: inset 0 1px 0 rgba(255, 255, 255, .9);
+  --edge-strong: inset 0 1px 0 #ffffff;
+  --tint: rgba(20, 22, 26, .035);
+  --ring: rgba(0, 0, 0, .08);
+  --glass-bg: rgba(255, 255, 255, .62);
+  --glass-border: rgba(0, 0, 0, .08);
+  --glass-shadow: inset 0 1px 0 #ffffff, 0 18px 40px -22px rgba(24, 30, 40, .28);
+
+  /* 网点：浅色下墨点是暗的 */
+  --dots: radial-gradient(circle at 50% 50%, rgba(20, 22, 26, .1) 1.1px, transparent 1.7px);
+  --dots-ink: radial-gradient(circle at 50% 50%, rgba(11, 110, 203, .45) 1.3px, transparent 1.9px);
+}
+
+/* 浅色 + 窗口毛玻璃：留点透明度让 DWM 那层模糊透上来，不能沿用暗色那套 */
+:root[data-theme="light"][data-glass="on"] {
+  --bg: rgba(240, 242, 245, .6);
+  --bg-soft: rgba(248, 249, 251, .55);
+  --surface: rgba(255, 255, 255, .62);
+  --surface-2: rgba(248, 249, 251, .58);
+  --surface-3: rgba(235, 238, 242, .6);
+  --surface-hover: rgba(226, 229, 234, .64);
+  --border: rgba(0, 0, 0, .1);
+  --border-strong: rgba(0, 0, 0, .22);
 }
 
 * { box-sizing: border-box; }
@@ -91,6 +172,25 @@ body { margin: 0; min-height: 100vh; padding-left: var(--rail); }
 }
 
 #nav a:hover { background: var(--surface); color: var(--text); }
+
+/* 主题开关：贴在导航栏底部，长相跟上面那排链接一致（margin-top: auto 顶到底） */
+.nav-theme {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: auto;
+  padding: 9px 10px;
+  border: 0;
+  border-radius: var(--radius);
+  background: transparent;
+  color: var(--muted);
+  font-family: inherit;
+  font-size: 14px;
+  font-weight: 400;
+  text-align: left;
+  box-shadow: none;
+}
+.nav-theme:hover { background: var(--surface); color: var(--text); }
 #nav a.active { background: var(--surface-2); color: var(--text); font-weight: 500; }
 
 /* ============ 内容列：定宽居中，左右有边界线 ============ */
@@ -144,7 +244,9 @@ button {
   font-weight: 500;
   line-height: 1;
   cursor: pointer;
-  transition: background .15s, border-color .15s, color .15s;
+  /* 只过渡 transform / opacity：底色和边框瞬时换，别拿它们做动画（要重绘） */
+  transition: transform var(--dur-fast) var(--ease-spring), opacity var(--dur) var(--ease-out);
+  box-shadow: var(--edge);
 }
 
 /* morphicons 的 <morph-icon>：跟着文字颜色走 */
@@ -155,6 +257,7 @@ morph-icon svg { display: inline-block; vertical-align: middle; }
 .spin { animation: icon-spin 1s linear infinite; }
 @keyframes icon-spin { to { transform: rotate(360deg); } }
 button:hover { background: var(--action-pressed); }
+button:active { transform: scale(.96); }
 
 input {
   padding: 10px 12px;
@@ -174,12 +277,12 @@ input:focus { outline: 2px solid var(--primary-soft); outline-offset: 1px; borde
 
 /* ============ 毛玻璃：半透明白 + 背景模糊 + 顶部高光 ============ */
 .glass {
-  background: rgba(255, 255, 255, .055);
-  border: 1px solid rgba(255, 255, 255, .12);
+  background: var(--glass-bg);
+  border: 1px solid var(--glass-border);
   border-radius: var(--radius-lg);
   backdrop-filter: blur(14px) saturate(1.4);
   -webkit-backdrop-filter: blur(14px) saturate(1.4);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .12), 0 18px 40px -22px rgba(0, 0, 0, .85);
+  box-shadow: var(--glass-shadow);
 }
 
 /* 玻璃背后垫一点微光，玻璃才有的可模糊；纯中性色，不跟强调色抢 */
@@ -199,7 +302,7 @@ input:focus { outline: 2px solid var(--primary-soft); outline-offset: 1px; borde
 /* 首页的搜索入口：看着像输入框，其实整个是个按钮 */
 .home-search { position: relative; display: flex; align-items: center; justify-content: center; gap: 12px; margin: -4px 0 18px; }
 .home-search .search-entry { width: min(520px, 100%); min-width: 0; margin: 0; }
-.home-avatar { flex: none; display: block; width: 40px; height: 40px; border-radius: 12px; box-shadow: 0 0 0 1px rgba(255, 255, 255, .1); }
+.home-avatar { flex: none; display: block; width: 40px; height: 40px; border-radius: 12px; box-shadow: 0 0 0 1px var(--ring); }
 
 .search-entry {
   display: flex;
@@ -215,7 +318,7 @@ input:focus { outline: 2px solid var(--primary-soft); outline-offset: 1px; borde
   text-align: left;
   cursor: text;
 }
-.search-entry:hover { background: rgba(255, 255, 255, .08); color: var(--text-soft); }
+.search-entry:hover { background: var(--surface-hover); color: var(--text-soft); }
 .search-entry-text { flex: 1; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 .search-entry kbd { flex: none; }
 
@@ -225,8 +328,8 @@ input:focus { outline: 2px solid var(--primary-soft); outline-offset: 1px; borde
 .search-shell { border-radius: 14px; padding: 20px 20px 24px; }
 .search-shell .page-head { margin-bottom: 18px; }
 .search-shell .search-bar input {
-  background: rgba(255, 255, 255, .05);
-  border-color: rgba(255, 255, 255, .14);
+  background: var(--tint);
+  border-color: var(--border-strong);
 }
 
 /* 搜索页的筛选行：范围 + 排序，用的还是"文字 + 箭头"那套下拉 */
@@ -279,33 +382,67 @@ input:focus { outline: 2px solid var(--primary-soft); outline-offset: 1px; borde
 .recent-hit:hover, .recent-del:hover { background: transparent; color: var(--text); }
 .recent-clear:hover { background: var(--surface); color: var(--text-soft); }
 
-/* ============ 空状态 / 骨架屏 ============ */
+/* ============ 空状态 / 骨架屏：全站"网点"这一套 ============ */
+
+/* 空状态：一张漫画气泡，底上铺网点 */
 .empty-state {
+  position: relative;
   grid-column: 1 / -1;      /* 落在卡片网格里也占满一整行 */
   text-align: center;
-  padding: 48px 16px;
-  border: 1px dashed var(--border);
-  border-radius: var(--radius);
+  padding: 44px 26px 40px;
+  margin-bottom: 12px;      /* 给气泡尾巴留地方 */
+  border: 1px solid var(--border);
+  border-radius: 18px;
+  background-color: var(--bg-soft);
+  background-image: var(--dots);
+  background-size: var(--dots-size) var(--dots-size);
+  box-shadow: var(--depth-1), var(--edge);
+}
+/* 气泡尾巴：左下角那只翘起来的小脚 */
+.empty-state::after {
+  content: '';
+  position: absolute;
+  left: 46px;
+  bottom: -8px;
+  width: 16px;
+  height: 16px;
   background: var(--bg-soft);
+  border-right: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+  border-bottom-right-radius: 3px;
+  transform: rotate(45deg);
 }
 .empty-icon { font-size: 30px; line-height: 1; opacity: .6; }
-.empty-avatar { display: block; width: 46px; height: 46px; margin: 0 auto; border-radius: 14px; box-shadow: 0 0 0 1px rgba(255, 255, 255, .08); }
+.empty-avatar { display: block; width: 46px; height: 46px; margin: 0 auto; border-radius: 14px; box-shadow: 0 0 0 1px var(--ring); }
 .empty-title { font-size: 15px; color: var(--text-soft); margin: 12px 0 0; }
 .empty-sub { color: var(--faint); font-size: 13px; margin: 6px 0 0; }
 .empty-action { margin-top: 16px; }
 
-/* 骨架块：呼吸式地一亮一暗，顺带往蓝里偏一点 */
+/* 骨架块不是灰块，是网点；"墨水流动"就是同一份网点在底下来回走（只动 transform / opacity） */
 .skeleton {
-  background: var(--surface-2);
+  position: relative;
+  overflow: hidden;
   border-radius: 6px;
-  animation: skeleton-breathe 2.6s ease-in-out infinite;
+  background-color: var(--tint);
+  background-image: var(--dots);
+  background-size: var(--dots-size) var(--dots-size);
 }
-@keyframes skeleton-breathe {
-  0%, 100% { background: var(--surface-2); }
-  50% { background: #16202a; }
+.skeleton::after {
+  content: '';
+  position: absolute;
+  inset: -100%;
+  background-image: var(--dots-ink);
+  background-size: var(--dots-size) var(--dots-size);
+  animation: ink-flow 2.2s linear infinite;
+  pointer-events: none;
+}
+@keyframes ink-flow {
+  0%   { transform: translate3d(-8px, -8px, 0); opacity: .06; }
+  45%  { opacity: .5; }
+  100% { transform: translate3d(8px, 8px, 0); opacity: .06; }
 }
 
-/* 卡片：边框和光晕一起呼吸 */
+/* 卡片骨架：材质跟真卡片一样（近影 + 远影 + 边缘高光），呼吸的只是整块的不透明度 */
 .album-skeleton {
   position: relative;
   overflow: hidden;
@@ -313,36 +450,16 @@ input:focus { outline: 2px solid var(--primary-soft); outline-offset: 1px; borde
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--radius);
-  animation: skeleton-glow 2.6s ease-in-out infinite;
+  box-shadow: var(--depth-1), var(--edge);
+  animation: sk-breathe 2.6s ease-in-out infinite;
 }
-@keyframes skeleton-glow {
-  0%, 100% { border-color: var(--border); box-shadow: 0 0 0 rgba(87, 193, 255, 0); }
-  50% { border-color: rgba(87, 193, 255, .38); box-shadow: 0 0 20px rgba(87, 193, 255, .18); }
+@keyframes sk-breathe {
+  0%, 100% { opacity: .76; }
+  50% { opacity: 1; }
 }
 .album-skeleton .sk-cover { aspect-ratio: 3 / 4; }
 .album-skeleton .sk-line { height: 12px; margin-top: 10px; }
 .album-skeleton .sk-line.short { width: 62%; }
-
-/* 那道光：条带从左下斜到右上，整条往左上扫，跟呼吸同一个周期 */
-.album-skeleton::after,
-.detail-skeleton::after {
-  content: '';
-  position: absolute;
-  inset: -60%;
-  background: linear-gradient(135deg,
-    transparent 42%,
-    rgba(87, 193, 255, .10) 47%,
-    rgba(125, 211, 252, .26) 50%,
-    rgba(87, 193, 255, .10) 53%,
-    transparent 58%);
-  transform: translate3d(60%, 60%, 0);
-  animation: skeleton-sweep 2.6s cubic-bezier(.45, 0, .55, 1) infinite;
-  pointer-events: none;
-}
-@keyframes skeleton-sweep {
-  0% { transform: translate3d(60%, 60%, 0); }
-  100% { transform: translate3d(-60%, -60%, 0); }
-}
 
 .detail-skeleton { position: relative; overflow: hidden; text-align: center; }
 .detail-skeleton .sk-cover { width: 208px; aspect-ratio: 3 / 4; margin: 0 auto; border-radius: 10px; }
@@ -351,6 +468,8 @@ input:focus { outline: 2px solid var(--primary-soft); outline-offset: 1px; borde
 .detail-skeleton .sk-line.w-24 { width: 24%; }
 .detail-skeleton .sk-block { height: 120px; margin-top: 26px; border-radius: var(--radius); }
 
+/* 论坛的评论骨架：外壳跟卡片一个材质，里面那三条线就是网点 */
+.comment-skeleton { border: 1px solid var(--border); border-radius: var(--radius); box-shadow: var(--edge); }
 
 /* ============ 首页 hero：三张横向大卡片摆成弧形，自己慢慢转 ============ */
 .hero { margin: 2px 0 24px; }
@@ -538,15 +657,17 @@ album-card {
   border: 1px solid var(--border);
   border-radius: var(--radius);
   cursor: pointer;
-  transition: transform .18s, border-color .18s, background .18s, box-shadow .18s;
+  box-shadow: var(--depth-1), var(--edge);
+  transition: transform var(--dur) var(--ease-spring);
 }
 album-card:hover {
   z-index: 2;
   transform: translateY(-4px) scale(1.06);
   border-color: var(--border-strong);
   background: var(--surface-3);   /* 往上走一格表面阶梯，"抬起来"才看得出来 */
-  box-shadow: var(--shadow-card);
+  box-shadow: var(--depth-2), var(--edge-strong);
 }
+album-card:active { transform: translateY(-1px) scale(.99); }
 album-card img {
   display: block;
   width: 100%;
@@ -796,7 +917,7 @@ album-card .dl-badge[hidden] { display: none; }
   padding: 3px 10px;
   border-radius: 999px;
   border: 1px solid var(--border);
-  background: rgba(255, 255, 255, .03);
+  background: var(--tint);
   color: var(--muted);
 }
 
@@ -1003,7 +1124,7 @@ album-card .dl-badge[hidden] { display: none; }
 body.reading #app { max-width: none; padding: 0; border-color: transparent; }
 
 .reader { --reader-col: 1080px; max-width: var(--reader-col); margin: 0 auto; min-height: 100vh; }
-.reader-images img { display: block; width: 100%; margin-bottom: var(--page-gap, 0px); background: var(--surface-2); }
+.reader-images img { display: block; width: 100%; margin-bottom: var(--page-gap, 0px); background-color: var(--surface-2); background-image: var(--dots); background-size: 10px 10px; }
 
 /* 单页模式：一次一页，图片撑满窗口 */
 .reader[data-mode="single"] .reader-images { position: fixed; inset: 0; }
@@ -1228,10 +1349,84 @@ pre { background: var(--surface-2); padding: 16px; border-radius: var(--radius);
   #nav a span { display: none; }
 }
 
+/* ============ 动效与材质（2026-10-14） ============
+   三条规矩：
+   1) 会动的东西只有 transform 和 opacity；
+   2) 颜色 / 边框 / 阴影一律瞬时切换，不拿它们做过渡（那是重绘）；
+   3) 系统开了「减弱动效」就全停（见文件末尾）。 */
+
+/* ---- 阅读背景的纸纹：SVG feTurbulence 生成的噪点，fixed 一层，绝不挡点击 ---- */
+.paper-grain {
+  position: fixed;
+  inset: 0;
+  z-index: -1;            /* 压在阅读背景之上、漫画页面之下 */
+  opacity: 0;
+  pointer-events: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='g'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='3' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='160' height='160' filter='url(%23g)' opacity='.42'/%3E%3C/svg%3E");
+  background-size: 160px 160px;
+  transition: opacity var(--dur-slow) var(--ease-out);
+}
+body.reading .paper-grain { opacity: .42; }
+
+/* ---- 唯一的加载态：网点 + 墨水流动 ---- */
+/* 章节还没到手时 .reader-images 是空的，就在那儿点一块网点 */
+.reader-images:empty::before {
+  content: '';
+  display: block;
+  width: 64px;
+  height: 64px;
+  margin: 34vh auto 0;
+  border-radius: 14px;
+  background-image: var(--dots-ink);
+  background-size: 10px 10px;
+  animation: ink-pulse 1.4s ease-in-out infinite;
+}
+@keyframes ink-pulse {
+  0%, 100% { opacity: .2; }
+  50% { opacity: .85; }
+}
+
+/* ---- 共享元素转场：封面 -> 阅读器 ---- */
+::view-transition-group(comic-cover) {
+  animation-duration: var(--dur-slow);
+  animation-timing-function: var(--ease-out);
+}
+::view-transition-old(comic-cover),
+::view-transition-new(comic-cover) {
+  animation-duration: var(--dur-slow);
+  mix-blend-mode: normal;
+}
+/* 名字两边都是临时的（motion.ts 在转场前后挂上 / 摘下），样式表里不写死：
+   名字常驻的话，主题圆揭示时阅读器会被单独拎成一个组，那个组不归 root 的
+   clip-path 管，就会整块先跳色。 */
+
+/* 根快照：平时就是 UA 那套淡入淡出，把时长对齐到我们的 --dur-slow */
+::view-transition-group(root) { animation-duration: var(--dur-slow); }
+/* 主题圆揭示（motion.ts 会挂上 data-vt="reveal"）：把根快照的淡入淡出整个按掉，
+   只留 circle() 那一圈在扫。留着淡入，新配色会先整屏淡上来，圆还没扫到的地方就穿帮。
+   mix-blend-mode 必须回 normal —— UA 默认是 plus-lighter，两层都不淡出就是两份叠着发白。 */
+:root[data-vt="reveal"]::view-transition-group(root) { animation-duration: 460ms; }
+:root[data-vt="reveal"]::view-transition-old(root),
+:root[data-vt="reveal"]::view-transition-new(root) { animation: none; mix-blend-mode: normal; }
+
 /* 系统开了「减弱动效」就都别动 */
 @media (prefers-reduced-motion: reduce) {
-  .skeleton, .album-skeleton, .album-skeleton::after, .detail-skeleton::after, .spin { animation: none; }
+  .skeleton::after,
+  .album-skeleton,
+  .spin,
+  .reader-images:empty::before { animation: none; }
+  .skeleton::after { opacity: .28; }
+  .reader-images:empty::before { opacity: .6; }
+  /* 状态照旧，只是不过渡 */
+  button,
+  album-card,
+  .nav-theme,
+  .paper-grain { transition: none; }
   .board-panel .reveal album-card,
   .board-panel .reveal.in album-card { opacity: 1; filter: none; transition: none; }
   .hero-card { transition: none; }
+  ::view-transition-group(root),
+  ::view-transition-group(comic-cover),
+  ::view-transition-old(comic-cover),
+  ::view-transition-new(comic-cover) { animation-duration: 1ms; }
 }

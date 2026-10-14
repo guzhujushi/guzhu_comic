@@ -5,6 +5,15 @@
     <link rel="icon" href="/apple-touch-icon.png" type="image/png" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>frontend</title>
+    <!-- 主题必须在第一帧之前定下来，不然浅色用户会先闪一下暗色。
+         读的就是 store.ts 的格式（guzhu: 前缀 + JSON），两边必须对得上。 -->
+    <script>
+      try {
+        if (JSON.parse(localStorage.getItem('guzhu:theme')) === 'light') {
+          document.documentElement.dataset.theme = 'light'
+        }
+      } catch (e) {}
+    </script>
     <style>
       /* 「GuZhu」开场闪屏：写死在 index.html 里。
          它是这个页面里最早就位的东西 —— main.ts 还得先拉一整张模块图，那几百毫秒里
@@ -12,6 +21,7 @@
          颜色尺寸一律写字面值（style.css 这会儿还没加载，--bg 那套变量用不了），
          资源一律不外链（字体 / 图片 / JS 都不引），首帧才稳。 */
       html { background: #07080a; }
+      html[data-theme="light"] { background: #eef0f3; }
       #splash { position: fixed; inset: 0; z-index: 100; display: grid; place-items: center; }
       /* 深色毛玻璃：毛玻璃窗（pywebview transparent）后面是桌面，这层糊的就是它；
          不透明窗下糊的是 html 底色，看着就是一块带光的深色板。 */
@@ -46,15 +56,60 @@
       }
       @keyframes splash-write { to { stroke-dashoffset: 0 } }
       @keyframes splash-glow { to { filter: drop-shadow(0 10px 38px rgba(146,170,255,.34)) } }
+      /* 网点墨水进度条：一排圆点从左往右依次亮起来。
+         只动 opacity —— 用 scaleX 去"填"会把圆点拉成椭圆，所以是点亮不是拉伸。
+         和骨架屏、章节等待共用同一套"网点 + 墨水"语言，全站就这一种加载态。 */
+      #splash-bar {
+        position: absolute;
+        left: 50%;
+        top: calc(50% + min(10vw, 118px));
+        display: flex;
+        gap: 7px;
+        transform: translateX(-50%);
+        transition: opacity .16s linear;
+      }
+      #splash-bar i {
+        width: 8px; height: 8px;
+        border-radius: 50%;
+        background: #a8ccff;
+        opacity: .16;
+        animation: splash-dot 1.8s linear infinite;
+        animation-delay: calc(var(--i) * 110ms);
+      }
+      @keyframes splash-dot {
+        0% { opacity: .16 }
+        22% { opacity: 1 }
+        44%, 100% { opacity: .16 }
+      }
+      #splash[data-out] #splash-bar { opacity: 0; }
+      html[data-theme="light"] #splash-bar i { background: #2f6fbe; }
+
+      /* 浅色主题下的闪屏：底色亮起来，墨迹反过来用深色 */
+      html[data-theme="light"] #splash-bg {
+        background:
+          radial-gradient(120% 80% at 50% 42%, rgba(255,255,255,.92), transparent 62%),
+          radial-gradient(90% 70% at 50% 118%, rgba(120,150,255,.14), transparent 62%),
+          rgba(240,242,246,.72);
+      }
+      html[data-theme="light"] #splash-mark path { stroke: #17191d; }
+      @keyframes splash-glow-light { to { filter: drop-shadow(0 10px 34px rgba(58,88,170,.26)) } }
+      html[data-theme="light"] #splash-mark { animation-name: splash-glow-light; }
+
       @media (prefers-reduced-motion: reduce) {
         #splash-mark { animation: none; filter: drop-shadow(0 10px 38px rgba(146,170,255,.34)); }
+        html[data-theme="light"] #splash-mark { filter: drop-shadow(0 10px 34px rgba(58,88,170,.26)); }
         #splash-mark path { animation: none; stroke-dashoffset: 0; }
+        #splash-bar i { animation: none; opacity: .7; }
       }
     </style>
   </head>
   <body>
+    <div class="paper-grain" aria-hidden="true"></div>
     <div id="splash" aria-hidden="true">
       <div id="splash-bg"></div>
+      <div id="splash-bar" aria-hidden="true">
+        <i style="--i:0"></i><i style="--i:1"></i><i style="--i:2"></i><i style="--i:3"></i><i style="--i:4"></i><i style="--i:5"></i><i style="--i:6"></i><i style="--i:7"></i><i style="--i:8"></i><i style="--i:9"></i><i style="--i:10"></i><i style="--i:11"></i><i style="--i:12"></i><i style="--i:13"></i>
+      </div>
       <!-- 一笔一条 path：时长按各笔长度分（合起来 1500ms，所以笔速一致），顺序就是下笔顺序。
            几何：笔画 25；大写顶中心 62 / x 高顶中心 100 / 基线中心 189；绕基线斜切 14°（斜体）。
            圆弧全都换成了三次贝塞尔 —— 斜切对贝塞尔是精确的，对 A 弧不是（会变成椭圆弧）。

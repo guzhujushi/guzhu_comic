@@ -24,7 +24,32 @@
 - [ ] A4 「只看汉化」（**2026-10-14 用户决定暂缓**；真要做需先引入 `impl='html'` 的第二客户端，见评估 §3）
 - [x] B3 整本离线下载 + 「我的下载」页 + 详情页同排下载按钮（2026-10-14）
 - [x] B6 开场动画（GuZhu 字标描边 + 闪屏预热 + 飞入左上角）（2026-10-14）
+- [x] UI 动效 / 质感一期：`--ease-spring` + 按钮 `:active` 回弹、卡片多层材质（近影 + 远影 + 1px 内高光）、"网点"加载签名（闪屏圆点进度条 / 骨架屏 / 章节等待统一）、
+      空状态漫画气泡、阅读纸纹（feTurbulence 噪点层）、暗/浅双主题 + `clip-path: circle()` 圆形揭示、封面 → 阅读器共享元素转场（2026-10-14）
 - [x] 不做：一切账号体系（登录 / 网页端收藏 / 签到 / 发评论）—— 会落地账号凭据，有隐私风险（2026-10-13 定）
+
+## UI 动效 / 材质 + 双主题 改动清单（2026-10-14）
+
+用户要的是"一套 UI 动效与质感"，六条：全局动效变量、主题切换的圆形揭示、统一加载签名、封面 → 阅读器共享元素转场、
+卡片/按钮材质、空状态与骨架屏网点化。约束：只动画 `transform` / `opacity`、要 `prefers-reduced-motion` 降级、桌面 WebView2。
+**只改 `style.css` + 少量 HTML/TS，没碰业务逻辑。**
+
+- `frontend/src/style.css`（主要改动）
+  - `--ease-spring` / `--ease-out` / `--dur-*` / `--depth-1` / `--depth-2` / `--edge` / `--edge-strong` / `--dots` / `--dots-ink` / `--tint` / `--ring` / `--glass-*`；
+  - `button { transition: transform … ; box-shadow: var(--edge) }` + `button:active { transform: scale(.96) }`；`album-card` 多层材质 + hover 抬升 + `:active`；
+  - 空状态整段重写成漫画气泡（网点底 + 左下角尾巴）；骨架屏全部改网点 + `ink-flow` / `sk-breathe`（只动 transform / opacity），删掉旧的光带；
+  - 新增 `.paper-grain`（SVG feTurbulence 噪点纸纹，fixed / `z-index: -1` / `pointer-events: none`，`body.reading` 时 0.42）、
+    `.reader-images:empty::before`（章节加载签名）、`.nav-theme`（导航底部的主题开关）、
+    `:root[data-theme="light"]` + `[data-glass="on"]` 两套浅色变量、`[data-vt="reveal"]` 那组转场规则；
+  - 文件末尾的 `@media (prefers-reduced-motion: reduce)` 段扩写：停掉所有加载动画、过渡清零、转场时长压到 1ms。
+- `frontend/src/motion.ts`（新）`calmMotion()` / `themedReveal()` / `morphToReader()`；`theme.ts`（新）`currentTheme()` / `setTheme()`。
+- `frontend/index.html`：第一帧之前定主题的内联脚本；闪屏里那条 14 点"网点墨水"进度条（内联 CSS，因为 style.css 还没到）；`.paper-grain` 那一层。
+- `frontend/src/main.ts`：导航底部加主题开关；`components/icons.ts` 加 `Moon` / `Sun`；`pages/detail.ts` 两处进阅读器改走 `morphToReader`；
+  `pages/reader.ts` 阅读设置浮层加「界面主题」。
+- 验收：`tsc --noEmit` 与 `npm run build` 均 exit 0；无头 Chrome 12 个场景探针全绿（暗/浅主题配色与落盘、`data-vt` 挂摘、
+  两处 `view-transition-name` 挂摘、章节跳转 + `.reading`、纸纹 SVG 解码 160×160、卡片/按钮/骨架/空状态的 computed style、reduced-motion 降级）。
+  截图见 `tmp/_ui/v6-*.png`。
+- **已知限制**：View Transition 的两段动画在无头 `--virtual-time-budget` 下回调不触发（实测），只能在真机上眼看；详见 `tmp/交接文档.md` §5.14。
 
 ## 整本下载（B3）+ 详情页文字不透明 改动清单（2026-10-14）
 

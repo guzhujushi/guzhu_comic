@@ -16,6 +16,7 @@ import { forumPage } from './pages/forum.js'
 import { settingsPage } from './pages/settings.js'
 import { createIcon, icons } from './components/icons.js'
 import { morphIcon } from './components/icons.js'
+import { currentTheme, setTheme } from './theme.js'
 
 // 注册路由
 registerRoute('/popular', popularPage)
@@ -61,6 +62,26 @@ for (const item of NAV_ITEMS) {
   navIcons.set(item.path, ico)
   navInner.appendChild(a)
 }
+
+// 主题开关：贴在导航栏底部。换的那一下走 View Transitions —— 从点击处摊开一个圆，
+// 把新配色揭出来（motion.ts）。桌面上阅读器里没有导航，所以阅读器设置面板里也有一份。
+const themeBtn = document.createElement('button')
+themeBtn.type = 'button'
+themeBtn.className = 'nav-theme'
+const themeIcon = createIcon(icons.themeDark, { size: 16 })
+const themeLabel = document.createElement('span')
+themeBtn.append(themeIcon, themeLabel)
+nav.appendChild(themeBtn)
+
+function paintThemeButton(): void {
+  const dark = currentTheme() === 'dark'
+  morphIcon(themeIcon, dark ? icons.themeDark : icons.themeLight)
+  themeLabel.textContent = dark ? '深色' : '浅色'
+}
+themeBtn.addEventListener('click', (event) => {
+  void setTheme(event, currentTheme() === 'dark' ? 'light' : 'dark').then(paintThemeButton)
+})
+paintThemeButton()
 
 // 详情页 / 阅读器不从导航进来，就不标高亮，免得跟来路对不上
 function syncNav(): void {

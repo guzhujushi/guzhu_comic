@@ -5,6 +5,7 @@ import { icons, morphIcon, setIcon } from '../components/icons.js'
 import { loadSettings } from '../settings.js'
 import { warmChapterStart } from '../prefetch.js'
 import { onUnmount } from '../router.js'
+import { morphToReader } from '../motion.js'
 import type { AppSettings } from '../settings.js'
 import type { AlbumDetail, AlbumProgress, CommentItem, DownloadTask } from '../types.js'
 
@@ -208,9 +209,11 @@ function renderDetail(
   container.querySelector('.back-btn')!.addEventListener('click', () => history.back())
   paintFavorite(container, data, fav)
 
-  // "开始阅读"/"继续阅读"：继续阅读直接跳到上次那一话，页码由阅读器自己恢复
+  // "开始阅读"/"继续阅读"：继续阅读直接跳到上次那一话，页码由阅读器自己恢复。
+  // 走共享元素转场：封面那个矩形一路长成整屏阅读器（motion.ts 的 morphToReader）
+  const coverEl = container.querySelector<HTMLElement>('.detail-cover')
   container.querySelector('.read-btn')?.addEventListener('click', () => {
-    window.location.hash = `#/read?photo_id=${startChapter.photo_id}&album_id=${data.id}`
+    morphToReader(coverEl, `#/read?photo_id=${startChapter.photo_id}&album_id=${data.id}`)
   })
 
   paintDownloadArea(container, data)
@@ -315,7 +318,7 @@ function paintChapters(
       if (ch.photo_id === resumeChapter?.photo_id) btn.classList.add('last-read')
       btn.textContent = ch.title || `第 ${ch.index} 话`   // 图源偶尔给空标题，别留个空白按钮
       btn.addEventListener('click', () => {
-        window.location.hash = `#/read?photo_id=${ch.photo_id}&album_id=${data.id}`
+        morphToReader(container.querySelector<HTMLElement>('.detail-cover'), `#/read?photo_id=${ch.photo_id}&album_id=${data.id}`)
       })
       listEl.appendChild(btn)
     }
