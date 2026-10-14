@@ -55,6 +55,11 @@
   + 攒完改动**只打一次包**并过 Defender / VirusTotal：exe 2/75 报、zip 0/75 报，国内杀软全放行（见下面「第二次出包」）
 - [x] **第五次出包（2026-10-14，0.1.1 正式 release）**：版本号 `0.1.0` → `0.1.1`（`backend/version.py` + `-Version 0.1.1`）重打包，
       打包态六项验收全绿、Defender 三处 no threats（**VirusTotal 这版没扫**：本机没配 API key）；产物与校验和见下面「第五次出包」一节
+- [x] **GitHub release `v0.1.1` 发布（2026-10-14）**：推 `main` + 注释 tag `v0.1.1` + 建 release（资产 = 上面那个 zip），
+      脚本 `tmp/_gh_release.py`（幂等）；发完从公网下载回来核过 SHA256 与本地一致
+- [x] **前端热更通道上线（2026-10-14）**：Gitea 仓库 `guzhujushi/guzhu_comic`（公开）+ `scripts\publish_frontend.ps1 -Push`
+      一条命令发布（走 ssh，不需要 token）；线上构建号 `20261014-2222-cc69097`；
+      三条验收（发布前 21/21、线上 15/15、真 exe 14 项）全过 —— 见下面「前端热更通道：已上线」一节
 - [x] 加固 + **第四次出包（2026-10-14，发布版，给同学用之前）**：图片文件名收口（`_img_name`）+ 本地服务 **Host 白名单**
   + 运行足迹 / 中文路径 / 打包态 Host 三类验收（见下面「第三次出包」「第四次出包」）
 - [x] 体验三项（2026-10-14，用户从“还能优化什么”里挑的**前三项**）：
@@ -1051,6 +1056,24 @@ A / B 组后端补齐 + 前端热更新通道（§「A / B 组后端补齐」「
 - 分支渲染用假数据截图核对过：没挂本子 → 不出现封面条；回评 / 「N 回复」两个小标签；剧透 → 文字糊住；拿不到封面 → 封面条只剩标题；`has_more=false` → 按钮藏起来、底下显示「到底了 —— 服务端只留最新的 5000 条评论」。
 - 没验的：真窗口（WebView2）里滚动手感、缩略图懒加载的实际观感 —— 交给用户。
 
+## 收工快照（2026-10-14）
+
+**都发出去了，代码也干净。** 三件交付物：
+
+| 交付物 | 在哪儿 | 状态 |
+|---|---|---|
+| 安装包 0.1.1 | GitHub release `v0.1.1`（tag = `267aa60`）＋ `build_out/GuzhuComic-0.1.1-win64.zip`（20.19 MiB） | 已发 |
+| 源码 | GitHub `main` = `1f1f2bf`，工作区干净 | 已推 |
+| 前端热更通道 | Gitea `guzhujushi/guzhu_comic`（公开），线上构建号 `20261014-2222-cc69097` | 已上线，真 exe 验过 |
+
+- **验收**：第五次出包六项打包态验收 + Defender 三处 no threats；发布前 `_check_publish_real.py` 21/21、
+  发布后 `_check_channel_live.py` 15/15、真 exe `_check_exe_hotupdate.py` 14 项；公网可达（本机直连 + 国外代理都 200
+  → 同学那边**不需要科学上网**）。
+- **以后发一版前端**：`powershell -ExecutionPolicy Bypass -File scripts\publish_frontend.ps1 -Push`（一条命令）。
+  发一版**安装包**：改 `backend/version.py` → `scripts\build_exe.ps1 -Version x.y.z` → `tmp/_gh_release.py`。
+- **剩下的都是可选 / 等条件**（代码签名、VirusTotal 补扫 0.1.1、第一次真有内容变化的热更、0.1.0 老用户换包、
+  阅读器双页 / 跨页、推荐二期、开场毛玻璃底色真机验收）—— 明细见 `tmp/交接文档.md` §0.5 与 §7 末尾「还剩的」。
+
 ## 决策记录
 
 - **2026-10-13**：文档按用户要求放 `tmp/`，不建 `docs/` 与根 `STATUS.md`。
@@ -1183,6 +1206,9 @@ A / B 组后端补齐 + 前端热更新通道（§「A / B 组后端补齐」「
 5. ~~**推荐段健壮性**~~ —— **2026-10-14 已修，并查到了真正的根因**（闸门另按方法引用判重注入、`quietMs=800`，见上面那份改动清单）：pywebview 启动会注两遍桥，第二次 `_createApi()` 重建在飞回调表 → 那些 promise 永不 settle → `await loadSettings()` 挂死、整窗空白。根因在后端 `API.client` / `API.download_dir` 是公开属性（被递归展开成 447 条、现场建客户端 0.855s，把两步窗口拉到秒级），已改私有名；前端配 `waitForBridge` 静默窗 + `bridgeCall` 重试。回归：`tmp/_check_coldstart.py`（假桥晚挂方法）、`tmp/_check_bridge_wipe.py`（模拟注两遍）。还想要的（可选）：候选池真空时兜底用榜单数据铺热度。
 6. ~~开场动画~~ —— **2026-10-14 已完成**（设计 `tmp/开场动画设计.md`，调研 `tmp/开场动画调研.md`）。
    落位也已定稿：字标只换「孤竹」两字，品牌行 = `GuZhu漫画`（2026-10-14 定，代码已改，见上面那份改动清单）。
+7. **剩下的（都不是"没做完"，是可选 / 等条件）**：代码签名（SmartScreen「未知发布者」的根治办法）、VirusTotal 补扫 0.1.1、
+   第一次"真有内容变化"的热更、0.1.0 老用户换新安装包、阅读器双页 / 跨页（下一步第 6 类的阅读器项）、
+   推荐二期、开场毛玻璃底色的真机验收 —— 明细见 `tmp/交接文档.md` §7 末尾「还剩的」。
    真机只剩一件待验收：毛玻璃开着时开场那一下的底色（设计稿 §3.4）。
 
 7. ~~**打包 P0 落码**~~ —— **2026-10-14 已完成**（见上面「打包落地」一节）：出包 + 真 exe 验收通过（见 `tmp/打包分发设计.md` §4 / §11 的原方案）：`backend/paths.py`（配置 + dist 路径统一入口）+ `backend/server.py`（本地静态服务，端口 47753 + 回退）+ `main.py` 按 `dev.use_dev_server` 选 URL + `API(base_url=...)` + `webview.start(private_mode=False, storage_path=...)`。验收：`scripts/build_exe.ps1` 出包 → 双击 → 走一遍首页 / 搜索 / 详情 / 阅读 / 最近阅读 / 设置 → 重开确认主题与偏好还在。
