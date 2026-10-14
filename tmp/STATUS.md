@@ -165,6 +165,14 @@
 
 `tsc --noEmit` / `npm run build` / `py_compile backend/api.py backend/config.py` 全部 exit 0。
 
+## 推荐段"没了"核对（2026-10-14）
+
+- 结论：**不是 bug**。真桥探针（`tmp/_probe_app.py`）实测首页 `.rec-section` 在、`hidden=false`、10 张卡，标题「热门推荐」；后端 `get_recommendations('home')` → `cold=True, items=10`。
+- 为什么是「热门推荐」：画像空（`favorite` 0 行 / `search_log` 0 行）→ `cold=True`，按设计退化成热度榜；此时排序与周榜「全部·按观看」前 10 逐位相同，所以看着像普通热门榜。
+- 有收藏 / 搜索后标题自动变「为你推荐」（副标题出命中 tag / 作者）。
+- 遗留：`recommend.ts` 的 `load()` 一次性、失败不重试（hero / 分类横条都会重试），这是"推荐段真会消失"的唯一路径，**未修**。
+- 详见 `tmp/交接文档.md` §5.15。
+
 ## 缓存策略 / 预加载 改动清单（2026-10-14）
 
 用户要的：列表先铺封面 + 标题、详情随后；进详情页先下"要读那一话"的前几张；一话看到 90% 就预加载下一话。
