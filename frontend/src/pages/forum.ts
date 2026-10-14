@@ -2,11 +2,11 @@
 // 论坛：全站评论流（只读，不需要登录）。每条评论下面挂一个"来自本子"的封面条，点它进详情。
 import { createIcon, icons } from '../components/icons.js'
 import { renderCommentSkeleton, renderEmpty, renderError } from '../components/states.js'
-import { onUnmount } from '../router.js'
+import { onUnmount, pageParam, replaceHash } from '../router.js'
 import { waitForApi } from '../webstatus.js'
 import type { ForumComment } from '../types.js'
 
-export function forumPage(): HTMLElement {
+export function forumPage(params: Record<string, string>): HTMLElement {
   const el = document.createElement('div')
   el.className = 'forum-page'
   el.innerHTML = `
@@ -23,6 +23,7 @@ export function forumPage(): HTMLElement {
   const moreBtn = el.querySelector<HTMLButtonElement>('.forum-more')!
   const hintEl = el.querySelector<HTMLParagraphElement>('.forum-hint')!
 
+  const startPage = pageParam(params)   // 地址里带的页码（从详情返回 / 刷新）
   let page = 0                 // 已经取到的页数
   let hasMore = true
   let busy = false
@@ -83,6 +84,15 @@ export function forumPage(): HTMLElement {
     }
   }
 
+  /**
+   * 页码写进地址（`#/forum?page=2`）：点进本子详情再返回就落回这一页 ——
+   * 跟分类页、搜索页一个路子（replaceState，不往历史里堆）。
+   */
+  function syncPage(): void {
+    const next = page > 1 ? `#/forum?page=${page}` : '#/forum'
+    if (window.location.hash !== next) replaceHash(next)
+  }
+
   async function load(): Promise<void> {
     if (busy) return
     const api = window.pywebview?.api
@@ -109,6 +119,7 @@ export function forumPage(): HTMLElement {
       retries = 0
       page++
       hasMore = data.has_more && data.items.length > 0
+      if (data.items.length > 0) syncPage()
       if (page === 1 && data.items.length === 0) {
         renderEmpty(listEl, { icon: '💬', title: '论坛这会儿是空的', hint: '图源没给评论，过一阵再来看看' })
         hasMore = false
@@ -149,7 +160,16 @@ export function forumPage(): HTMLElement {
   }
 
   moreBtn.addEventListener('click', () => void load())
-  void load()
+
+  // 地址里带了页码就把前面几页顺序补回来（评论分页在后端也有缓存：cache.comment_ttl）
+  void (async () => {
+    await load()
+    while (alive && hasMore && !busy && page < startPage) {
+      const before = page
+      await load()
+      if (page === before) return     // 没进展（失败 / 到底）就别空转
+    }
+  })()
 
   return el
 }

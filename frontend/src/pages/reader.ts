@@ -109,9 +109,12 @@ export function readerPage(params: Record<string, string>): HTMLElement {
   window.addEventListener('wheel', noteUserInput, { passive: true })
   window.addEventListener('touchmove', noteUserInput, { passive: true })
 
-  // 上下两条工具条都不常驻：鼠标动一下才出来，停手几秒自己缩回去；
-  // 滚轮和方向键都不算（不然翻页时会一直闪）
+  // 上下两条工具条都不常驻：指针靠近哪一侧才亮哪一条，停手几秒自己缩回去；
+  // 滚轮和方向键都不算（不然翻页时会一直闪）。
+  // 为什么不两条一起亮：它们会盖住正上方 / 正下方那一截漫画 —— 漫画是内容，少盖一点是正经事。
   const HIDE_AFTER_MS = 2600
+  const TOP_ZONE = 110        // 指针离上边这么近：只出上面那条信息条
+  const BOTTOM_ZONE = 150     // 离下边这么近：只出底部操作条（胶囊本身在 22px 上，够得着）
   const bars = [topEl, dockEl]
   let hideTimer = 0
   let pointerX = 0
@@ -121,6 +124,12 @@ export function readerPage(params: Record<string, string>): HTMLElement {
   const sheetOpen = () => !chaptersEl.hidden || !settingsEl.hidden
   const toolbarVisible = () => topEl.dataset.visible === 'true'
 
+  /** 开始"停手几秒就收"的倒计时（每次唤出 / 离开工具条都重来一遍） */
+  function armHide(): void {
+    window.clearTimeout(hideTimer)
+    hideTimer = window.setTimeout(hideToolbar, HIDE_AFTER_MS)
+  }
+
   function hideToolbar(force = false): void {
     window.clearTimeout(hideTimer)
     // 面板开着就别偷偷收，不然正挑着章节呢就没了
@@ -129,17 +138,24 @@ export function readerPage(params: Record<string, string>): HTMLElement {
     openSheet(null, false)
   }
 
-  function showToolbar(): void {
-    for (const bar of bars) bar.dataset.visible = 'true'
-    window.clearTimeout(hideTimer)
-    hideTimer = window.setTimeout(hideToolbar, HIDE_AFTER_MS)
+  /** 显式唤出（M 键 / 点屏幕中间 / 开浮层）：默认两条都亮，也可以只亮一侧 */
+  function showToolbar(side: 'top' | 'bottom' | 'both' = 'both'): void {
+    if (side !== 'bottom') topEl.dataset.visible = 'true'
+    if (side !== 'top') dockEl.dataset.visible = 'true'
+    armHide()
   }
 
   const onMouseMove = (e: MouseEvent) => {
     if (Math.abs(e.clientX - pointerX) + Math.abs(e.clientY - pointerY) < 6) return   // 轻微抖动不算
     pointerX = e.clientX
     pointerY = e.clientY
-    showToolbar()
+    if (sheetOpen()) return      // 浮层开着时下面那两条是它的"把手"，别去动
+    const nearTop = e.clientY <= TOP_ZONE
+    const nearBottom = e.clientY >= window.innerHeight - BOTTOM_ZONE
+    if (!nearTop && !nearBottom) return   // 屏幕中间：已经亮着的不动（别闪），到点自己收
+    topEl.dataset.visible = nearTop ? 'true' : 'false'
+    dockEl.dataset.visible = nearBottom ? 'true' : 'false'
+    armHide()
   }
   window.addEventListener('mousemove', onMouseMove, { passive: true })
 
@@ -152,9 +168,13 @@ export function readerPage(params: Record<string, string>): HTMLElement {
   }
   window.addEventListener('wheel', onWheel, { passive: true })
 
+  // 指针停在哪一条上就只保它亮着（别再顺手把另一条也拉出来），离开时开始倒计时
+  topEl.addEventListener('mouseenter', () => { pointerInside = true; showToolbar('top') })
+  for (const panel of [dockEl, chaptersEl, settingsEl]) {
+    panel.addEventListener('mouseenter', () => { pointerInside = true; showToolbar('bottom') })
+  }
   for (const panel of [topEl, dockEl, chaptersEl, settingsEl]) {
-    panel.addEventListener('mouseenter', () => { pointerInside = true; showToolbar() })
-    panel.addEventListener('mouseleave', () => { pointerInside = false; showToolbar() })
+    panel.addEventListener('mouseleave', () => { pointerInside = false; armHide() })
   }
 
   let chapters: Chapter[] = []
@@ -214,8 +234,14 @@ export function readerPage(params: Record<string, string>): HTMLElement {
     settingsEl.hidden = name !== 'settings'
     morphIcon(chaptersIco, name === 'chapters' ? icons.close : icons.chapters)
     morphIcon(settingsIco, name === 'settings' ? icons.close : icons.settings)
-    if (!name || !keep) return
-    showToolbar()
+    if (!name) {
+      // 用户自己把浮层关掉的（keep = true 那条路）：工具条开始倒计时；
+      // hideToolbar 自己收的那次（keep = false）不能再排一遍定时器，不然就是定时器套定时器
+      if (keep) armHide()
+      return
+    }
+    if (!keep) return
+    showToolbar('bottom')
     if (name === 'chapters') chaptersEl.querySelector('.current')?.scrollIntoView({ block: 'center' })
   }
 

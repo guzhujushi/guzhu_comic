@@ -55,6 +55,64 @@
   + 攒完改动**只打一次包**并过 Defender / VirusTotal：exe 2/75 报、zip 0/75 报，国内杀软全放行（见下面「第二次出包」）
 - [x] 加固 + **第四次出包（2026-10-14，发布版，给同学用之前）**：图片文件名收口（`_img_name`）+ 本地服务 **Host 白名单**
   + 运行足迹 / 中文路径 / 打包态 Host 三类验收（见下面「第三次出包」「第四次出包」）
+- [x] 体验三项（2026-10-14，用户从“还能优化什么”里挑的**前三项**）：
+  ①「返回就到原处」—— 全站滚动位置 + 分类页 / 论坛页码写进地址；②详情页作者 / 标签可点，一下按它重搜；
+  ③阅读器工具条按指针位置分上下唤出（第四项“下载页总占用 / 按话下载 / 导出”按用户要求**先砍掉**）
+
+## 体验三项（返回还原 / 作者标签可点 / 工具条分上下唤）改动清单（2026-10-14）
+
+用户从「还有什么可以优化体验的地方」那份清单里挑了**前三项**做；第四项（下载页总占用 / 剩余空间、按话下载、导出成文件包）
+**按用户要求先砍掉**（见「下一步」第 4 条）。
+
+### ① 返回就到原处：全站滚动位置 + 分类页 / 论坛页码
+
+- `frontend/src/router.ts`（这轮的重头；`tmp/交接文档.md` §5.23 有完整的"为什么这么写"与三个坑）：
+  - `scrollMemo`（`地址（参数排序后）→ 离开时看到哪儿了`，上限 60 条）+ `currentKey`（屏幕上这一页的地址）+ `rememberScroll()`；
+    **在 `resolve()` 开头、也就是"离开这一页"的瞬间记一次**，键用 `currentKey` —— 这会儿地址栏已经是新地址了，
+    现读 `location.hash` 会记到新页面名下。这块记忆**只活在这一次会话**，不落盘。
+  - `traversed` 不再靠 `popstate` 判：**Chrome 在 hash 变化时也会甩一个 popstate**（跟 hashchange 前后脚到），
+    于是"点导航进新页面"也被当成退回来（实测位置卡在 500 不回顶）。改成给每条历史记录盖**递增序号**（`history.state.__seq`）：
+    序号跟当前这条不一样 = 历史穿梭（前进 / 后退）；一样或没盖过章 = 页面自己写 hash 推出来的新条目。
+  - 新增并导出 `replaceHash(next)`：只改地址栏、不往历史里堆一条，**且把序号章原样带过去**（裸 `replaceState` 会把章冲掉 ——
+    那样"从详情退回这一条"就认不出来：页码能对上，滚动位置会丢）。搜索页 / 分类页 / 论坛页的 `syncUrl()` / `syncPage()` 都改走它。
+  - 新增并导出 `pageParam(params, max = 60)`：读地址里的页码，认不出 / 越界都当第 1 页。
+  - `restoreScroll(target)`：定时器重试（页面是"先骨架、后数据"长出来的，一次 `scrollTo` 打不到底），用户一滚轮 / 一触摸就放手；
+    另把 `history.scrollRestoration` 置 `'manual'` —— 浏览器自己也有一套滚动还原，会在 hash 切完之后再把我们那下顶掉。
+  - 阅读器（`/read`）两边都不管：它有自己的"回到第 N 页"（进度恢复）。
+- `frontend/src/pages/category.ts` + `board.ts`：签名改 `boardPage(分类, startPage = 1)`；页码写进地址（`syncPage()` → `replaceHash`）；
+  挂载时按地址里的页码把前面几页**顺序补齐**（`while (!home && !dead && !done && page < startPage)`，没进展就退出、防空转）。
+- `frontend/src/pages/forum.ts`：`forumPage(params)` 读 `pageParam`；`syncPage()` 写 `#/forum?page=N`；启动器同样顺序补齐。
+- **顺手修掉的两个真 bug**：
+  1. **分类页第一次点「加载更多」会把第 1 页再要一遍**（卡片重复 + 页码整体错一位）—— `load()` 里只 `page = 0`，从没置过 1。
+     现在拿到第一页就 `page = 1`（top 只 `slice(3)` 进列表，不会重复）。
+  2. **搜索页 `syncUrl()` 只写 `q`，把 `scope` / `sort` 丢了** —— 从详情点标签 / 作者进来再返回，会按 localStorage 里
+     "上次用的条件"重搜，结果跟当时那批对不上。现在非默认值才追加 `&scope=` / `&sort=`（地址形如 `#/search?q=X&scope=author`）。
+- 回归：新增 `tmp/_check_back_restore.py`（无头 Chrome + 假桥 + dist 副本）—— **19 条全绿**：A 搜索→详情→返回、
+  B 分类页翻两页→详情→返回、C 论坛翻页→详情→返回，外加一条对照面「点导航进新页面该回顶部（不是接着上一页的位置）」。
+
+### ② 详情页作者 / 标签可点
+
+- `pages/detail.ts`：作者换成 `<a class="meta-link" href="#/search?scope=author&q=…">`，标签 `<span class="tag">` 换成
+  `<a class="tag" href="#/search?scope=tag&q=…">`（一个 `searchHref(scope, value)` 拼地址，就在 `renderDetail()` 前面）。
+- `style.css`：给 `.meta-link` 与 `.tags .tag` 补 hover（`.tags` 前缀是为了压过 `.detail-hero .tag` 的权重）。
+- 点下去走的是搜索页本来就有的 `?q=&scope=` 还原路径（§5.20 那条），不新增接口。
+- 回归：新增 `tmp/_check_detail_links.py`（9 条：链接在、`scope` 对、点下去真按那个范围发了 `search(...)`）**ALL PASS**。
+
+### ③ 阅读器工具条按指针位置分上下唤出
+
+- `pages/reader.ts`：原来是"鼠标一动两条一起亮"，现在按指针在屏幕上的位置分 —— 靠近上边（`TOP_ZONE = 110`）只亮
+  `.reader-top`、靠近下边（`BOTTOM_ZONE = 150`）只亮 `.reader-dock`，**从中间过来两条都不动**（保持现状，不闪）；
+  `showToolbar('top' | 'bottom' | 'both')` + `armHide()`（只重排倒计时，不叠加定时器）；hover 到哪条也亮哪条；
+  目录 / 设置浮层开着时不动（那两条工具条是浮层的"把手"）。
+- 回归：新增 `tmp/_check_reader_bars.py`（9 条）**ALL PASS**。
+
+### 验证
+
+- `npx tsc --noEmit` exit 0、`npm run build` exit 0。
+- 无头回归全绿：`_check_back_restore.py`、`_check_detail_links.py`、`_check_detail_order.py`、`_check_reader_bars.py`、
+  `_check_reader_glass.py`、`_check_search_back.py`、`_check_nav.py`、`_check_router_guard.py`、`_check_coldstart.py`、
+  `_check_bridge_wipe.py`、`_check_hardening.py`。
+- 真窗口冒烟 `tmp/_probe_bridge.py --dist`：`injects` 只有 **1** 次、`returnValueFAIL` 空、`missingApi` 空、首页照铺（推荐段 + 继续阅读卡都在）。
 
 ## 阅读器浮层去毛玻璃 改动清单（2026-10-14）
 
@@ -983,6 +1041,13 @@ hero（封面 / 标题 / 作者 / 热度 / 日期 / 标签）→ 阅读·下载�
 - **2026-10-14**：前端两条纪律 —— ① 启动闸门 `waitForBridge()` 要等**最后一次注入安静下来**（`quietMs=400`）再放行；② 启动路径上的**读**调用走 `bridgeCall()`（被清掉的调用当场判死、自动重发；写接口不幂等，别用）。原因见下一条。
 - **2026-10-14**：**桥会注两遍，第二遍会清掉在飞调用的回调**（WebView2 给 about:blank 和真页面各报一次 NavigationCompleted；先到那次的 finish.js 落在我们的文档里，对着后建的对象又跑一遍 `_createApi()`）。症状：`window.pywebview._returnValuesCallbacks.<fn>.<id> is not a function` + 那个 promise 永不 settle。回归检查 `tmp/_check_bridge_wipe.py`（真 api.js/finish.js + 假 Python 端）：修复前的包两种场景都整窗空白，现包照铺。
 
+- **2026-10-14**：**“返回还原”只认「历史穿梭」，不认「点导航」** —— 判据用每条历史记录上那枚递增序号（`history.state.__seq`），
+  不用 `popstate`：Chrome 在 hash 变化时也会派人一个 `popstate`，会把“点导航进新页面”误判成“退回来”（症状是位置停在上一页不回顶）。
+- **2026-10-14**：滚动位置记忆（`scrollMemo`）**只活在这一次会话**：刷新 / 重开窗口从头看是正常预期，落盘反而会跟“新开一次想从顶部看”打架。
+- **2026-10-14**：**页面自己改地址一律走 `replaceHash()`**，不要裸 `replaceState` —— 前者会把该历史记录的序号章带过去；
+  裸 replace 会把章冲掉，“从详情返回这一条”就认不出来（页码能对上，滚动位置会丢）。
+- **2026-10-14**：用户从体验候选里挑了前三项，**下载页那项（总占用 / 剩余空间 / 按话下载 / 导出）先砍掉**，不在本轮范围里。
+
 ## 下一步
 
 1. 用户真窗口验收（真图源、5173 + `main.py`）：
@@ -992,13 +1057,15 @@ hero（封面 / 标题 / 作者 / 热度 / 日期 / 标签）→ 阅读·下载�
    - **角标**：首页 hero 与分类横条、分类页、搜索页、推荐段、论坛封面条上，收藏过的都有「已收藏」，没收藏的一个都没有；收藏页与详情页不该有。
    - **搜索记录**：搜几个词 → 刷新页面 / 重开窗口，chips 还在（现在读的是数据库）；点 chip 重搜、✕ 删单条、清空。
    - 顺带看上一轮的**预加载体感**、详情页两栏版式 / 章节折叠、首屏会不会再空白。
+   - **本轮三项**：分类页 / 论坛翻两页 → 点进详情 → 点「返回」，看落回的是不是原来那一页（滚动位置 + 页码都在）；
+     详情页点作者名 / 标签，看是不是一下按那个范围重搜；阅读器里鼠标从上边下来、从下边上来，看是不是只亮对应的那一条（中间不动）。
 2. 推荐二期（`tmp/推荐算法设计.md` §10 / §11）：`related_list` **已经在用了**（详情页那排「相关作品」就是它，A3 那轮起的），
    二期是拿它当「图上的邻居」做「收藏了《X》的人也在看」；另外两个是推荐结果缓存、设置页里显示 / 调节画像
    （`get_taste_profile` 后端与 `pywebview.d.ts` 都在，只差界面）。
 3. ~~A4「只看汉化」~~ —— **2026-10-14 用户定：不做**（真要做也得先引入 `impl='html'` 第二客户端，见评估 §3）。
 4. ~~B3 整本离线下载~~ —— **2026-10-14 已完成**（`tmp/下载设计.md`）：`download.dir` + `/downloads` 静态根 +
-   `#/downloads` + 详情页同排下载按钮。还想做的：下载页显示总占用 / 剩余空间、按话下载（现在只有整本）、
-   导出成文件包。
+   `#/downloads` + 详情页同排下载按钮。还想做的（**2026-10-14 用户定：先砍掉，本轮不做**）：下载页显示总占用 / 剩余空间、
+   按话下载（现在只有整本）、导出成文件包。
 
 
 4.5 ~~**首页 hero 去重**~~ —— **2026-10-14 已完成**（见上面那份改动清单）：推荐段与分类横条都不再出现 hero 那三部。

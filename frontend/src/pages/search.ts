@@ -3,7 +3,7 @@ import { createPicker } from '../components/picker.js'
 import { createRecommendSection } from '../components/recommend.js'
 import { renderAlbumSkeleton, renderEmpty, renderError } from '../components/states.js'
 import { createIcon, icons, morphIcon, setIcon } from '../components/icons.js'
-import { onUnmount } from '../router.js'
+import { onUnmount, replaceHash } from '../router.js'
 import { loadState, pickKey, saveState } from '../store.js'
 import { warmAlbumList } from '../prefetch.js'
 
@@ -218,8 +218,17 @@ export function searchPage(params: Record<string, string>): HTMLElement {
    * 赋 hash 还会顺带触发 hashchange 把整页重渲染一遍，那是白跑 —— 屏幕上的东西已经对了。
    */
   function syncUrl(keyword: string): void {
-    const next = keyword ? `#/search?q=${encodeURIComponent(keyword)}` : '#/search'
-    if (window.location.hash !== next) window.history.replaceState(null, '', next)
+    if (!keyword) {
+      if (window.location.hash !== '#/search') replaceHash('#/search')
+      return
+    }
+    const query = [`q=${encodeURIComponent(keyword)}`]
+    // 范围 / 排序不是默认值时一并带上（`&scope=tag`）：详情页的标签、作者点进来就是这种地址。
+    // 不带的话，返回 / 刷新会按 localStorage 里那份"上次用的条件"重搜，结果跟当时那批对不上。
+    if (scope !== 'site') query.push(`scope=${scope}`)
+    if (sort !== 'latest') query.push(`sort=${sort}`)
+    const next = `#/search?${query.join('&')}`
+    if (window.location.hash !== next) replaceHash(next)
   }
 
   /**

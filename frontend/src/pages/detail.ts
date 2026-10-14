@@ -143,6 +143,14 @@ function renderSkeleton(container: HTMLElement): void {
   `
 }
 
+/**
+ * 点作者 / 标签就是「按这个条件搜一次」：搜索页认 `#/search?scope=…&q=…` 这两个地址参数
+ * （范围 + 关键词），所以这里只负责拼一个能点的链接，不用再写点击逻辑。
+ */
+function searchHref(scope: 'author' | 'tag', value: string): string {
+  return `#/search?scope=${scope}&q=${encodeURIComponent(value)}`
+}
+
 function renderDetail(
   data: AlbumDetail,
   progress: AlbumProgress | null,
@@ -176,10 +184,10 @@ function renderDetail(
         <div class="detail-hero">
           <img class="detail-cover" src="${cover}" alt="" />
           <h1 class="page-title detail-title">${escapeHtml(data.title)}</h1>
-          <p class="detail-meta">作者：${escapeHtml(data.author)}</p>
+          <p class="detail-meta">作者：${data.author ? `<a class="meta-link" href="${searchHref('author', data.author)}">${escapeHtml(data.author)}</a>` : ''}</p>
           <p class="detail-meta">👀 ${escapeHtml(data.views)}　❤️ ${escapeHtml(data.likes)}　💬 ${escapeHtml(data.comment_count)}</p>
           ${dates ? `<p class="detail-meta">${escapeHtml(dates)}</p>` : ''}
-          <div class="tags">${data.tags.map((t) => `<span class="tag">${escapeHtml(t)}</span>`).join('')}</div>
+          <div class="tags">${data.tags.map((t) => `<a class="tag" href="${searchHref('tag', t)}">${escapeHtml(t)}</a>`).join('')}</div>
         </div>
         ${startChapter ? `
         <div class="detail-actions">

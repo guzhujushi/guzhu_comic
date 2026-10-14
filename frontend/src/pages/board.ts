@@ -8,7 +8,7 @@ import { createRecommendSection } from '../components/recommend.js'
 import { renderAlbumSkeleton, renderEmpty, renderError } from '../components/states.js'
 import { renderHero, renderHeroSkeleton } from '../components/hero.js'
 import type { HeroHandle } from '../components/hero.js'
-import { onUnmount } from '../router.js'
+import { onUnmount, replaceHash } from '../router.js'
 import { warmAlbumList } from '../prefetch.js'
 import { splashReady } from '../splash.js'
 import { bridgeCall, waitForApi } from '../webstatus.js'
@@ -88,7 +88,7 @@ interface CatRow {
   retried: boolean
 }
 
-export function boardPage(category: ComicCategory): HTMLElement {
+export function boardPage(category: ComicCategory, startPage = 1): HTMLElement {
   const home = category === 'all'   // 全部那一页：面板里铺各个分类的横条
   const el = document.createElement('div')
   el.className = 'board-page'
@@ -423,6 +423,16 @@ export function boardPage(category: ComicCategory): HTMLElement {
     if (my === token) splashReady()
   }
 
+  /**
+   * 页码写进地址（`#/category?c=doujin&page=3`）：点进详情再返回就落回这一页，
+   * 顺带也是路由层"回到原处"那把钥匙。用 replaceState 不是赋值 —— 翻十页不该在历史里
+   * 堆十条，返回键一下就退出去（跟搜索页那套一个道理）。
+   */
+  function syncPage(): void {
+    const next = page > 1 ? `#/category?c=${category}&page=${page}` : `#/category?c=${category}`
+    if (window.location.hash !== next) replaceHash(next)
+  }
+
   /** 分类页往后翻页；图源不给总数，就用"这一页空了"当到底 */
   async function loadMore(): Promise<void> {
     if (busy || done || home) return
@@ -435,6 +445,7 @@ export function boardPage(category: ComicCategory): HTMLElement {
       page++
       if (next.length === 0) done = true
       cards.push(...next)
+      if (next.length > 0) syncPage()
     } catch (err) {
       if (my !== token) return
       if (cards.length === 0) {
@@ -499,6 +510,7 @@ export function boardPage(category: ComicCategory): HTMLElement {
     page = 0
     done = false
     busy = false
+    if (!home) syncPage()          // 换条件下重新数页：地址里的旧页码一并去掉
     gridEl.classList.remove('in')
     for (const row of rows) {
       row.items = null
@@ -555,6 +567,9 @@ export function boardPage(category: ComicCategory): HTMLElement {
       } else {
         cards.push(...top.slice(3))   // 前三部在 hero 里，列表从第 4 部接着铺
         done = top.length <= 3        // 第一页就没剩几部，说明这期到底了
+        // 这一趟拿到的就是第 1 页，得记上：不记的话「加载更多」会把第 1 页再要一遍
+        //（卡片重复 + 页码整体错一位，2026-10-14 修）
+        page = 1
         paintPanel()
         warmVisible()
         armReveal(gridEl)             // 整页列表也虚化入场（只在这次加载演一次）
@@ -634,8 +649,17 @@ export function boardPage(category: ComicCategory): HTMLElement {
     window.removeEventListener('keydown', onSlash)
   })
 
-  // 进来先按上次的选择拉一次（没有记过就是默认的周榜 + 按观看）
-  void load(prefs.range, prefs.sort)
+  // 进来先按上次的选择拉一次（没有记过就是默认的周榜 + 按观看）；
+  // 地址里带了页码（从详情返回 / 刷新 / 手改链接）就把前面那几页顺序补齐：
+  // 榜单每页都在后端缓存里（cache.ranking_ttl，默认 1 小时），这几下是缓存命中，很快。
+  void (async () => {
+    await load(prefs.range, prefs.sort)
+    while (!home && !dead && !done && page < startPage) {
+      const before = page
+      await loadMore()
+      if (page === before) return     // 没进展（失败 / 到底 / 正忙）就别空转
+    }
+  })()
 
   return el
 }

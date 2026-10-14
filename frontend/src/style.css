@@ -1001,6 +1001,13 @@ album-card .dl-badge[hidden] { display: none; }
   color: #cfcfd1;
 }
 
+/* 作者名与标签现在可点（点一下按这个条件搜），给个明确的可点手感 —— 权重必须压过
+   上面 `.detail-hero .tag` 那一条，所以带 `.tags` 前缀。 */
+.meta-link { color: inherit; text-decoration: none; border-bottom: 1px dashed var(--border-strong); }
+.meta-link:hover { color: var(--primary); border-bottom-color: var(--primary-line); }
+.tags .tag { text-decoration: none; cursor: pointer; }
+.tags .tag:hover { border-color: var(--primary-line); color: var(--primary); background: var(--primary-soft); }
+
 .desc {
   color: var(--text-soft);
   font-size: 14px;
