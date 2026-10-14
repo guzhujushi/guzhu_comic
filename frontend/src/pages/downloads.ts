@@ -193,7 +193,10 @@ export function downloadsPage(): HTMLElement {
     const api = window.pywebview?.api
     if (!api?.get_downloads) return
     try {
-      tasks = await api.get_downloads()
+      const next = await api.get_downloads()
+      // 这份必须是数组（下面还要 some / map）；形状不对就当空列表，别在这儿抛出一个
+      // 没人接的 rejection，把整页停在骨架上
+      tasks = Array.isArray(next) ? next : []
       showError('')
       sync()
     } catch (err) {

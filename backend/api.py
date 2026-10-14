@@ -51,6 +51,33 @@ def _setting_float(value: Any, lo: float, hi: float, name: str) -> float:
     return round(n, 2)
 
 
+def _setting_section(settings: dict, name: str, label: str) -> dict:
+    """
+    取设置里的一段。没给就是空（这次保存不动它）；给了但不是映射（手改过 / 老前端发来的
+    `window: 5`）当场报错说清楚 —— 不拦的话下面那句 `"title" in win` 会抛 TypeError 直穿到 JS 桥。
+    """
+    value = settings.get(name)
+    if value is None:
+        return {}
+    if not isinstance(value, dict):
+        raise ValueError(f"{label}那一段要是一个小节（键值对）")
+    return value
+
+
+# 写冲突时等多久（秒）：整本下载逐话写库、界面同时存进度，默认的 5 秒偶尔不够
+DB_TIMEOUT = 15.0
+
+
+def _db(path: Path) -> sqlite3.Connection:
+    """
+    开一个 sqlite 连接。
+
+    `with sqlite3.connect(...)` 有个坑：`with` 只提交 / 回滚，**不关连接** —— 句柄要等这个
+    函数返回、局部名被回收才还回去。所以统一走这里，顺手把等锁的上限从默认 5 秒放到 15 秒。
+    """
+    return sqlite3.connect(path, timeout=DB_TIMEOUT)
+
+
 class _QuietHandler(SimpleHTTPRequestHandler):
     """
     去掉 http.server 的请求日志，免得刷屏。
@@ -69,6 +96,14 @@ class _QuietHandler(SimpleHTTPRequestHandler):
                 parts = [p for p in clean[len(prefix) + 1:].split("/") if p not in ("", ".", "..")]
                 return str(root.joinpath(*parts))
         return super().translate_path(path)
+
+    def list_directory(self, path: str):
+        """
+        目录列表一律不给：这个服务只是给页面取图用的，列目录等于把 cache/images 和离线下载
+        目录的结构摊开给本机随便哪个程序看。
+        """
+        self.send_error(403, "Directory listing is disabled")
+        return None
 
     def log_message(self, *args):
         pass
@@ -234,7 +269,7 @@ class API:
         if legacy_covers.exists():
             shutil.rmtree(legacy_covers, ignore_errors=True)   # 旧版本下过封面，现在用远程图
 
-        with sqlite3.connect(DATA_DB) as conn:
+        with _db(DATA_DB) as conn:
             conn.execute(
                 "CREATE TABLE IF NOT EXISTS history ("
                 "album_id TEXT NOT NULL, "
@@ -299,7 +334,7 @@ class API:
             "tags_json": "TEXT NOT NULL DEFAULT '[]'",
             "authors_json": "TEXT NOT NULL DEFAULT '[]'",
         })
-        with sqlite3.connect(CACHE_DB) as conn:
+        with _db(CACHE_DB) as conn:
             conn.execute(
                 "CREATE TABLE IF NOT EXISTS meta_cache ("
                 "key TEXT PRIMARY KEY, "
@@ -315,7 +350,7 @@ class API:
 
     def _ensure_columns(self, table: str, columns: dict[str, str]) -> None:
         """老库缺列就补上（新装的库由 CREATE TABLE 一次建全，这里只服务升级上来的库）"""
-        with sqlite3.connect(DATA_DB) as conn:
+        with _db(DATA_DB) as conn:
             have = {row[1] for row in conn.execute(f"PRAGMA table_info({table})")}
             for name, ddl in columns.items():
                 if name not in have:
@@ -323,7 +358,7 @@ class API:
 
     def _move_legacy_cache(self) -> None:
         """把老库里的 meta_cache 表搬进 cache.db，然后删掉"""
-        with sqlite3.connect(DATA_DB) as conn:
+        with _db(DATA_DB) as conn:
             exists = conn.execute(
                 "SELECT name FROM sqlite_master WHERE type='table' AND name='meta_cache'"
             ).fetchone()
@@ -331,7 +366,7 @@ class API:
                 return
             rows = conn.execute("SELECT key, data_json, fetched_at FROM meta_cache").fetchall()
             if rows:
-                with sqlite3.connect(CACHE_DB) as cache_conn:
+                with _db(CACHE_DB) as cache_conn:
                     cache_conn.executemany(
                         "INSERT OR REPLACE INTO meta_cache (key, data_json, fetched_at)"
                         " VALUES (?, ?, ?)",
@@ -341,7 +376,7 @@ class API:
 
     def _cache_get(self, key: str, ttl: float) -> list | None:
         """命中且未过期返回数据，否则返回 None"""
-        with sqlite3.connect(CACHE_DB) as conn:
+        with _db(CACHE_DB) as conn:
             row = conn.execute(
                 "SELECT data_json, fetched_at FROM meta_cache WHERE key = ?",
                 (key,),
@@ -349,17 +384,35 @@ class API:
         if row is None:
             return None
         data_json, fetched_at = row
-        if time.time() - fetched_at > ttl:
+        try:
+            expired = time.time() - float(fetched_at) > ttl
+        except (TypeError, ValueError):
+            expired = True
+        if expired:
             return None
-        return json.loads(data_json)
+        try:
+            return json.loads(data_json)
+        except ValueError:
+            return None      # 内容坏了（手改过 / 老版本留下的）：当没命中，重新去取
 
     def _cache_set(self, key: str, data: list) -> None:
-        with sqlite3.connect(CACHE_DB) as conn:
+        with _db(CACHE_DB) as conn:
             conn.execute(
                 "INSERT OR REPLACE INTO meta_cache (key, data_json, fetched_at)"
                 " VALUES (?, ?, ?)",
                 (key, json.dumps(data, ensure_ascii=False), time.time()),
             )
+
+    def _cache_list(self, key: str, ttl: float) -> list | None:
+        """
+        同 _cache_get，但只认"一列"这种形状（文件名列表 / 榜单条目）。
+
+        缓存里写的一直是 list；但库是本地明文，手改、老版本、迁移中断都可能留下别的形状，
+        那种数据走到 `for name in files` 就会抛 TypeError 直穿到 JS 桥。这里当场判成"没命中"，
+        大不了重新去图源取一次。
+        """
+        data = self._cache_get(key, ttl)
+        return data if isinstance(data, list) else None
 
     def search(self, keyword: str, page: int = 1, scope: str = "site",
                order_by: str = "latest") -> list[dict[str, str]]:
@@ -378,7 +431,7 @@ class API:
             raise ValueError(f"未知排序: {order_by}")
         # 缓存键带上范围与排序：换个范围就是另一批结果，不能共用缓存
         key = f"search:{scope}:{order_by}:{keyword}:{page}"
-        cached = self._cache_get(key, self._search_ttl)
+        cached = self._cache_list(key, self._search_ttl)
         if cached is not None:
             return self._with_favorited(cached)
         try:
@@ -414,13 +467,13 @@ class API:
         if order_by not in _ORDER_BY_MAP:
             raise ValueError(f"未知排序: {order_by}")
         key = f"ranking:{time_range}:{category}:{order_by}:{page}"
-        cached = self._cache_get(key, self._ranking_ttl)
+        cached = self._cache_list(key, self._ranking_ttl)
         if cached is not None:
             return self._with_favorited(cached)
         mine, gate = self._fetch_guard(key)
         if not mine:
             gate.wait(self._inflight_wait)
-            cached = self._cache_get(key, self._ranking_ttl)
+            cached = self._cache_list(key, self._ranking_ttl)
             if cached is not None:
                 return self._with_favorited(cached)
         try:
@@ -449,7 +502,7 @@ class API:
     
     def clear_cache(self) -> dict[str, int]:
         """清缓存：接口元数据 + 章节图；data/ 里的用户数据不动"""
-        with sqlite3.connect(CACHE_DB) as conn:
+        with _db(CACHE_DB) as conn:
             n_rows = conn.execute("DELETE FROM meta_cache").rowcount
         n_files = 0
         for folder in IMG_DIR.glob("*"):
@@ -495,7 +548,7 @@ class API:
             always = set(self._dl_photo_ids) | set(self._dl_pending)
         if self._last_photo_id:
             always.add(self._last_photo_id)
-        with sqlite3.connect(DATA_DB) as conn:
+        with _db(DATA_DB) as conn:
             rows = conn.execute(
                 "SELECT photo_id FROM history ORDER BY updated_at DESC LIMIT 3"
             ).fetchall()
@@ -508,7 +561,7 @@ class API:
         stale_before = time.time() - max(
             self._photo_ttl, self._album_ttl, self._search_ttl, self._ranking_ttl
         )
-        with sqlite3.connect(CACHE_DB) as conn:
+        with _db(CACHE_DB) as conn:
             conn.execute("DELETE FROM meta_cache WHERE fetched_at < ?", (stale_before,))
 
         used = self._dir_size(CACHE_DIR)
@@ -521,7 +574,14 @@ class API:
         for folder in IMG_DIR.glob("*"):
             if not folder.is_dir() or folder.name in always_keep:
                 continue
-            mtimes = [f.stat().st_mtime for f in folder.glob("*") if f.is_file()]
+            # 下载线程可能在这一瞬间改名 / 删文件，stat 会 OSError：这一趟不参与排序就行
+            mtimes = []
+            for f in folder.glob("*"):
+                try:
+                    if f.is_file():
+                        mtimes.append(f.stat().st_mtime)
+                except OSError:
+                    pass
             # 最近读过的排后面，其余按最久没碰过排前面
             victims.append((folder.name in prefer_keep, max(mtimes, default=0), folder))
         victims.sort(key=lambda item: (item[0], item[1]))
@@ -577,6 +637,8 @@ class API:
         # v2：老缓存没有发布日期 / 评论数 / 相关作品，加字段就换键，免得读到缺字段的旧数据
         key = f"album:v2:{album_id}"
         data = self._cache_get(key, self._album_ttl)
+        if not isinstance(data, dict):
+            data = None      # 形状不对就当没命中（缓存是本地明文库，可能被手改过）
         if data is None:
             try:
                 album = self._jm.get_album_detail(album_id)
@@ -635,7 +697,7 @@ class API:
             raise ValueError("评论页码要是数字") from None
         key = f"comments:{album_id}:{page}"
         cached = self._cache_get(key, self._comment_ttl)
-        if cached is not None:
+        if isinstance(cached, dict):     # 形状不对就当没命中（见 _cache_list 的说明）
             return cached
         try:
             comment_page = self._jm.album_pagination(album_id, page=page)
@@ -675,7 +737,7 @@ class API:
             raise ValueError("评论页码要是数字") from None
         key = f"forum:{page}"
         cached = self._cache_get(key, self._comment_ttl)
-        if cached is not None:
+        if isinstance(cached, dict):
             return self._forum_out(cached)
         try:
             comment_page = self._jm.forum_pagination(page=page)
@@ -809,7 +871,7 @@ class API:
         if self._downloaded_chapter_dir(photo_id) is not None:
             return 0            # 有离线副本了，不用再往缓存里下
         img_dir = IMG_DIR / photo_id
-        files = self._cache_get(f"photo:{photo_id}", self._photo_ttl)
+        files = self._cache_list(f"photo:{photo_id}", self._photo_ttl)
         if files:
             head = files[:self._pf_images]
             if head and all((img_dir / name).exists() for name in head):
@@ -903,7 +965,7 @@ class API:
         offline = self._downloaded_chapter_dir(photo_id)
 
         key = f"photo:{photo_id}"
-        files: list[str] | None = self._cache_get(key, self._photo_ttl)
+        files: list[str] | None = self._cache_list(key, self._photo_ttl)
 
         if files is None:
             try:
@@ -1054,6 +1116,8 @@ class API:
         已经下完的话保持 done，不会被重下（换域名 / 补新章节都走这一条路）。
         """
         aid = self._need_album_id(album_id)
+        if chapters is not None and not isinstance(chapters, (list, tuple)):
+            raise ValueError("话单要传列表")     # 传个数字 / 字符串的话，for 出来的全是垃圾
         rows: list[tuple[str, str, str, str]] = []
         for item in chapters or []:
             if not isinstance(item, dict):
@@ -1066,7 +1130,7 @@ class API:
             raise ValueError("没有可下载的章节")
 
         now = time.time()
-        with sqlite3.connect(DATA_DB) as conn:
+        with _db(DATA_DB) as conn:
             old = conn.execute(
                 "SELECT added_at FROM download_album WHERE album_id = ?", (aid,)
             ).fetchone()
@@ -1090,14 +1154,14 @@ class API:
 
     def get_downloads(self) -> list[dict]:
         """所有下载任务，按最近更新倒序（我的下载页用）"""
-        with sqlite3.connect(DATA_DB) as conn:
+        with _db(DATA_DB) as conn:
             rows = conn.execute(self._DOWNLOAD_SELECT + " ORDER BY a.updated_at DESC").fetchall()
         return [self._download_out(row) for row in rows]
 
     def get_download(self, album_id: str) -> dict | None:
         """单部漫画的下载任务（详情页按钮认状态用）；没下过返回 None"""
         aid = self._need_album_id(album_id)
-        with sqlite3.connect(DATA_DB) as conn:
+        with _db(DATA_DB) as conn:
             row = conn.execute(
                 self._DOWNLOAD_SELECT + " WHERE a.album_id = ?", (aid,)
             ).fetchone()
@@ -1140,7 +1204,7 @@ class API:
             pause.set()
         if thread is not None and thread.is_alive():
             thread.join(timeout=5)
-        with sqlite3.connect(DATA_DB) as conn:
+        with _db(DATA_DB) as conn:
             conn.execute("DELETE FROM download_chapter WHERE album_id = ?", (aid,))
             conn.execute("DELETE FROM download_album WHERE album_id = ?", (aid,))
         if delete_files:
@@ -1186,12 +1250,12 @@ class API:
             sets.append("error = ?")
             args.append(error)
         args.append(album_id)
-        with sqlite3.connect(DATA_DB) as conn:
+        with _db(DATA_DB) as conn:
             conn.execute(f"UPDATE download_album SET {', '.join(sets)} WHERE album_id = ?", args)
 
     def _chapter_counts(self, album_id: str) -> tuple[int, int]:
         """(话数, 已下完的话数)"""
-        with sqlite3.connect(DATA_DB) as conn:
+        with _db(DATA_DB) as conn:
             row = conn.execute(
                 "SELECT COUNT(*), SUM(CASE WHEN state = 'done' THEN 1 ELSE 0 END)"
                 " FROM download_chapter WHERE album_id = ?",
@@ -1206,7 +1270,7 @@ class API:
         没下完的（含上次出错的那几话）都要；已经标 done 的再量一下磁盘 ——
         续传时数据可能被清掉 / 挪走过，量一次才知道要不要补（一次目录扫描，很便宜）。
         """
-        with sqlite3.connect(DATA_DB) as conn:
+        with _db(DATA_DB) as conn:
             rows = conn.execute(
                 "SELECT photo_id, state, total FROM download_chapter"
                 " WHERE album_id = ? ORDER BY rowid",
@@ -1224,7 +1288,7 @@ class API:
 
     def _set_chapter_state(self, album_id: str, photo_id: str, state: str,
                            done: int, total: int) -> None:
-        with sqlite3.connect(DATA_DB) as conn:
+        with _db(DATA_DB) as conn:
             conn.execute(
                 "UPDATE download_chapter SET state = ?, done = ?, total = ?, updated_at = ?"
                 " WHERE album_id = ? AND photo_id = ?",
@@ -1310,7 +1374,7 @@ class API:
         网络请求都不用发 —— 这才是"按进度重新下载"最省的那条路。
         """
         folder = self._download_dir / album_id / photo_id
-        names = self._cache_get(f"photo:{photo_id}", self._photo_ttl)
+        names = self._cache_list(f"photo:{photo_id}", self._photo_ttl)
         if names and all((folder / name).exists() for name in names):
             return True, len(names), len(names)
         try:
@@ -1335,7 +1399,7 @@ class API:
 
     def _downloaded_chapter_dir(self, photo_id: str) -> tuple[str, Path] | None:
         """这一话有下完的离线副本就返回 (album_id, 目录)，否则 None"""
-        with sqlite3.connect(DATA_DB) as conn:
+        with _db(DATA_DB) as conn:
             row = conn.execute(
                 "SELECT album_id FROM download_chapter"
                 " WHERE photo_id = ? AND state = 'done' LIMIT 1",
@@ -1354,7 +1418,7 @@ class API:
         """
         time.sleep(5)      # 先让首屏把要的数据拿到，别一开机就跟首页抢带宽
         try:
-            with sqlite3.connect(DATA_DB) as conn:
+            with _db(DATA_DB) as conn:
                 rows = conn.execute(
                     "SELECT album_id FROM download_album WHERE state IN ('queued', 'running')"
                 ).fetchall()
@@ -1368,18 +1432,24 @@ class API:
     def save_progress(self, album_id: str, photo_id: str, page_index: int,
                     title: str = "", cover_url: str = "") -> None:
         """保存阅读进度；title/cover_url 给首页"继续阅读"列表展示用"""
-        with sqlite3.connect(DATA_DB) as conn:
+        # 页码与文本都先归一：title / cover_url 那两列是 NOT NULL，前端漏给一个 null
+        # 就会撞 IntegrityError —— 这一话的真实进度反而丢了
+        try:
+            page = max(0, int(page_index))
+        except (TypeError, ValueError):
+            page = 0
+        with _db(DATA_DB) as conn:
             conn.execute(
                 "INSERT OR REPLACE INTO history"
                 " (album_id, photo_id, page_index, title, cover_url, updated_at)"
                 " VALUES (?, ?, ?, ?, ?, ?)",
-                (str(album_id), str(photo_id), int(page_index),
-                title, cover_url, time.time()),
+                (str(album_id), str(photo_id), page,
+                str(title or ""), str(cover_url or ""), time.time()),
             )
 
     def get_progress(self, album_id: str, photo_id: str) -> int:
         """返回上次看到的页码（从 0 开始），没有记录返回 0"""
-        with sqlite3.connect(DATA_DB) as conn:
+        with _db(DATA_DB) as conn:
             row = conn.execute(
                 "SELECT page_index FROM history WHERE album_id=? AND photo_id=?",
                 (str(album_id), str(photo_id)),
@@ -1388,12 +1458,14 @@ class API:
 
     def get_history(self, limit: int = 10) -> list[dict]:
         """最近阅读：一部漫画一条，取最近读的那一话，按更新时间倒序"""
-        with sqlite3.connect(DATA_DB) as conn:
+        # 夹一下范围：sqlite 里负数 LIMIT 是"不限制"，等于绕过上限
+        limit = _cfg_int(limit, 10, 1, 500)
+        with _db(DATA_DB) as conn:
             rows = conn.execute(
                 "SELECT album_id, photo_id, page_index, title, cover_url, updated_at FROM ("
                 " SELECT *, ROW_NUMBER() OVER (PARTITION BY album_id ORDER BY updated_at DESC) AS rn"
                 " FROM history) WHERE rn = 1 ORDER BY updated_at DESC LIMIT ?",
-                (int(limit),),
+                (limit,),
             ).fetchall()
         return [
             {
@@ -1409,7 +1481,7 @@ class API:
 
     def get_album_progress(self, album_id: str) -> dict | None:
         """这部漫画最近读到哪一话的哪一页；没读过返回 None"""
-        with sqlite3.connect(DATA_DB) as conn:
+        with _db(DATA_DB) as conn:
             row = conn.execute(
                 "SELECT photo_id, page_index, title FROM history"
                 " WHERE album_id = ? ORDER BY updated_at DESC LIMIT 1",
@@ -1432,7 +1504,7 @@ class API:
     def is_favorite(self, album_id: str) -> bool:
         """这部漫画在本地收藏里吗（只查本地表，不看图源账号）"""
         aid = self._need_album_id(album_id)
-        with sqlite3.connect(DATA_DB) as conn:
+        with _db(DATA_DB) as conn:
             row = conn.execute(
                 "SELECT 1 FROM favorite WHERE album_id = ?", (aid,)
             ).fetchone()
@@ -1449,7 +1521,7 @@ class API:
         收藏态故意不进 album 详情缓存（那个有 24h TTL），否则取消收藏后界面还显示已收藏。
         """
         aid = self._need_album_id(album_id)
-        with sqlite3.connect(DATA_DB) as conn:
+        with _db(DATA_DB) as conn:
             exists = conn.execute(
                 "SELECT 1 FROM favorite WHERE album_id = ?", (aid,)
             ).fetchone()
@@ -1470,14 +1542,14 @@ class API:
     def remove_favorite(self, album_id: str) -> None:
         """取消收藏（收藏页的删除按钮用；本来就没收藏也不报错）"""
         aid = self._need_album_id(album_id)
-        with sqlite3.connect(DATA_DB) as conn:
+        with _db(DATA_DB) as conn:
             conn.execute("DELETE FROM favorite WHERE album_id = ?", (aid,))
 
     def get_favorites(self, limit: int = 100, offset: int = 0) -> list[dict]:
         """收藏列表，按收藏时间倒序；cover_url 是收藏那一刻的快照"""
         limit = _cfg_int(limit, 100, 1, 500)
         offset = _cfg_int(offset, 0, 0, 1000000)
-        with sqlite3.connect(DATA_DB) as conn:
+        with _db(DATA_DB) as conn:
             rows = conn.execute(
                 "SELECT album_id, title, cover_url, added_at FROM favorite"
                 " ORDER BY added_at DESC LIMIT ? OFFSET ?",
@@ -1502,7 +1574,7 @@ class API:
             return
         scope = scope if scope in _SCOPE_MAP else "site"
         now = time.time()
-        with sqlite3.connect(DATA_DB) as conn:
+        with _db(DATA_DB) as conn:
             row = conn.execute(
                 "SELECT keyword FROM search_log WHERE keyword = ? COLLATE NOCASE", (kw,)
             ).fetchone()
@@ -1526,7 +1598,7 @@ class API:
     def get_search_log(self, limit: int = 12) -> list[dict]:
         """最近搜索（时间倒序）：搜索页那排 chips 用，也是画像里搜索信号的来源"""
         limit = _cfg_int(limit, 12, 1, 100)
-        with sqlite3.connect(DATA_DB) as conn:
+        with _db(DATA_DB) as conn:
             rows = conn.execute(
                 "SELECT keyword, scope, hits, at FROM search_log ORDER BY at DESC LIMIT ?",
                 (limit,),
@@ -1541,12 +1613,12 @@ class API:
         kw = str(keyword or "").strip()
         if not kw:
             return
-        with sqlite3.connect(DATA_DB) as conn:
+        with _db(DATA_DB) as conn:
             conn.execute("DELETE FROM search_log WHERE keyword = ? COLLATE NOCASE", (kw,))
 
     def clear_search_log(self) -> None:
         """清空（chips 右上那个「清空」）"""
-        with sqlite3.connect(DATA_DB) as conn:
+        with _db(DATA_DB) as conn:
             conn.execute("DELETE FROM search_log")
 
     # ==================== 收藏态现拼 ====================
@@ -1562,7 +1634,7 @@ class API:
             return set()
         ids = ids[:500]      # sqlite 的变量上限是 999，面板不会这么大，防一手
         marks = ",".join("?" * len(ids))
-        with sqlite3.connect(DATA_DB) as conn:
+        with _db(DATA_DB) as conn:
             rows = conn.execute(
                 f"SELECT album_id FROM favorite WHERE album_id IN ({marks})", ids
             ).fetchall()
@@ -1618,7 +1690,7 @@ class API:
         新装的库 / 新加的收藏都自带快照，这里只为升级上来的老库兜一次底。
         """
         try:
-            with sqlite3.connect(DATA_DB) as conn:
+            with _db(DATA_DB) as conn:
                 conn.execute(
                     "UPDATE favorite SET tags_json = ?, authors_json = ?"
                     " WHERE album_id = ? AND tags_json = '[]'",
@@ -1665,7 +1737,7 @@ class API:
                 return []
             return [str(x).strip() for x in value if str(x).strip()] if isinstance(value, list) else []
 
-        with sqlite3.connect(DATA_DB) as conn:
+        with _db(DATA_DB) as conn:
             favs = conn.execute(
                 "SELECT album_id, added_at, tags_json, authors_json FROM favorite"
             ).fetchall()
@@ -1775,7 +1847,11 @@ class API:
         if not pool:
             return {"cold": True, "items": []}
 
-        skip = {str(raw).strip() for raw in (exclude or [])}
+        # exclude 是页面自己传的（"这几部上面已经出现过了"）；不是列表就当没传，
+        # 别为一个参数形状把整段推荐打掉
+        if not isinstance(exclude, (list, tuple, set)):
+            exclude = []
+        skip = {str(raw).strip() for raw in exclude}
         prof = self._taste_profile()
         prof_tags, prof_authors = prof["tags"], prof["authors"]
 
@@ -1817,7 +1893,7 @@ class API:
             raise RuntimeError("保存失败：设置内容格式不对")
         cfg = load_config()
         try:
-            win = settings.get("window") or {}
+            win = _setting_section(settings, "window", "窗口")
             if "title" in win:
                 title = str(win["title"]).strip()
                 if not title:
@@ -1844,7 +1920,7 @@ class API:
                 cfg["window"]["glass_opacity"] = _setting_float(
                     win["glass_opacity"], 0.35, 1.0, "窗口不透明度")
 
-            dev = settings.get("dev") or {}
+            dev = _setting_section(settings, "dev", "启动")
             if "url" in dev:
                 url = str(dev["url"]).strip()
                 if not url.startswith(("http://", "https://", "file://")):
@@ -1853,7 +1929,7 @@ class API:
             if "debug" in dev:
                 cfg["dev"]["debug"] = bool(dev["debug"])
 
-            reader = settings.get("reader") or {}
+            reader = _setting_section(settings, "reader", "阅读器")
             for key in ("restore_progress", "click_to_page"):
                 if key in reader:
                     cfg["reader"][key] = bool(reader[key])
@@ -1872,7 +1948,7 @@ class API:
             if "auto_scroll" in reader:
                 cfg["reader"]["auto_scroll"] = _setting_int(reader["auto_scroll"], 0, 1000, "自动滚屏速度")
 
-            detail = settings.get("detail") or {}
+            detail = _setting_section(settings, "detail", "详情页")
             if "chapters_collapse" in detail:
                 cfg["detail"]["chapters_collapse"] = _setting_int(
                     detail["chapters_collapse"], 0, 500, "章节折叠阈值")
@@ -1880,7 +1956,7 @@ class API:
                 cfg["detail"]["comment_preview"] = _setting_int(
                     detail["comment_preview"], 0, 50, "评论预览条数")
 
-            prefetch = settings.get("prefetch") or {}
+            prefetch = _setting_section(settings, "prefetch", "预加载")
             if "albums" in prefetch:
                 cfg["prefetch"]["albums"] = _setting_int(prefetch["albums"], 0, 30, "预加载详情条数")
             if "chapter_images" in prefetch:
@@ -1890,7 +1966,7 @@ class API:
                 cfg["prefetch"]["next_at"] = _setting_float(
                     prefetch["next_at"], 0, 1, "预加载下一话的进度比例")
 
-            recommend = settings.get("recommend") or {}
+            recommend = _setting_section(settings, "recommend", "推荐")
             if "limit" in recommend:
                 cfg["recommend"]["limit"] = _setting_int(recommend["limit"], 0, 50, "推荐条数")
             if "candidates" in recommend:
@@ -1906,7 +1982,7 @@ class API:
                 cfg["recommend"]["half_life_days"] = _setting_int(
                     recommend["half_life_days"], 1, 365, "画像半衰期")
 
-            download = settings.get("download") or {}
+            download = _setting_section(settings, "download", "下载")
             if "workers" in download:
                 cfg["download"]["workers"] = _setting_int(download["workers"], 1, 32, "下载并发数")
             if "dir" in download:
@@ -1925,7 +2001,7 @@ class API:
             if "auto_resume" in download:
                 cfg["download"]["auto_resume"] = bool(download["auto_resume"])
 
-            cache = settings.get("cache") or {}
+            cache = _setting_section(settings, "cache", "缓存")
             for key, label, lo, hi in (
                 ("photo_ttl", "章节图列表缓存时长", 0, 30 * 86400),
                 ("album_ttl", "漫画详情缓存时长", 0, 30 * 86400),
@@ -1938,15 +2014,20 @@ class API:
                 if key in cache:
                     cfg["cache"][key] = _setting_int(cache[key], lo, hi, label)
 
-            splash = settings.get("splash") or {}
+            splash = _setting_section(settings, "splash", "开场动画")
             if "enabled" in splash:
                 cfg["splash"]["enabled"] = bool(splash["enabled"])
             if "min_ms" in splash:
                 cfg["splash"]["min_ms"] = _setting_int(splash["min_ms"], 0, 10000, "闪屏最短时长")
             if "max_ms" in splash:
                 cfg["splash"]["max_ms"] = _setting_int(splash["max_ms"], 0, 10000, "闪屏最长时长")
-        except ValueError as e:
+        except (ValueError, TypeError) as e:
+            # TypeError 也接住：手改过的 config.yaml 可能让某个字段不是预期形状，
+            # 那种异常不该以原始形态直穿到 JS 桥（页面上只会看到一句看不懂的 Python 报错）
             raise RuntimeError(f"保存失败：{e}") from e
 
-        save_config(cfg)
+        try:
+            save_config(cfg)
+        except OSError as e:
+            raise RuntimeError(f"保存失败：config.yaml 写不进去（{e}）") from e
         return cfg

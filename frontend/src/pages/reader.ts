@@ -427,28 +427,29 @@ export function readerPage(params: Record<string, string>): HTMLElement {
     }
   })()
 
+  /** 单张图挂了等 2 秒重来（最多 30 次）；页面切走 / 图被换掉就收手 */
   function armRetry(img: HTMLImageElement, src: string, attempts: number): void {
     img.onerror = () => {
-        if (attempts >= 30 || !document.contains(img)) {
+      if (attempts >= 30 || !document.contains(img)) {
         img.onerror = null
         return
-        }
-        window.setTimeout(() => {
+      }
+      window.setTimeout(() => {
         if (!document.contains(img)) return
         armRetry(img, src, attempts + 1)
-        img.src = `${src}?r=${attempts}`  // query 变化强制重新请求
-        }, 2000)
+        img.src = `${src}?r=${attempts}`   // query 变化强制重新请求
+      }, 2000)
     }
-    }
+  }
 
   function renderImages(): void {
     imgsEl.innerHTML = ''
     images.forEach((src, i) => {
-        const img = document.createElement('img')
-        img.alt = `第 ${i + 1} 页`
-        armRetry(img, src, 0)
-        img.src = src
-        imgsEl.appendChild(img)
+      const img = document.createElement('img')
+      img.alt = `第 ${i + 1} 页`
+      armRetry(img, src, 0)
+      img.src = src
+      imgsEl.appendChild(img)
     })
   }
 

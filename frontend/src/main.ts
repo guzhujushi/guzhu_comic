@@ -3,7 +3,8 @@ import { registerRoute, startRouter } from './router.js'
 import { popularPage } from './pages/popular.js'
 import { searchPage } from './pages/search.js'
 import { waitForBridge } from './webstatus.js'
-import { loadSettings } from './settings.js'
+import { DEFAULT_SETTINGS, loadSettings } from './settings.js'
+import type { AppSettings } from './settings.js'
 import { bootSplash, splashConfigure } from './splash.js'
 import { homePrefs } from './pages/board.js'
 import { albumPage } from './pages/detail.js'
@@ -162,7 +163,14 @@ try {
 }
 // 窗口开着毛玻璃的话（config.yaml 的 window.glass），页面自己也留点透明度，
 // DWM 在窗口后面画的那层模糊才透得上来
-const boot = await loadSettings()
+// 这一段在 startRouter() 前面，抛出去就是整窗空白。loadSettings 内部已经 catch 了读配置的失败，
+// 正常不会抛 —— 但这是"开路由之前的最后一道闸"，用几行把它焊死，别让任何意外卡在这儿。
+let boot: AppSettings = DEFAULT_SETTINGS
+try {
+  boot = await loadSettings()
+} catch (err) {
+  console.error('读配置失败，用默认值启动', err)
+}
 document.documentElement.dataset.glass = boot.window.glass === 'none' ? 'off' : 'on'
 splashConfigure(boot.splash)   // 配置到手才作数：关了就当场撤，时长按配置重排
 

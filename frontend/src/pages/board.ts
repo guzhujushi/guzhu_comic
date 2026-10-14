@@ -191,6 +191,7 @@ export function boardPage(category: ComicCategory): HTMLElement {
   let current: BoardPrefs = prefs
   let hero: HeroHandle | null = null
   let token = 0                 // 每换一次条件加一，晚回来的旧结果直接丢
+  let dead = false              // 页面已经切走：晚醒的定时器别再重新发起请求
   let retries = 0               // 整页失败自动重试的次数（成功后清零）
   let cols = 5
   let state: 'loading' | 'ready' | 'empty' | 'error' = 'loading'
@@ -403,7 +404,7 @@ export function boardPage(category: ComicCategory): HTMLElement {
       if (!row.retried) {
         row.retried = true
         window.setTimeout(() => {
-          if (my === token && row.items === null) void fillRow(row, my)
+          if (!dead && my === token && row.items === null) void fillRow(row, my)
         }, 1500)
         return
       }
@@ -480,6 +481,7 @@ export function boardPage(category: ComicCategory): HTMLElement {
   }
 
   async function load(range: RankRange, sort: SortOrder): Promise<void> {
+    if (dead) return   // scheduleRetry 的定时器可能在切页之后才醒：别为一张已经拆掉的面板打桥
     current = { range, sort }
     saveState('popular', current)   // 换一次记一次，下次进这一页还是这个榜单
     rangePicker.set(range)
@@ -621,6 +623,7 @@ export function boardPage(category: ComicCategory): HTMLElement {
   window.addEventListener('keydown', onKey)
 
   onUnmount(() => {
+    dead = true
     hero?.destroy()
     reveal?.disconnect()
     resizeObserver?.disconnect()

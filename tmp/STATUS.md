@@ -36,8 +36,69 @@
 - [x] 左下角「继续阅读」：一张卡（最近读过的那本 + 封面 + 读到第几页）+ 一个按钮，点了直接进阅读器落回上次那页；没读过就整块藏起来（2026-10-14）
 - [x] README 页首加「亮点」段（数据不出本地 / 能反复读 / 接着上次看 / 推荐真算 / 无广告 / 现代桌面壳…）（2026-10-14）
 - [x] 导航栏「设置」移到底部左下角 + 新增「关于」页（`#/about`：能干什么 / 怎么用 / 数据在哪，README 的用户视角精简版）（2026-10-14）
+- [x] 健壮性审计（用户："不加功能了，看看代码有没有漏洞，补齐漏洞和可能崩溃的地方，最后检验"）：全库只读审查 →
+  补 13 处"会整窗空白 / 会静默丢数据 / 会以 TypeError 直穿 JS 桥 / 会信息暴露"的点 + 新增 3 个回归脚本（2026-10-14）
 - [ ] 打包 P0 落码（待办）：`backend/paths.py` + `backend/server.py` + `main.py` 起静态服务 + `config.yaml` 的 `dev.use_dev_server` / `server.port` + `private_mode=False, storage_path=~/.jmreader/webview`
 - [ ] 打包 P1（待办）：256×256 的 `.ico` 源图、单实例检测、WebView2 Runtime 缺失提示、日志落盘 `~/.jmreader/logs/`
+
+## 健壮性审计（漏洞 / 崩溃点）改动清单（2026-10-14）
+
+用户要求：**不再加功能，通读全库找漏洞和可能崩的地方，补掉，最后检验**。**还没打包**。
+
+做法：先只读审查（前端 20 个 `.ts` + `backend/api.py` 全 1953 行 + `config.py` / `glass.py` / `main.py`），
+按「整窗空白 → 静默丢数据 → 参数形状炸 → 信息暴露」排优先级；能复现的才动手，每改一处跑 `tsc` + `build`。
+
+**前端**
+- `frontend/src/router.ts`：`resolve()` 原来是**先清空 `#app` 再调 handler** —— handler 一抛就是整窗空白、连提示都没有
+  （各页面自己的 try/catch 管的是它们**之后**的异步加载，管不到"挂载那一刻"）。现在 handler 包 try/catch，
+  出错渲染 `renderError`（加载失败了 + 重试，重试就是再 `resolve()` 一次）；`#app` 找不到就返回，不把异常抛进事件回调。
+- `frontend/src/main.ts`：`const boot = await loadSettings()` 挂在 `startRouter()` **前面**，一抛就永远开不出路由。
+  `loadSettings` 内部虽然 catch 了读配置失败，但"桥调用被清掉/超时"抛的是普通 Error → 顶层 await reject。
+  改成 try/catch + 回落 `DEFAULT_SETTINGS`（这是"整窗空白"的第三个入口，前两个是桥注入清回调、`bridgeCall` 没接住）。
+- `frontend/src/pages/board.ts`：`scheduleRetry` / 各横条的重试定时器可能在**切页之后**才醒 → 对着已经拆掉的面板再打一轮桥。
+  加 `dead` 标志（`onUnmount` 置位），`load()` 与横条重试都先看它。
+- `frontend/src/pages/reader.ts`：`armRetry` 那段缩进是错的（功能对，但 4 / 8 空格混着写，读起来像有 bug）—— 只重排缩进。
+- `frontend/src/pages/downloads.ts`：`get_downloads()` 的返回值直接当数组用；形状不对会在 `tasks.some/map` 上抛一个
+  没人接的 rejection，整页停在骨架。加 `Array.isArray` 兜一道。
+
+**后端（`backend/api.py` / `backend/config.py`）**
+- `config.load_config()`：读不动 / YAML 写坏 / 顶层不是映射 / 某一段被写成标量（`window: 5`）→ 一律回落默认值。
+  这是**开窗路径**上的函数，抛出去 = 窗口起不来（以前手改坏 `config.yaml` 就是一句 Python traceback）。
+- `save_settings()`：原来只 catch `ValueError`，而 `settings.get("window") or {}` 碰上非映射会抛 `TypeError` **原样直穿 JS 桥**。
+  新增 `_setting_section()`（非映射当场报「窗口那一段要是一个小节」），`except` 放宽到 `(ValueError, TypeError)`，
+  `save_config` 写盘失败也包成「保存失败：config.yaml 写不进去（…）」。
+- `save_progress()`：`int(page_index)` 无校验、`title/cover_url` 原样进 SQL（那两列是 NOT NULL）——
+  脏入参会抛 `IntegrityError`，**这一话的真实进度反而丢了**。现在页码夹到 ≥0、文本一律 `str(...)`。
+- `get_history()`：`int(limit)` 不夹范围，而 sqlite 里**负数 LIMIT = 不限制**（等于绕过上限）→ `_cfg_int(limit, 10, 1, 500)`。
+- 缓存形状：`_cache_get` 对坏 JSON / 非数字 `fetched_at` 判成"没命中"；新增 `_cache_list()` 只认 list 形状，
+  用在 `get_chapter` / `_download_chapter_to_dir` / `prefetch_chapter` / `search` / `get_ranking`；
+  详情 / 评论 / 论坛三处缓存加 `isinstance(dict)`。以前缓存里塞进别的形状会以 `TypeError` 直穿 JS 桥。
+- `start_download()`：`chapters` 不是 list/tuple 时 `for` 出来的全是垃圾（传数字直接 TypeError）→ 提前报「话单要传列表」。
+- `get_recommendations()`：`exclude` 不是可迭代就当没传，别为一个参数形状把整段推荐打掉。
+- `cleanup_cache()`：算目录 mtime 时 `.stat()` 可能撞上下载线程改名 / 删文件 → 这一趟不参与排序，不再让整次清理失败。
+- 本地图片服务 `_QuietHandler`：**关掉目录列表**（`list_directory` → 403）。服务只监听 127.0.0.1 + 随机端口，
+  但 `/images/` `/downloads/` 列目录等于把缓存与离线副本的结构摊开给本机任何程序看。
+- 顺手统一连接：`sqlite3.connect(...)` → `_db(...)`（35 处），**只改一处行为**：等锁上限 5s → 15s
+  （整本下载逐话写库、界面同时存进度时 5 秒偶尔不够）。`with sqlite3.connect()` 只提交不关连接这点保持原样
+  （CPython 靠引用计数在函数返回时回收，实测没有句柄残留），**没做大规模重构**。
+
+**验收（全部 exit 0）**
+- `tsc --noEmit` + `npm run build`；`python -m py_compile` 四个后端文件；`tmp/_check_history.py`（真库）正常。
+- 新增 `tmp/_check_hardening.py`（**5/5 PASS**）：坏 `config.yaml` 六种写法、`save_settings` 七种非法入参 + 写盘失败、
+  缓存坏 JSON / 错形状 / 错 `fetched_at`、`save_progress` 脏页码与 None 文本、`get_history` 五种非法 limit、
+  `start_download` / `get_recommendations` 非法入参 —— 全跑在临时库 + 假 self 上，不碰真 `data/` / `cache/` / `config.yaml`。
+- 新增 `tmp/_check_router_guard.py`（无头 Chrome + 假桥）：**先把 `aboutPage()` 临时改成直接 throw**，再 build 跑一遍 ——
+  `#app` 里出现「加载失败了 + 重试」而不是空白、点重试仍在、切到 `#/popular` 首页照常（**ALL PASS**）；
+  还原 `about.ts`（`git diff` 与还原前一致，逐字节核对过行尾）后 normal 模式也 ALL PASS。
+- 新增 `tmp/_check_imgserver.py`（**3/3 PASS**）：目录列表 403、正常取图 200、六种路径穿越都拿不到根目录外的文件。
+- 新增 `tmp/_check_api_smoke.py`：真库上把改到的读接口各跑一遍（`get_settings` 九段齐全、`get_history(60)`→2 条、
+  `get_downloads` / `get_favorites` / `get_search_log` / `get_cache_stats` / `get_taste_profile` / `get_album_progress` 全正常）。
+- 老回归全绿：`_check_hero_dedupe.py` / `_check_coldstart.py` / `_check_bridge_wipe.py` / `_check_nav.py` /
+  `_check_reader_sheet.py`（ALL PASS）。
+- 真窗口探针 `tmp/_probe_bridge.py`：`dev`（vite 5173）与 `--dist` 各一趟，`returnValueFAIL=[]`、`missingApi=[]`、
+  `appKids=1`、`rec=shown` + `recCards=10`、`resume=shown`、`heroVsBelow={hero:3,dup:[]}`；
+  dev 那趟正好抓到两遍注入（1184ms / 1240ms，间隔 56ms）也**零失败**。
+
 
 ## 首页 hero 去重 改动清单（2026-10-14）
 

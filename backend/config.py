@@ -92,12 +92,26 @@ _ConfigDumper.add_representer(list, _represent_list)
 
 
 def load_config() -> dict[str, Any]:
-    """读 config.yaml，缺的键补默认值"""
+    """
+    读 config.yaml，缺的键补默认值。
+
+    这个文件用户能手改，所以每一步都得兜住：读不动、YAML 写坏、顶层不是映射、某一段被写成
+    标量 —— 一律退回默认值。开窗路径上就会调用它，抛出去 = 窗口起不来。
+    """
     raw: Any = {}
     if CONFIG_PATH.exists():
-        with CONFIG_PATH.open(encoding="utf-8") as f:
-            raw = yaml.safe_load(f)
-    return _merged(DEFAULT_CONFIG, raw)
+        try:
+            with CONFIG_PATH.open(encoding="utf-8") as f:
+                raw = yaml.safe_load(f)
+        except (OSError, yaml.YAMLError) as e:
+            print(f"[config] config.yaml 读不了，先用默认值: {e}", flush=True)
+            raw = {}
+    cfg = _merged(DEFAULT_CONFIG, raw if isinstance(raw, dict) else {})
+    # 某一段被改成标量（比如 `window: 5`）时整段退回默认：不然 cfg["window"]["width"] 当场崩
+    for key, default in DEFAULT_CONFIG.items():
+        if isinstance(default, dict) and not isinstance(cfg.get(key), dict):
+            cfg[key] = copy.deepcopy(default)
+    return cfg
 
 
 def save_config(config: dict[str, Any]) -> None:
