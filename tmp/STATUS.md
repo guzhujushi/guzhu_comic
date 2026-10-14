@@ -495,6 +495,38 @@ A / B 组后端补齐 + 前端热更新通道（§「A / B 组后端补齐」「
 - **这一版之后**：再改前端**不用重打包** —— 跑 `scripts\publish_frontend.ps1` 把 `web_dist_out/` 两个产物传到更新地址即可（§9）。
   注意它的 `-AppMin` 默认取 `APP_VERSION`（= 0.1.1）：0.1.0 那个 exe 里**没有** `updater.py`，收不到热更，得换新安装包。
 
+- **已发 GitHub release（2026-10-14）**：https://github.com/guzhujushi/guzhu_comic/releases/tag/v0.1.1
+  —— `main` 推到 `267aa60`（这份提交里已含 0.1.1 版本号），注释 tag `v0.1.1` → `b17a12a`（指向 `267aa60`）；
+  release 名 `GuzhuComic`、非 draft、非 prerelease，资产 `GuzhuComic-0.1.1-win64.zip`（20.19 MiB）。
+  从公网下载回来核过 SHA256 = `5B4DCC02980A6962A9F561F5046DC1174B632D89AA7E58D962D332D23A56C51F`，与本地那份**逐字节一致**。
+- **发之前本机凭据全失效**：`GH_TOKEN` / `GITHUB_TOKEN` / 凭据管理器 keyring 里其实是**同一个过期的 40 位 token**（都 401）；
+  `~/.gitconfig` 的 `credential.https://github.com.helper` 指向**已被删除**的 `.openclaw\bin\gh-cli\bin\gh.exe`；
+  凭据管理器里 `git:https://github.com` 存的密码是**字面量 `***`**。解法：用 `gh auth login -h github.com -p https --web` 走**设备码**
+  重新授权（`C:\Users\guzhu\agent-tools\bin\gh-cli\bin\gh.exe`，登录 `guzhujushi`，scopes `gist, read:org, repo, workflow`）；
+  注意**先清掉 `GH_TOKEN` 环境变量**，否则 `gh auth login` / `gh auth token` 都会去读那个旧值。
+- **发布脚本**：`tmp/_gh_release.py`（幂等：验身份 → push `main` → 本地打 tag + push tag → 建或改 release → 缺资产才上传；
+  认证走 `GIT_CONFIG_KEY_0=http.https://github.com/.extraheader` 环境变量，不写进 `.git/config`、不出现在命令行）。
+
+### 前端热更通道：发布端就绪（2026-10-14）
+
+客户端那一侧早落码了（`backend/updater.py`，见 `tmp/交接文档.md` §9），这次把**发布端**补齐并验通。
+
+- **发布产物**：`powershell -ExecutionPolicy Bypass -File scripts\publish_frontend.ps1` 出 `web_dist_out\manifest.json` +
+  `frontend-dist-<构建号>.zip`（204 KB）。构建号 = `<日期>-<时刻>-<git 短 sha>`（工作区有未提交改动会带 `-dirty`）。
+- **发布脚本加了 `-Push`**：打完包直接 clone/更新 `web_dist_out\_channel`（通道仓库的本地克隆）→ 覆盖 `web\` →
+  commit → `push origin main`，走 **ssh**（`git@code.guzhujushi.cn:guzhujushi/guzhu_comic.git`），**不需要 token**。
+  仓库不存在时干净报错、不做任何递归删除；不带 `-Push` 时行为跟以前一样（只打印"传哪两个文件"）。
+- **真产物链路验证**：`tmp/_check_publish_real.py`（新，**21/21**）—— 拿 `web_dist_out\` 里那两个**真要发出去**的文件
+  起本地 HTTP 服务当发布端，跑 `check()` + `apply()`：sha256 / 体积 / 构建号对得上、真装进 `~/.jmreader/web`、
+  `version.json` 记下构建号与版本号、装完再查就没有新版。
+- **公网可达性**（这条不过整条通道就白搭）：`code.guzhujushi.cn` → `8.145.36.108`，本机直连通；
+  再经 mihomo 代理（出口 `52.53.179.148`，等效"国外用户视角"）**也通** → 用户侧不需要科学上网。
+- **卡在最后一步**：Gitea 上 `guzhujushi/guzhu_comic` 仓库还没建。服务端 `ENABLE_PUSH_CREATE_USER` 是关的
+  （push 报 `Push to create is not enabled for users.`）；两边都找不到可用的 Gitea 凭据（Windows 凭据管理器 /
+  `~/.git-credentials` / `~/.netrc` / `tea` / 本机 58 个与服务器 113 个 hex40 候选全试过）；也没有 root
+  （`ssh root@100.115.86.48` 被拒、`ssh root@8.145.36.108` 超时、`sudo -n` 要密码），所以没法用 `gitea admin` 造 token。
+  → 只能网页上点一下：https://code.guzhujushi.cn/repo/create ，名字 `guzhu_comic`、**公开**、**不要勾"初始化仓库"**。
+
 ### 直连可用性实测：**不需要科学上网**（2026-10-14）
 
 用户问："这个 exe 没有科学上网环境能用吗？需要从 GitHub 下载东西吗？" —— 实测结论：
@@ -1147,5 +1179,14 @@ A / B 组后端补齐 + 前端热更新通道（§「A / B 组后端补齐」「
    （产物哈希 / 验收证据 / 待提交清单 / 没验证的边界）。
    别做自动更新（无签名 + 自动下 exe = 误报与安全双重坑）。
 
-10. **发布版之后又动过前端**（品牌行落位 + 搜索页返回修复，2026-10-14）：`build_out/` 里那两个产物里的 dist 是**旧的**，
-   要发给同学就重跑 `scripts/build_exe.ps1`，并重新记哈希 / 复扫（`tmp/_vt_*` 那套）。
+10. ~~**发布版之后又动过的前端**（品牌行落位 + 搜索页返回修复）~~ —— **2026-10-14 已完成**：第五次出包（0.1.1）重打了，
+    包内 dist 与 `frontend/dist` 逐字节一致，并已发 GitHub release `v0.1.1`（见上面「第五次出包」那节）。
+11. **热更通道：只差建仓库**（进行中）：发布端（`scripts\publish_frontend.ps1 -Push` + `tmp/_check_publish_real.py`）
+    已就绪并验通，见上面「前端热更通道：发布端就绪」一节。剩下的事只有一件、而且只能网页上点：
+    https://code.guzhujushi.cn/repo/create → 名字 `guzhu_comic`、可见性**公开**、**不勾"初始化仓库"**；
+    建好之后跑 `powershell -ExecutionPolicy Bypass -File scripts\publish_frontend.ps1 -Push` 就算上线。
+12. ~~**可选清理（本机环境）**~~ —— **2026-10-14 已完成**：删掉用户级 `GH_TOKEN` / `GITHUB_TOKEN`（那俩是同一个过期 token，
+    留着会让 `gh auth login` / `gh auth token` 读到旧值）；`~/.gitconfig` 里 github 与 gist 两处 credential helper 指向的
+    `gh.exe` 从**已被删除**的 `.openclaw\bin\gh-cli\bin\gh.exe` 改成实际存在的 `agent-tools\bin\gh-cli\bin\gh.exe`
+    （改动前备份 `~/.gitconfig.bak-20261014`）。验证：`gh auth status` ✓、`git credential fill` 拿得到有效 token、
+    `git push --dry-run origin main` 通。

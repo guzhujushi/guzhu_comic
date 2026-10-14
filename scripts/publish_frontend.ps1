@@ -11,8 +11,9 @@
   发布流程（不需要 token，也不需要科学上网）：
 
     1) 跑这个脚本，产物落在 web_dist_out\
-    2) 把 manifest.json 与那个 zip 传到 code.guzhujushi.cn 上仓库的 web\ 目录
-       （网页里拖拽上传最省事，git push 也行）
+    2) 把 manifest.json 与那个 zip 传到 code.guzhujushi.cn 上仓库的 web\ 目录：
+       加 -Push 就自动做（克隆缓存在 web_dist_out\_channel，走 ssh，不需要 token），
+       或者自己拖拽上传 / git push
     3) 客户端「设置 → 更新 → 检查更新」就能看到新版；装完刷新页面即生效
 
   构建号（web）= <日期>-<git 短 sha>（工作区有未提交改动就带 -dirty）。
@@ -22,13 +23,17 @@
     powershell -ExecutionPolicy Bypass -File scripts\publish_frontend.ps1
     powershell -ExecutionPolicy Bypass -File scripts\publish_frontend.ps1 -SkipBuild
     powershell -ExecutionPolicy Bypass -File scripts\publish_frontend.ps1 -Version 0.1.1 -Notes "修了返回丢页码"
+    powershell -ExecutionPolicy Bypass -File scripts\publish_frontend.ps1 -Push          # 顺手推到更新通道仓库
 #>
 param(
   [switch]$SkipBuild,
   [string]$Version = '',
   [string]$Notes = '',
   [string]$AppMin = '',
-  [string]$OutDir = ''
+  [string]$OutDir = '',
+  [switch]$Push,                                              # 打完包顺手推到更新通道仓库
+  [string]$RepoUrl = 'git@code.guzhujushi.cn:guzhujushi/guzhu_comic.git',
+  [string]$ChannelDir = ''                                    # 通道仓库的本地克隆（默认 web_dist_out\_channel）
 )
 $ErrorActionPreference = 'Stop'
 $Root = Split-Path -Parent $PSScriptRoot
@@ -98,13 +103,57 @@ $ManifestPath = Join-Path $Target 'manifest.json'
 $Json = ($Manifest | ConvertTo-Json -Depth 4)
 [System.IO.File]::WriteAllText($ManifestPath, $Json, (New-Object System.Text.UTF8Encoding($false)))
 
-Write-Host ''
-Write-Host '[4/4] 好了。把下面两个文件传到更新地址那个目录里：'
-Write-Host "    $ManifestPath"
-Write-Host "    $Zip"
-Write-Host ''
+# 客户端读的那个 https 地址（从 ssh 地址推出来，只为了把提示打对）
+$RawBase = $RepoUrl
+if ($RawBase -match '^(?:ssh://)?git@([^:/]+)(?::\d+)?[/:](.+?)(?:\.git)?$') {
+  $RawBase = "https://$($Matches[1])/$($Matches[2])/raw/branch/main/web"
+}
+
 Write-Host "  manifest: web=$Build version=$Version size=$([math]::Round($Size/1KB,1)) KB"
 Write-Host "  sha256  : $Hash"
 Write-Host ''
-Write-Host '  客户端那边的更新地址（config.yaml 的 update.url）应该是同一个目录，'
-Write-Host '  默认 https://code.guzhujushi.cn/guzhujushi/guzhu_comic/raw/branch/main/web'
+Write-Host "  客户端读的是 $RawBase/manifest.json"
+
+if (-not $Push) {
+  Write-Host ''
+  Write-Host '[4/4] 好了。把下面两个文件传到上面那个目录里（或者加 -Push 让脚本自己推）：'
+  Write-Host "    $ManifestPath"
+  Write-Host "    $Zip"
+  exit 0
+}
+
+# ---- 推送：产物放进更新通道仓库的 web\ 目录 → commit → push（走 ssh，不需要 token） ----
+$Channel = if ($ChannelDir) { $ChannelDir } else { Join-Path $Target '_channel' }
+Write-Host ''
+Write-Host "[5/5] 推到更新通道仓库 $RepoUrl"
+if (-not (Test-Path (Join-Path $Channel '.git'))) {
+  if (Test-Path $Channel) { throw "$Channel 在这儿但不是个 git 仓库 —— 先自己看一眼（脚本不做递归删除）" }
+  & git clone $RepoUrl $Channel
+  if ($LASTEXITCODE -ne 0) {
+    throw "clone 失败：$RepoUrl（仓库建了吗？公开的吗？这台机器 ssh 到 code.guzhujushi.cn 通吗？）"
+  }
+} else {
+  & git -C $Channel pull --ff-only
+  if ($LASTEXITCODE -ne 0) { Write-Host '  ！pull 没成功（本地分叉或没网），按现状继续' }
+}
+# 空仓库 clone 出来没有分支，统一按 main 走（Gitea 那边默认分支就是 main）
+$Branch = ((& git -C $Channel rev-parse --abbrev-ref HEAD) -join '').Trim()
+if ($Branch -ne 'main') { & git -C $Channel checkout -B main | Out-Null }
+
+$Web = Join-Path $Channel 'web'
+New-Item -ItemType Directory -Force -Path $Web | Out-Null
+Copy-Item -LiteralPath $ManifestPath -Destination (Join-Path $Web 'manifest.json') -Force
+Copy-Item -LiteralPath $Zip -Destination (Join-Path $Web $ZipName) -Force
+& git -C $Channel add -A
+$Pending = ((& git -C $Channel status --porcelain) -join '').Trim()
+if ($Pending) {
+  & git -C $Channel commit -m "前端热更：$Build（$Version）"
+  if ($LASTEXITCODE -ne 0) { throw 'commit 失败（更新通道仓库里的 git 身份没配？）' }
+} else {
+  Write-Host '  （产物与仓库里那份一样，没有要提交的）'
+}
+& git -C $Channel push origin main
+if ($LASTEXITCODE -ne 0) { throw 'push 失败' }
+Write-Host ''
+Write-Host "  推完了。客户端下次开窗就会看到 $Build"
+Write-Host '  想立刻验一遍发布端： .venv\Scripts\python.exe tmp\_check_publish_real.py'
