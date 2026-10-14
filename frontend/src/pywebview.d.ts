@@ -3,6 +3,32 @@ interface AlbumSummary {
   title: string
   cover_url?: string
   subtitle?: string
+  /** 在本地收藏里吗：列表接口返回前现拼（不进缓存），界面靠它打「已收藏」角标 */
+  favorited?: boolean
+}
+
+/** 推荐段的一条：subtitle 是"为什么推它"（命中的 tag / 作者） */
+interface Recommendation {
+  id: string
+  title: string
+  cover_url: string
+  subtitle: string
+  favorited: boolean
+  score: number
+}
+
+/** 一批推荐：cold = 画像空或者一个都没命中，界面该写「热门推荐」 */
+interface RecommendPage {
+  cold: boolean
+  items: Recommendation[]
+}
+
+/** 一条搜索记录（存在 data/app.db 的 search_log） */
+interface SearchLogItem {
+  keyword: string
+  scope: SearchScope
+  hits: number
+  at: number
 }
 
 interface AlbumProgress {
@@ -16,6 +42,7 @@ interface FavoriteItem {
   title: string
   cover_url: string
   added_at: number
+  favorited?: boolean
 }
 
 type RankRange = "day" | "week" | "month"
@@ -33,11 +60,22 @@ interface PyApi {
   get_chapter(photo_id: string): Promise<ChapterImages>
   get_comments(album_id: string, page?: number): Promise<CommentPage>
   get_forum(page?: number): Promise<ForumPage>
+  get_recommendations(kind?: "home" | "search", limit?: number, exclude?: string[]): Promise<RecommendPage>
+  get_taste_profile(): Promise<{
+    tags: { tag: string; weight: number }[]
+    authors: { author: string; weight: number }[]
+    favorites: number
+    searches: number
+  }>
+  log_search(keyword: string, scope?: SearchScope): Promise<void>
+  get_search_log(limit?: number): Promise<SearchLogItem[]>
+  remove_search_log(keyword: string): Promise<void>
+  clear_search_log(): Promise<void>
   get_album_titles(album_ids: string[]): Promise<Record<string, string>>
   prefetch_albums(album_ids: string[]): Promise<number>
   prefetch_chapter(photo_id: string): Promise<number>
   is_favorite(album_id: string): Promise<boolean>
-  toggle_favorite(album_id: string, title?: string, cover_url?: string): Promise<boolean>
+  toggle_favorite(album_id: string, title?: string, cover_url?: string, tags?: string[], authors?: string[]): Promise<boolean>
   remove_favorite(album_id: string): Promise<void>
   get_favorites(limit?: number, offset?: number): Promise<FavoriteItem[]>
   save_progress(album_id: string, photo_id: string, page_index: number, title?: string, cover_url?: string): Promise<void>

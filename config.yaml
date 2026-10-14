@@ -23,6 +23,12 @@ prefetch:
   albums: 12
   chapter_images: 3
   next_at: 0.9
+recommend:
+  limit: 10
+  candidates: 40
+  hot_weight: 0.3
+  author_boost: 1.5
+  half_life_days: 30
 download:
   workers: 8
 cache:

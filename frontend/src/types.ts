@@ -34,8 +34,34 @@ export interface AlbumSummary {
   id: string
   title: string
   cover_url?: string
-  /** 卡片下面那行小字，比如"读到第 61 页" */
+  /** 卡片下面那行小字，比如"读到第 61 页"、推荐卡的命中原因 */
   subtitle?: string
+  /** 在本地收藏里吗（列表接口现拼）：只有 true 才打「已收藏」角标，没收藏什么都不加 */
+  favorited?: boolean
+}
+
+/** 推荐段的一条：subtitle 是"为什么推它"（命中的 tag / 作者） */
+export interface Recommendation {
+  id: string
+  title: string
+  cover_url: string
+  subtitle: string
+  favorited: boolean
+  score: number
+}
+
+/** 一批推荐：cold = 画像空或者一个都没命中，标题该写「热门推荐」而不是「为你推荐」 */
+export interface RecommendPage {
+  cold: boolean
+  items: Recommendation[]
+}
+
+/** 一条搜索记录（data/app.db 的 search_log）：后端拿它当推荐画像的输入 */
+export interface SearchLogItem {
+  keyword: string
+  scope: SearchScope
+  hits: number
+  at: number
 }
 
 export interface ChapterImages {
@@ -85,6 +111,8 @@ export interface ForumComment {
   reply_count: number
   album_id: string
   cover_url: string
+  /** 这条评论挂的本子已经在收藏里吗（界面给封面条打「已收藏」） */
+  favorited: boolean
 }
 
 export interface ForumPage {

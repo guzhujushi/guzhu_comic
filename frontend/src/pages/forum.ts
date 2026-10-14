@@ -215,6 +215,18 @@ function albumChip(item: ForumComment, titles: Map<string, string>): HTMLElement
     img.remove()
   }
 
+  // 已收藏的角标：封面才 34px 宽，塞不下「已收藏」三个字，就贴在标题行右端
+  if (item.favorited) {
+    const badge = document.createElement('span')
+    badge.className = 'forum-fav'
+    badge.title = '已收藏'
+    badge.appendChild(createIcon(icons.heartOn, { size: 12, stroke: 2.2 }))
+    const text = document.createElement('span')
+    text.textContent = '已收藏'
+    badge.appendChild(text)
+    chip.appendChild(badge)
+  }
+
   chip.appendChild(createIcon(icons.next, { size: 14 }))
   chip.addEventListener('click', () => {
     window.location.hash = `#/album?id=${item.album_id}`

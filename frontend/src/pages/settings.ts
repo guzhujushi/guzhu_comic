@@ -61,6 +61,16 @@ const GROUPS: { title: string; fields: FieldDef[] }[] = [
     ],
   },
   {
+    title: '推荐',
+    fields: [
+      { path: 'recommend.limit', label: '一次推荐几张', type: 'number', min: 0, max: 50, hint: '首页第一段与搜索页结果下面那一段各铺几张（0 = 关掉推荐，整段不出现）；推荐只看收藏与搜索记录，不登录、不上传', restart: true },
+      { path: 'recommend.candidates', label: '候选池大小（部）', type: 'number', min: 5, max: 200, hint: '从周榜热度前几部里挑这么多部当候选，再用画像打分；调大只影响覆盖度、不影响速度', restart: true },
+      { path: 'recommend.hot_weight', label: '热度先验占比', type: 'number', min: 0, max: 1, step: 0.05, hint: '0.3 = 三成看热度、七成看画像匹配；0 = 纯看画像；画像空的时候它就是兜底（热门）', restart: true },
+      { path: 'recommend.author_boost', label: '作者命中加成', type: 'number', min: 0, max: 5, step: 0.1, hint: '作者命中相对 tag 命中的倍数，默认 1.5', restart: true },
+      { path: 'recommend.half_life_days', label: '画像半衰期（天）', type: 'number', min: 1, max: 365, hint: '收藏 / 搜索的权重每过这么多天减半：30 = 一个月前的一个收藏算半个', restart: true },
+    ],
+  },
+  {
     title: '下载与缓存',
     fields: [
       { path: 'download.workers', label: '图片下载并发数', type: 'number', min: 1, max: 32, hint: '太大容易被图源限速', restart: true },

@@ -38,6 +38,13 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "chapter_images": 3,    # 进详情页 / 一话看到 next_at 时先下的图片张数（0 = 关）
         "next_at": 0.9,         # 一话看到这个比例就预加载下一话（0 = 关）
     },
+    "recommend": {
+        "limit": 10,            # 一次铺几张推荐卡片（0 = 关掉推荐）
+        "candidates": 40,       # 候选池大小（热度榜前 N 部）
+        "hot_weight": 0.3,      # 打分里热度先验的占比（0 = 纯画像）
+        "author_boost": 1.5,    # 作者命中相对 tag 命中的倍数
+        "half_life_days": 30,   # 收藏 / 搜索权重的时间半衰期
+    },
     "download": {
         "workers": 8,
     },

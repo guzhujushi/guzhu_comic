@@ -27,6 +27,13 @@ export interface AppSettings {
     chapter_images: number
     next_at: number
   }
+  recommend: {
+    limit: number
+    candidates: number
+    hot_weight: number
+    author_boost: number
+    half_life_days: number
+  }
   download: { workers: number }
   cache: {
     photo_ttl: number
@@ -52,6 +59,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   },
   detail: { chapters_collapse: 20, comment_preview: 5 },
   prefetch: { albums: 12, chapter_images: 3, next_at: 0.9 },
+  recommend: { limit: 10, candidates: 40, hot_weight: 0.3, author_boost: 1.5, half_life_days: 30 },
   download: { workers: 8 },
   cache: {
     photo_ttl: 86400, album_ttl: 86400, search_ttl: 3600, ranking_ttl: 3600, comment_ttl: 600,
@@ -76,6 +84,7 @@ export async function loadSettings(force = false): Promise<AppSettings> {
       reader: { ...DEFAULT_SETTINGS.reader, ...raw.reader },
       detail: { ...DEFAULT_SETTINGS.detail, ...raw.detail },
       prefetch: { ...DEFAULT_SETTINGS.prefetch, ...raw.prefetch },
+      recommend: { ...DEFAULT_SETTINGS.recommend, ...raw.recommend },
       download: { ...DEFAULT_SETTINGS.download, ...raw.download },
       cache: { ...DEFAULT_SETTINGS.cache, ...raw.cache },
     }

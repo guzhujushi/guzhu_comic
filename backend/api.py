@@ -19,6 +19,15 @@ def _cfg_int(value: Any, default: int, lo: int, hi: int) -> int:
     return max(lo, min(hi, n))
 
 
+def _cfg_float(value: Any, default: float, lo: float, hi: float) -> float:
+    """配置里的小数，非法就退回默认"""
+    try:
+        n = float(value)
+    except (TypeError, ValueError):
+        return default
+    return max(lo, min(hi, n))
+
+
 def _setting_int(value: Any, lo: int, hi: int, name: str) -> int:
     """设置页提交的整数，非法直接报错"""
     try:
@@ -108,6 +117,12 @@ class API:
         # 预加载（列表 -> 详情缓存、详情/阅读 -> 章节图）：见 config.yaml 的 prefetch 组
         self._pf_albums = _cfg_int(cfg["prefetch"]["albums"], 12, 0, 30)
         self._pf_images = _cfg_int(cfg["prefetch"]["chapter_images"], 3, 0, 20)
+        # 推荐（热度候选池 + 收藏 / 搜索画像）：见 config.yaml 的 recommend 组
+        self._rc_limit = _cfg_int(cfg["recommend"]["limit"], 10, 0, 50)
+        self._rc_candidates = _cfg_int(cfg["recommend"]["candidates"], 40, 5, 200)
+        self._rc_hot = _cfg_float(cfg["recommend"]["hot_weight"], 0.3, 0.0, 1.0)
+        self._rc_author_boost = _cfg_float(cfg["recommend"]["author_boost"], 1.5, 0.0, 5.0)
+        self._rc_half_life = _cfg_int(cfg["recommend"]["half_life_days"], 30, 1, 365)
 
         # jmcomic 建客户端时要连图源（更新域名、拉 setting），图源抖一下这一步就能卡十几秒。
         # 所以挪到"第一次真要数据"的时候再做（见下面 client 属性），窗口立刻就能起来，
@@ -181,6 +196,20 @@ class API:
                 "cover_url TEXT NOT NULL DEFAULT '', "
                 "added_at REAL NOT NULL)"
             )
+            # 搜索记录也搬进 data/（原来是 localStorage）：推荐要知道"搜过什么、几次、
+            # 什么时候搜的"，这三样只有后端算得了 —— 前端那份只有关键词，没有次数与时间
+            conn.execute(
+                "CREATE TABLE IF NOT EXISTS search_log ("
+                "keyword TEXT PRIMARY KEY, "
+                "scope TEXT NOT NULL DEFAULT 'site', "
+                "hits INTEGER NOT NULL DEFAULT 1, "
+                "at REAL NOT NULL)"
+            )
+        # 老库升级：收藏行的 tag / 作者快照是后加的列，缺了当场补
+        self._ensure_columns("favorite", {
+            "tags_json": "TEXT NOT NULL DEFAULT '[]'",
+            "authors_json": "TEXT NOT NULL DEFAULT '[]'",
+        })
         with sqlite3.connect(CACHE_DB) as conn:
             conn.execute(
                 "CREATE TABLE IF NOT EXISTS meta_cache ("
@@ -189,6 +218,14 @@ class API:
                 "fetched_at REAL NOT NULL)"
             )
         self._move_legacy_cache()
+
+    def _ensure_columns(self, table: str, columns: dict[str, str]) -> None:
+        """老库缺列就补上（新装的库由 CREATE TABLE 一次建全，这里只服务升级上来的库）"""
+        with sqlite3.connect(DATA_DB) as conn:
+            have = {row[1] for row in conn.execute(f"PRAGMA table_info({table})")}
+            for name, ddl in columns.items():
+                if name not in have:
+                    conn.execute(f"ALTER TABLE {table} ADD COLUMN {name} {ddl}")
 
     def _move_legacy_cache(self) -> None:
         """把老库里的 meta_cache 表搬进 cache.db，然后删掉"""
@@ -233,7 +270,7 @@ class API:
     def search(self, keyword: str, page: int = 1, scope: str = "site",
                order_by: str = "latest") -> list[dict[str, str]]:
         """
-        搜索漫画，返回 [{"id", "title", "cover_url"}]
+        搜索漫画，返回 [{"id", "title", "cover_url", "favorited"}]
 
         scope 取 _SCOPE_MAP 的键（站内 / 作品名 / 作者 / 标签 / 角色），
         order_by 取 _ORDER_BY_MAP 的键；两者都进缓存键，换条件就是另一批结果
@@ -249,7 +286,7 @@ class API:
         key = f"search:{scope}:{order_by}:{keyword}:{page}"
         cached = self._cache_get(key, self._search_ttl)
         if cached is not None:
-            return cached
+            return self._with_favorited(cached)
         try:
             result_page = getattr(self.client, _SCOPE_MAP[scope])(
                 search_query=keyword,
@@ -267,7 +304,7 @@ class API:
         for album_id, title in result_page
         ]
         self._cache_set(key, data)
-        return data
+        return self._with_favorited(data)
 
     def get_ranking(self, time_range: str, category: str = "all", page: int = 1,
                     order_by: str = "views") -> list[dict[str, str]]:
@@ -285,7 +322,7 @@ class API:
         key = f"ranking:{time_range}:{category}:{order_by}:{page}"
         cached = self._cache_get(key, self._ranking_ttl)
         if cached is not None:
-            return cached
+            return self._with_favorited(cached)
         try:
             result_page = self.client.categories_filter(
                 page=page,
@@ -301,10 +338,10 @@ class API:
                 "title": title,
                 "cover_url": JmcomicText.get_album_cover_url(str(album_id)),
             }
-            for album_id, title in result_page
+        for album_id, title in result_page
         ]
         self._cache_set(key, data)
-        return data
+        return self._with_favorited(data)
     
     def clear_cache(self) -> dict[str, int]:
         """清缓存：接口元数据 + 章节图；data/ 里的用户数据不动"""
@@ -469,6 +506,7 @@ class API:
                 ],
             }
             self._cache_set(key, data)
+            self._backfill_favorite(album_id, data)   # 老收藏行缺快照，趁这次详情补上
         # 封面地址现拼：图源域名会变（FLAG_API_CLIENT_AUTO_UPDATE_DOMAIN），别把绝对地址写进缓存
         return {
             **data,
@@ -522,7 +560,7 @@ class API:
         """
         论坛（全站评论流，只读、不需要登录），返回 {"total", "has_more", "items": [
         {"comment_id", "nickname", "content", "created_at", "spoiler", "reply",
-         "reply_count", "album_id"}]}
+         "reply_count", "album_id", "favorited"}]}
 
         album_id 为空串表示这条评论没挂本子；封面地址每次返回前现拼（域名会变），
         所以缓存里不放。服务端把 total 封在 5000（= 500 页），翻到顶就别再要了。
@@ -534,7 +572,7 @@ class API:
         key = f"forum:{page}"
         cached = self._cache_get(key, self._comment_ttl)
         if cached is not None:
-            return self._with_covers(cached)
+            return self._forum_out(cached)
         try:
             comment_page = self.client.forum_pagination(page=page)
         except Exception as e:
@@ -563,11 +601,14 @@ class API:
             "items": items,
         }
         self._cache_set(key, data)
-        return self._with_covers(data)
+        return self._forum_out(data)
 
-    @staticmethod
-    def _with_covers(data: dict) -> dict:
-        """缓存里的论坛数据 -> 返回给前端：封面地址现拼（图源域名会变，别写进缓存）"""
+    def _forum_out(self, data: dict) -> dict:
+        """
+        缓存里的论坛数据 -> 返回给前端：封面地址现拼（图源域名会变），收藏态也现拼
+        （收藏 / 取消收藏就是本地一行记录，不能跟着有 TTL 的缓存一起老）。
+        """
+        favs = self._favorited_ids([item.get("album_id") or "" for item in data["items"]])
         return {
             **data,
             "items": [
@@ -575,6 +616,7 @@ class API:
                     **item,
                     "cover_url": JmcomicText.get_album_cover_url(item["album_id"])
                     if item.get("album_id") else "",
+                    "favorited": (item.get("album_id") or "") in favs,
                 }
                 for item in data["items"]
             ],
@@ -855,11 +897,14 @@ class API:
             ).fetchone()
         return row is not None
 
-    def toggle_favorite(self, album_id: str, title: str = "", cover_url: str = "") -> bool:
+    def toggle_favorite(self, album_id: str, title: str = "", cover_url: str = "",
+                        tags: list | None = None, authors: list | None = None) -> bool:
         """
         切换收藏，返回切换后的状态（True = 已收藏）
 
         title / cover_url 只在"加入收藏"那一下用得上，收藏页列表靠它显示。
+        tags / authors 是收藏那一刻的快照（详情页本来就拿着），推荐画像靠它 —— 详情缓存
+        只有 24h，一周后拿缓存算画像就空了一半。没传 / 传空就回落详情缓存。
         收藏态故意不进 album 详情缓存（那个有 24h TTL），否则取消收藏后界面还显示已收藏。
         """
         aid = self._need_album_id(album_id)
@@ -870,10 +915,14 @@ class API:
             if exists is not None:
                 conn.execute("DELETE FROM favorite WHERE album_id = ?", (aid,))
                 return False
+            snap_tags, snap_authors = self._favorite_snapshot(aid, tags, authors)
             conn.execute(
-                "INSERT OR REPLACE INTO favorite (album_id, title, cover_url, added_at)"
-                " VALUES (?, ?, ?, ?)",
-                (aid, str(title or "").strip(), str(cover_url or ""), time.time()),
+                "INSERT OR REPLACE INTO favorite"
+                " (album_id, title, cover_url, added_at, tags_json, authors_json)"
+                " VALUES (?, ?, ?, ?, ?, ?)",
+                (aid, str(title or "").strip(), str(cover_url or ""), time.time(),
+                 json.dumps(snap_tags, ensure_ascii=False),
+                 json.dumps(snap_authors, ensure_ascii=False)),
             )
             return True
 
@@ -894,9 +943,328 @@ class API:
                 (limit, offset),
             ).fetchall()
         return [
-            {"album_id": r[0], "title": r[1], "cover_url": r[2], "added_at": r[3]}
+            # favorited 恒为 True：整页都是收藏，字段照样给，免得前端要认两种形状
+            {"album_id": r[0], "title": r[1], "cover_url": r[2], "added_at": r[3],
+             "favorited": True}
             for r in rows
         ]
+
+    # ==================== 搜索记录（data/app.db） ====================
+    # 推荐要知道"搜过什么、搜了几次、什么时候搜的" —— 只在前端记关键词不够用，
+    # 所以从 localStorage 搬进 data/（跟收藏一个待遇：清缓存不动它）。
+    _SEARCH_LOG_MAX = 200      # 表最多留这么多条，再往前的自然衰减掉，也免得表无限长
+
+    def log_search(self, keyword: str, scope: str = "site") -> None:
+        """记一次搜索：同一个词（不分大小写）次数 +1，时间刷成最新"""
+        kw = str(keyword or "").strip()
+        if not kw:
+            return
+        scope = scope if scope in _SCOPE_MAP else "site"
+        now = time.time()
+        with sqlite3.connect(DATA_DB) as conn:
+            row = conn.execute(
+                "SELECT keyword FROM search_log WHERE keyword = ? COLLATE NOCASE", (kw,)
+            ).fetchone()
+            if row is None:
+                conn.execute(
+                    "INSERT INTO search_log (keyword, scope, hits, at) VALUES (?, ?, 1, ?)",
+                    (kw, scope, now),
+                )
+            else:
+                # 存着的是第一次那个写法：第二次搜 "ABC" 不该在记录里多出一条
+                conn.execute(
+                    "UPDATE search_log SET hits = hits + 1, at = ?, scope = ? WHERE keyword = ?",
+                    (now, scope, row[0]),
+                )
+            conn.execute(
+                "DELETE FROM search_log WHERE keyword NOT IN ("
+                " SELECT keyword FROM search_log ORDER BY at DESC LIMIT ?)",
+                (self._SEARCH_LOG_MAX,),
+            )
+
+    def get_search_log(self, limit: int = 12) -> list[dict]:
+        """最近搜索（时间倒序）：搜索页那排 chips 用，也是画像里搜索信号的来源"""
+        limit = _cfg_int(limit, 12, 1, 100)
+        with sqlite3.connect(DATA_DB) as conn:
+            rows = conn.execute(
+                "SELECT keyword, scope, hits, at FROM search_log ORDER BY at DESC LIMIT ?",
+                (limit,),
+            ).fetchall()
+        return [
+            {"keyword": r[0], "scope": r[1], "hits": int(r[2]), "at": r[3]}
+            for r in rows
+        ]
+
+    def remove_search_log(self, keyword: str) -> None:
+        """删一条（chips 上的 ✕）；本来就没有也不报错"""
+        kw = str(keyword or "").strip()
+        if not kw:
+            return
+        with sqlite3.connect(DATA_DB) as conn:
+            conn.execute("DELETE FROM search_log WHERE keyword = ? COLLATE NOCASE", (kw,))
+
+    def clear_search_log(self) -> None:
+        """清空（chips 右上那个「清空」）"""
+        with sqlite3.connect(DATA_DB) as conn:
+            conn.execute("DELETE FROM search_log")
+
+    # ==================== 收藏态现拼 ====================
+
+    def _favorited_ids(self, album_ids: list) -> set[str]:
+        """这些 ID 里哪几个在本地收藏表里（一次查完，别逐个查）"""
+        ids: list[str] = []
+        for raw in album_ids:
+            aid = str(raw or "").strip()
+            if aid and aid not in ids:
+                ids.append(aid)
+        if not ids:
+            return set()
+        ids = ids[:500]      # sqlite 的变量上限是 999，面板不会这么大，防一手
+        marks = ",".join("?" * len(ids))
+        with sqlite3.connect(DATA_DB) as conn:
+            rows = conn.execute(
+                f"SELECT album_id FROM favorite WHERE album_id IN ({marks})", ids
+            ).fetchall()
+        return {row[0] for row in rows}
+
+    def _with_favorited(self, albums: list[dict]) -> list[dict]:
+        """
+        返回前现拼收藏态（跟现拼封面一个路子）：收藏 / 取消收藏就是本地一行记录，
+        不能跟着有 TTL 的缓存一起老 —— 否则刚收藏完，列表里还是没角标。
+        """
+        if not albums:
+            return albums
+        favs = self._favorited_ids(
+            [item.get("id") or item.get("album_id") or "" for item in albums]
+        )
+        return [
+            {**item, "favorited": str(item.get("id") or item.get("album_id") or "") in favs}
+            for item in albums
+        ]
+
+    # ==================== 画像 / 推荐 ====================
+    # 一期只用「收藏 + 搜索」两种信号（隐式反馈用户砍了），画像每次现算、不落盘。
+    # 打分只要 tag 与作者，来源是本地详情缓存 —— 这条路上绝对不发请求。
+
+    def _cached_names(self, album_id: str) -> tuple[list[str], list[str]]:
+        """本地详情缓存里的 tag / 作者；没缓存（或过期了）就返回空，不去网络取"""
+        data = self._cache_get(f"album:v2:{album_id}", self._album_ttl)
+        if not isinstance(data, dict):
+            return [], []
+        return list(data.get("tags") or []), list(data.get("authors") or [])
+
+    def _favorite_snapshot(self, album_id: str, tags: list | None,
+                           authors: list | None) -> tuple[list[str], list[str]]:
+        """加收藏要存的 tag / 作者：以传进来的为准，没传就用详情缓存里那份"""
+        def clean(raw: Any) -> list[str]:
+            out: list[str] = []
+            for item in (raw or []):
+                name = str(item or "").strip()
+                if name and name not in out:
+                    out.append(name)
+            return out
+
+        snap_tags, snap_authors = clean(tags), clean(authors)
+        if not snap_tags or not snap_authors:
+            cached_tags, cached_authors = self._cached_names(album_id)
+            snap_tags = snap_tags or cached_tags
+            snap_authors = snap_authors or cached_authors
+        return snap_tags, snap_authors
+
+    def _backfill_favorite(self, album_id: str, detail: dict) -> None:
+        """
+        详情拉回来时顺手给"没有快照的老收藏行"补上（WHERE 命中不了就只是个空操作）。
+        新装的库 / 新加的收藏都自带快照，这里只为升级上来的老库兜一次底。
+        """
+        try:
+            with sqlite3.connect(DATA_DB) as conn:
+                conn.execute(
+                    "UPDATE favorite SET tags_json = ?, authors_json = ?"
+                    " WHERE album_id = ? AND tags_json = '[]'",
+                    (json.dumps(list(detail.get("tags") or []), ensure_ascii=False),
+                     json.dumps(list(detail.get("authors") or []), ensure_ascii=False),
+                     album_id),
+                )
+        except sqlite3.Error:
+            pass    # 补快照失败不该影响"看详情"这件事
+
+    def _taste_profile(self) -> dict:
+        """
+        现算画像，返回 {"tags": {tag: 权重}, "authors": {...}, "favorites": n, "searches": n}
+
+        收藏每部给它的 tag / 作者各 +1.0（快照在 favorite.tags_json / authors_json）；
+        搜索每个词 +0.6 × 次数，关键词同时当 tag 与作者字符串参与匹配
+        （「中文」本来就是标签，搜作者名就命中作者维度，搜作品名两边都不命中、天然无害）。
+        时间按 recommend.half_life_days 衰减，各自归一化后只留 top 20 tag + top 10 作者。
+        """
+        now = time.time()
+        half_life = max(1, self._rc_half_life)
+        tags: dict[str, float] = {}
+        authors: dict[str, float] = {}
+
+        def decay(at: Any) -> float:
+            try:
+                stamp = float(at)
+            except (TypeError, ValueError):
+                return 1.0
+            age_days = max(0.0, (now - stamp) / 86400)
+            return 0.5 ** (age_days / half_life)
+
+        def add(bucket: dict[str, float], name: Any, weight: float) -> None:
+            text = str(name or "").strip()
+            if text:
+                bucket[text] = bucket.get(text, 0.0) + weight
+
+        def parse(raw: Any) -> list[str]:
+            if not isinstance(raw, str):
+                return []
+            try:
+                value = json.loads(raw)
+            except ValueError:
+                return []
+            return [str(x).strip() for x in value if str(x).strip()] if isinstance(value, list) else []
+
+        with sqlite3.connect(DATA_DB) as conn:
+            favs = conn.execute(
+                "SELECT album_id, added_at, tags_json, authors_json FROM favorite"
+            ).fetchall()
+            logs = conn.execute("SELECT keyword, hits, at FROM search_log").fetchall()
+
+        for album_id, added_at, tags_json, authors_json in favs:
+            weight = decay(added_at)
+            fav_tags, fav_authors = parse(tags_json), parse(authors_json)
+            if not fav_tags or not fav_authors:    # 老行还没快照：回落详情缓存（可能也没有）
+                cached_tags, cached_authors = self._cached_names(str(album_id))
+                fav_tags = fav_tags or cached_tags
+                fav_authors = fav_authors or cached_authors
+            for name in fav_tags:
+                add(tags, name, weight)
+            for name in fav_authors:
+                add(authors, name, weight)
+
+        for keyword, hits, at in logs:
+            weight = 0.6 * max(1, int(hits or 1)) * decay(at)
+            add(tags, keyword, weight)
+            add(authors, keyword, weight)
+
+        def keep(bucket: dict[str, float], top: int) -> dict[str, float]:
+            """归一化到 0~1 并截断；排序固定（权重降序、同权重按名字），保证同样输入同样输出"""
+            if not bucket:
+                return {}
+            best = max(bucket.values())
+            if best <= 0:
+                return {}
+            ranked = sorted(bucket.items(), key=lambda kv: (-kv[1], kv[0]))[:top]
+            return {name: weight / best for name, weight in ranked}
+
+        return {
+            "tags": keep(tags, 20),
+            "authors": keep(authors, 10),
+            "favorites": len(favs),
+            "searches": sum(max(1, int(row[1] or 1)) for row in logs),
+        }
+
+    def get_taste_profile(self) -> dict:
+        """画像长什么样：调算法用（以后设置页可以拿它显示"算法记住的 tag 与作者"）"""
+        prof = self._taste_profile()
+        return {
+            "tags": [{"tag": name, "weight": round(w, 4)} for name, w in prof["tags"].items()],
+            "authors": [{"author": name, "weight": round(w, 4)}
+                        for name, w in prof["authors"].items()],
+            "favorites": prof["favorites"],
+            "searches": prof["searches"],
+        }
+
+    def _candidate_pool(self) -> list[dict[str, str]]:
+        """
+        候选池 = 周榜「全部」按观看的前 recommend.candidates 部。
+
+        走的是 get_ranking 那一套缓存（首页本来就在拉这个榜），所以冷缓存时也最多多要一页；
+        图源一页给多少条不定，凑不满就再要一页，最多三页。候选池大小只影响覆盖度，不影响速度。
+        """
+        want = self._rc_candidates
+        pool: list[dict[str, str]] = []
+        seen: set[str] = set()
+        for page in (1, 2, 3):
+            if len(pool) >= want:
+                break
+            try:
+                got = self.get_ranking("week", "all", page)
+            except Exception:
+                break        # 榜单拉不动就用手上这些（一条都没有就是空池，前端整段藏起来）
+            if not got:
+                break
+            for item in got:
+                if item["id"] not in seen:
+                    seen.add(item["id"])
+                    pool.append(item)
+        return pool[:want]
+
+    def _rec_reason(self, tags: list[str], authors: list[str],
+                    prof_tags: dict[str, float], prof_authors: dict[str, float]) -> str:
+        """卡片副标题：说清"为什么推这部"（最多两项），一个都没命中就空着"""
+        hits: list[tuple[float, str]] = [
+            (prof_tags[name], name) for name in tags if name in prof_tags
+        ]
+        hits += [
+            (prof_authors[name] * self._rc_author_boost, f"作者：{name}")
+            for name in authors if name in prof_authors
+        ]
+        hits.sort(key=lambda item: (-item[0], item[1]))
+        return " · ".join(text for _, text in hits[:2])
+
+    def get_recommendations(self, kind: str = "home", limit: int | None = None,
+                           exclude: list | None = None) -> dict:
+        """
+        推荐一批漫画，返回 {"cold": bool, "items": [
+        {"id", "title", "cover_url", "subtitle", "favorited", "score"}]}
+
+        候选池取热度榜，用「收藏 + 搜索」攒出来的 tag / 作者画像打分；没命中的候选只吃热度分，
+        所以画像为空、或者一个都没命中时就是热度排序，此时 cold=True（界面该写「热门推荐」）。
+        exclude 里的 ID 不参与（首页那个「换一批」）；kind 一期不影响结果 —— 首页与搜索页
+        同一套（用户口径：搜索页不吃本次关键词），留着参数是为二期分叉。
+        limit 传 None 用配置里的 recommend.limit；0 = 关掉推荐，返回空。
+        """
+        if kind not in ("home", "search"):
+            raise ValueError(f"未知推荐位置: {kind}")
+        want = self._rc_limit if limit is None else _cfg_int(limit, 0, 0, 50)
+        if want <= 0:
+            return {"cold": True, "items": []}
+        pool = self._candidate_pool()
+        if not pool:
+            return {"cold": True, "items": []}
+
+        skip = {str(raw).strip() for raw in (exclude or [])}
+        prof = self._taste_profile()
+        prof_tags, prof_authors = prof["tags"], prof["authors"]
+
+        scored: list[tuple[float, dict]] = []
+        best_match = 0.0
+        for rank, item in enumerate(pool):
+            if item["id"] in skip:
+                continue
+            hot = 1 - rank / len(pool)      # 池内归一的热度（名次越靠前越大）
+            tags, authors = self._cached_names(item["id"])
+            match = 0.0
+            if tags or authors:
+                hit = sum(prof_tags.get(name, 0.0) for name in tags)
+                hit += self._rc_author_boost * sum(
+                    prof_authors.get(name, 0.0) for name in authors)
+                match = hit / (1 + len(tags)) ** 0.5   # 除以 sqrt(1+标签数)：标签多的别白占便宜
+            best_match = max(best_match, match)
+            score = (1 - self._rc_hot) * match + self._rc_hot * hot
+            scored.append((score, {
+                "id": item["id"],
+                "title": item["title"],
+                "cover_url": item["cover_url"],
+                "subtitle": self._rec_reason(tags, authors, prof_tags, prof_authors),
+                "score": round(score, 4),
+            }))
+
+        # 同分保持池内顺序（热度高的在前），不加抖动：同样的画像 + 同样的池子给同样的结果
+        scored.sort(key=lambda pair: pair[0], reverse=True)
+        items = self._with_favorited([item for _, item in scored[:want]])
+        return {"cold": best_match <= 0, "items": items}
 
     def get_settings(self) -> dict:
         """当前配置（含默认值）"""
@@ -980,6 +1348,22 @@ class API:
             if "next_at" in prefetch:
                 cfg["prefetch"]["next_at"] = _setting_float(
                     prefetch["next_at"], 0, 1, "预加载下一话的进度比例")
+
+            recommend = settings.get("recommend") or {}
+            if "limit" in recommend:
+                cfg["recommend"]["limit"] = _setting_int(recommend["limit"], 0, 50, "推荐条数")
+            if "candidates" in recommend:
+                cfg["recommend"]["candidates"] = _setting_int(
+                    recommend["candidates"], 5, 200, "推荐候选池大小")
+            if "hot_weight" in recommend:
+                cfg["recommend"]["hot_weight"] = _setting_float(
+                    recommend["hot_weight"], 0, 1, "推荐里热度先验的占比")
+            if "author_boost" in recommend:
+                cfg["recommend"]["author_boost"] = _setting_float(
+                    recommend["author_boost"], 0, 5, "作者命中的加成倍数")
+            if "half_life_days" in recommend:
+                cfg["recommend"]["half_life_days"] = _setting_int(
+                    recommend["half_life_days"], 1, 365, "画像半衰期")
 
             download = settings.get("download") or {}
             if "workers" in download:

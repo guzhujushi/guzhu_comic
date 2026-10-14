@@ -563,8 +563,28 @@ album-card p {
   line-height: 1.45;
 }
 
-/* 卡片下面那行小字，比如最近阅读的"读到第 61 页" */
+/* 卡片下面那行小字，比如最近阅读的"读到第 61 页"、推荐卡的命中原因 */
 album-card .album-sub { display: block; color: var(--faint); font-size: 12px; margin-top: 4px; }
+
+/* 已收藏角标：只有真收藏的卡片才有这个元素（没收藏的什么都不加），钉在封面右上角，
+   跟详情页的心形同一个暖色。pointer-events: none —— 别挡住卡片的点击 */
+album-card .album-fav {
+  position: absolute;
+  top: 14px;
+  right: 14px;
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  padding: 3px 7px 3px 5px;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, .62);
+  border: 1px solid rgba(255, 107, 129, .5);
+  color: #ff6b81;
+  font-size: 11px;
+  line-height: 1;
+  pointer-events: none;
+  backdrop-filter: blur(2px);
+}
 
 /* ============ 收藏页：卡片外壳要相对定位，好把"取消收藏"钉在角上 ============ */
 .fav-cell { position: relative; }
@@ -646,6 +666,20 @@ album-card .album-sub { display: block; color: var(--faint); font-size: 12px; ma
 
 /* 一个分类就一行：几张由 --cols 决定（JS 按面板宽度算好写进 style） */
 .cat-row { grid-template-columns: repeat(var(--cols, 5), minmax(0, 1fr)); }
+
+/* 推荐段（首页面板里第一段 / 搜索页结果下面那一段）：铺不出来就整段藏起来，
+   铺出来了轻轻浮一下 —— 它是异步来的，直接"跳"出来太生硬 */
+.rec-section[hidden] { display: none; }
+.rec-section:not([hidden]) { animation: rec-in .4s ease both; }
+@keyframes rec-in {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: none; }
+}
+.rec-refresh:disabled { opacity: .45; }
+.search-shell .rec-section { margin-top: 26px; }
+@media (prefers-reduced-motion: reduce) {
+  .rec-section:not([hidden]) { animation: none; }
+}
 
 /* 卡片虚化入场：这一段进视口那一下才从模糊里浮出来，每张错开一点 */
 .board-panel .reveal album-card { opacity: 0; filter: blur(10px); }
@@ -874,6 +908,21 @@ album-card .album-sub { display: block; color: var(--faint); font-size: 12px; ma
 .forum-album-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
 .forum-album-label { font-size: 11px; color: var(--faint); }
 .forum-album-title { font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* 论坛封面条上的「已收藏」：封面才 34px 宽，塞不下角标，就贴在标题行右端 */
+.forum-fav {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  padding: 3px 7px 3px 5px;
+  border-radius: 999px;
+  background: rgba(255, 107, 129, .14);
+  border: 1px solid rgba(255, 107, 129, .45);
+  color: #ff6b81;
+  font-size: 11px;
+  line-height: 1;
+}
 
 .forum-more { margin-top: 18px; }
 .forum-hint { margin-top: 10px; text-align: center; }

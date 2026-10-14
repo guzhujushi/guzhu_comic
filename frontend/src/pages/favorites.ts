@@ -2,6 +2,7 @@
 import { AlbumCard } from '../components/album.js'
 import { createIcon, icons } from '../components/icons.js'
 import { renderAlbumSkeleton, renderEmpty, renderError } from '../components/states.js'
+import { warmAlbumList } from '../prefetch.js'
 import type { FavoriteItem } from '../types.js'
 
 /** 我的收藏：读的是本地 sqlite 表（data/app.db 的 favorite），跟图源账号无关 */
@@ -98,6 +99,8 @@ export function favoritesPage(): HTMLElement {
       items = await window.pywebview.api.get_favorites(200)
       showError('')
       paint()
+      // 封面 + 标题已经铺上，详情缓存丢后台慢慢预热（推荐打分要的就是详情里的 tag）
+      warmAlbumList(items.map((item) => item.album_id))
     } catch (err) {
       renderError(listEl, String(err), () => void load())
     }

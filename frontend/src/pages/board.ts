@@ -4,6 +4,7 @@
 import { renderAlbumList } from '../components/album-list.js'
 import { createIcon, icons, setIcon } from '../components/icons.js'
 import { createPicker } from '../components/picker.js'
+import { createRecommendSection } from '../components/recommend.js'
 import { renderAlbumSkeleton, renderEmpty, renderError } from '../components/states.js'
 import { renderHero, renderHeroSkeleton } from '../components/hero.js'
 import type { HeroHandle } from '../components/hero.js'
@@ -141,6 +142,10 @@ export function boardPage(category: ComicCategory): HTMLElement {
   boardMsgEl.className = 'board-empty'
   boardMsgEl.hidden = true
   panelEl.appendChild(boardMsgEl)
+
+  // 推荐段：面板里第一段（各分类横条之前）。铺不出来就整段不出现（见 recommend.ts）
+  const rec = home ? createRecommendSection('home') : null
+  if (rec) panelEl.insertBefore(rec.el, boardMsgEl.nextSibling)
 
   const rows: CatRow[] = []
   const gridEl = document.createElement('div')
@@ -495,6 +500,7 @@ export function boardPage(category: ComicCategory): HTMLElement {
     applyCols()
     renderHeroSkeleton(heroEl)
     paintPanel()
+    rec?.load()
 
     try {
       // hero 永远是"当前这一页的分类"最火的三部

@@ -184,7 +184,9 @@ function paintFavorite(container: HTMLElement, data: AlbumDetail, fav: boolean):
       try {
         const api = window.pywebview?.api
         if (!api) throw new Error('pywebview api 还没就绪')
-        const saved = await api.toggle_favorite(data.id, data.title, data.cover_url ?? '')
+        // tag / 作者一起带上：收藏那一刻的快照（推荐画像用），不然过一天详情缓存过期就没了
+        const saved = await api.toggle_favorite(
+          data.id, data.title, data.cover_url ?? '', data.tags, data.authors)
         if (saved !== on) {   // 以后端返回的状态为准
           on = saved
           paint()
