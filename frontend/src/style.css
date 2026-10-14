@@ -150,10 +150,14 @@ body { margin: 0; min-height: 100vh; padding-left: var(--rail); }
 .nav-brand { display: flex; align-items: center; gap: 10px; padding: 2px 10px 18px; }
 .brand-avatar { flex: none; display: block; width: 30px; height: 30px; border-radius: 8px; }
 .brand-text { min-width: 0; }
-.brand-mark { display: block; font-size: 15px; font-weight: 600; letter-spacing: .5px; }
-/* 开场闪屏飞过来的字标落在这儿：一份静态 SVG（路径数据就是 index.html 那份闪屏上的，
-   splash.ts 克隆过来）。宽高按 #nav 的 208px 定 —— 飞行落位是按这个矩形对上的，别随便改。 */
-.brand-logo { display: block; width: 88px; height: auto; shape-rendering: geometricPrecision; }
+/* 品牌行是「字标 + 漫画」并排：字标落进 .brand-slot，右边那两个字不动（飞过来的字标跟它对齐）。
+   nowrap 是必须的：#nav 只有 208px，一折行「漫画」就变成竖排两个字。 */
+.brand-mark { display: flex; align-items: center; gap: 7px; white-space: nowrap; font-size: 15px; font-weight: 600; letter-spacing: .5px; }
+/* 落点只有「孤竹」那一格 —— 里面的兜底文案会被 splash.ts 换成字标。
+   字标 76px 是按导航宽度定的：大写高 ≈ 15px，跟旁边 15px 的「漫画」齐平（88px 时「漫画」会被挤下去）。
+   飞行落位量的是这个矩形，宽高可以调，但调完要重看一眼导航。 */
+.brand-slot { display: block; }
+.brand-logo { display: block; width: 76px; height: auto; shape-rendering: geometricPrecision; }
 .brand-logo path { fill: none; stroke: currentColor; stroke-width: 25; stroke-linecap: round; stroke-linejoin: round; }
 .brand-sub { display: block; margin-top: 2px; color: var(--faint); font-size: 11px; }
 

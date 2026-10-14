@@ -132,10 +132,11 @@ function reveal(el: HTMLElement, target: HTMLElement | null): void {
 /**
  * 把字标克隆一份放进左侧导航的品牌位（先藏着占住位置），返回那个落点。
  *
+ * 落点只有「孤竹」那一格（.brand-slot），右边的「漫画」两字留着不动 —— 用户 2026-10-14 定的落位。
  * 只从闪屏那份克隆，路径数据就不会两个地方各写一遍再改漏。
  */
 function placeNavMark(src: SVGSVGElement): HTMLElement | null {
-  const home = document.querySelector<HTMLElement>('.brand-mark')
+  const home = document.querySelector<HTMLElement>('.brand-slot')
   if (!home) return null
   const clone = src.cloneNode(true) as SVGSVGElement
   clone.removeAttribute('id')
@@ -146,7 +147,7 @@ function placeNavMark(src: SVGSVGElement): HTMLElement | null {
   for (const path of Array.from(clone.querySelectorAll('path'))) {
     path.removeAttribute('style')       // 导航里是静态的：那串描字动画不要
   }
-  home.textContent = ''
+  home.textContent = ''                 // 兜底文案「孤竹」给字标让位（「漫画」在 .brand-slot 外面，不碰）
   home.appendChild(clone)
   home.style.visibility = 'hidden'      // 等字标飞过来再露，免得"两个 GuZhu"同框
   return home

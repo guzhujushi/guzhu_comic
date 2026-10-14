@@ -49,7 +49,9 @@ nav.innerHTML = `
   <div class="nav-brand">
     <img class="brand-avatar" src="/apple-touch-icon.png" alt="" />
     <div class="brand-text">
-      <span class="brand-mark">孤竹漫画</span>
+      <!-- 品牌行 = 字标 + 「漫画」：开场那枚 GuZhu 字标只取代「孤竹」两字（用户 2026-10-14 定的落位）。
+           .brand-slot 就是字标的落点，里面那句「孤竹」是兜底文案 —— 老 index.html 没有那份闪屏 SVG 时照旧显示。 -->
+      <span class="brand-mark"><span class="brand-slot">孤竹</span>漫画</span>
       <span class="brand-sub">Guzhu Comic</span>
     </div>
   </div>
