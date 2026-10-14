@@ -36,7 +36,9 @@ export function downloadsPage(): HTMLElement {
   const errorEl = el.querySelector<HTMLParagraphElement>('.dl-error')!
   const cells = new Map<string, Cell>()
   let tasks: DownloadTask[] = []
-  let renderedIds = ''
+  // 必须拿 null 起手：空列表算出来的 ids 就是 ''，起手写 '' 的话第一次 sync() 会以为
+  // "这一屏已经画过了"，于是永远不去铺空态 —— 一次都没下过的用户就盯着 4 张骨架卡片看它闪
+  let renderedIds: string | null = null
   let timer = 0
 
   function showError(message: string): void {
