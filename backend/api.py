@@ -174,6 +174,11 @@ class API:
         self._dl_photo_ids: set[str] = set()
         # 批次在跑的时候又有人要整话（用户真进了阅读器）：记一笔，等这批跑完补一次
         self._dl_pending: set[str] = set()
+        # 同一把钥匙同一时刻只让一个线程去图源取（见 _fetch_guard）：闪屏预热和页面自己发的
+        # 请求经常前后脚撞上，不认一下的话图源那边同一份数据要拉两遍
+        self._inflight: dict[str, threading.Event] = {}
+        self._inflight_lock = threading.Lock()
+        self._inflight_wait = 30.0   # 等别人取的上限（秒）；等不到就自己取，别干等
         # 这次开窗期间已经预热过详情的本子（重复调用直接跳过，别白读一次库）
         self._prefetch_done: set[str] = set()
         # 整本下载：一本一个线程，逐话串行。断点续传不靠内存里的计数 ——
@@ -403,24 +408,34 @@ class API:
         cached = self._cache_get(key, self._ranking_ttl)
         if cached is not None:
             return self._with_favorited(cached)
+        mine, gate = self._fetch_guard(key)
+        if not mine:
+            gate.wait(self._inflight_wait)
+            cached = self._cache_get(key, self._ranking_ttl)
+            if cached is not None:
+                return self._with_favorited(cached)
         try:
-            result_page = self.client.categories_filter(
-                page=page,
-                time=_TIME_MAP[time_range],
-                category=_CATEGORY_MAP[category],
-                order_by=_ORDER_BY_MAP[order_by],
-            )
-        except Exception as e:
-            raise RuntimeError(f"榜单获取失败: {e}") from e
-        data = [
-            {
-                "id": str(album_id),
-                "title": title,
-                "cover_url": JmcomicText.get_album_cover_url(str(album_id)),
-            }
-        for album_id, title in result_page
-        ]
-        self._cache_set(key, data)
+            try:
+                result_page = self.client.categories_filter(
+                    page=page,
+                    time=_TIME_MAP[time_range],
+                    category=_CATEGORY_MAP[category],
+                    order_by=_ORDER_BY_MAP[order_by],
+                )
+            except Exception as e:
+                raise RuntimeError(f"榜单获取失败: {e}") from e
+            data = [
+                {
+                    "id": str(album_id),
+                    "title": title,
+                    "cover_url": JmcomicText.get_album_cover_url(str(album_id)),
+                }
+            for album_id, title in result_page
+            ]
+            self._cache_set(key, data)
+        finally:
+            if mine:
+                self._fetch_done(key, gate)
         return self._with_favorited(data)
     
     def clear_cache(self) -> dict[str, int]:
@@ -795,6 +810,59 @@ class API:
         img_dir.mkdir(parents=True, exist_ok=True)
         self._spawn_download(photo_id, None, self._pf_images)
         return self._pf_images
+
+    def prefetch_home(self, time_range: str, order_by: str = "views") -> int:
+        """
+        闪屏期间把首页要的那批元数据先拉起来：hero + 各分类各一页 + 推荐段。
+
+        立刻返回"这次要去拉几次"，真正的请求交给后台线程 —— 闪屏不等它。
+        键必须和 board.ts 后面自己发的那些**完全一样**（ranking:{range}:{cat}:{order}:1），
+        不然这次预热就白跑了：首页还是会走网络。两边前后脚撞上也没事，get_ranking 认在飞的。
+        """
+        if time_range not in _TIME_MAP:
+            raise ValueError(f"未知榜单类型: {time_range}，应为 day/week/month")
+        if order_by not in _ORDER_BY_MAP:
+            raise ValueError(f"未知排序: {order_by}")
+        cats = list(_CATEGORY_MAP)
+        threading.Thread(
+            target=self._prefetch_home_run, args=(time_range, order_by, cats), daemon=True
+        ).start()
+        return len(cats) + 1     # 各分类各一页 + 推荐段
+
+    def _prefetch_home_run(self, time_range: str, order_by: str, cats: list[str]) -> None:
+        """后台把首页那几页拉进缓存；单条失败就算了，页面自己还会再要一次"""
+
+        def quiet(fn) -> None:
+            try:
+                fn()
+            except Exception:
+                pass
+
+        # 全部并发（各分类 + 推荐段）：排成好几批的话，等它的首页反而比自己拉还慢
+        with ThreadPoolExecutor(max_workers=min(8, len(cats) + 1)) as pool:
+            for cat in cats:
+                pool.submit(quiet, partial(self.get_ranking, time_range, cat, 1, order_by))
+            pool.submit(quiet, partial(self.get_recommendations, "home"))
+
+    def _fetch_guard(self, key: str) -> tuple[bool, threading.Event]:
+        """
+        同一把钥匙同一时刻只让一个线程去图源取。
+
+        返回 (轮到我了没, 事件)：轮到我，取完（成功失败都算）必须 _fetch_done()；
+        轮不到我，等事件等到超时，然后自己再读一次缓存 —— 还是空就自己取。
+        """
+        with self._inflight_lock:
+            gate = self._inflight.get(key)
+            if gate is None:
+                gate = threading.Event()
+                self._inflight[key] = gate
+                return True, gate
+            return False, gate
+
+    def _fetch_done(self, key: str, gate: threading.Event) -> None:
+        with self._inflight_lock:
+            self._inflight.pop(key, None)
+        gate.set()
 
     def _start_img_server(self) -> str:
         """
@@ -1860,6 +1928,14 @@ class API:
             ):
                 if key in cache:
                     cfg["cache"][key] = _setting_int(cache[key], lo, hi, label)
+
+            splash = settings.get("splash") or {}
+            if "enabled" in splash:
+                cfg["splash"]["enabled"] = bool(splash["enabled"])
+            if "min_ms" in splash:
+                cfg["splash"]["min_ms"] = _setting_int(splash["min_ms"], 0, 10000, "闪屏最短时长")
+            if "max_ms" in splash:
+                cfg["splash"]["max_ms"] = _setting_int(splash["max_ms"], 0, 10000, "闪屏最长时长")
         except ValueError as e:
             raise RuntimeError(f"保存失败：{e}") from e
 

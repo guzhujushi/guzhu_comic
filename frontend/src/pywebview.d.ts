@@ -96,6 +96,7 @@ interface PyApi {
   get_album_titles(album_ids: string[]): Promise<Record<string, string>>
   prefetch_albums(album_ids: string[]): Promise<number>
   prefetch_chapter(photo_id: string): Promise<number>
+  prefetch_home(time_range: string, order_by?: string): Promise<number>
   is_favorite(album_id: string): Promise<boolean>
   toggle_favorite(album_id: string, title?: string, cover_url?: string, tags?: string[], authors?: string[]): Promise<boolean>
   remove_favorite(album_id: string): Promise<void>

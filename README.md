@@ -26,6 +26,7 @@
 - **缓存管理**：上限默认 2G，后台定时按「最久没看过」整话清理，也能一键清空
 - **窗口毛玻璃**：Windows 上窗口整体半透明，底层交给系统 DWM 画亚克力，桌面内容由系统模糊（`window.glass` 选 none / mica / acrylic / tabbed，`window.glass_opacity` 控透度）
 - **加载与动效**：列表先铺骨架卡片（蓝色呼吸光晕 + 从右下扫到左上的光带），搜到 / 保存完的按钮图标会变形反馈；开窗不等图源连接（客户端后台预热），首屏某一块没拉下来只降级成那一块的提示并自动重试，窗口从后台回到前台时也会自己补一次，不会停在空白页
+- **开场动画**：一点开是一层深色毛玻璃，底上「GuZhu」斜体字标一笔笔描出来（单线 SVG 描边，约 1.5 秒；斜度直接烙在路径坐标里，不吃系统字体），这段时间后台把首页那批数据排进图源队列；描完墨迹亮起一层辉光，顺势缩小飞进左上角，正好落在导航品牌位上（原来的「孤竹漫画」换成字标，下面 `Guzhu Comic` 不动）。首页铺好就揭幕，最迟 `splash.max_ms` 硬揭；点一下或按 `Esc` 跳过，`prefers-reduced-motion` 直接跳过描字与飞入
 - **视觉**：暗色分层取自 [Raycast 设计系统](https://github.com/VoltAgent/awesome-design-md)——表面阶梯（画布 → 卡片）配 1px 发丝线做层级，不靠投影；主操作用白底黑字，蓝色只给加载 / 焦点 / 阅读进度；阅读器设置里有键帽样式的快捷键提示
 
 ## 技术栈
@@ -114,6 +115,9 @@ python main.py
 | `window.glass_opacity`    | `0.92`                | 窗口整体不透明度 0.35–1，越小越透，重启生效                   |
 | `dev.url`                 | `http://localhost:5173` | 窗口加载地址（Vite 开发服务器或 `dist/index.html`）        |
 | `dev.debug`               | `true`                | 调试模式，打开后可以 F12 / 右键检查                          |
+| `splash.enabled`         | `true`                | 开场动画开关，关掉就直接进首页，重启生效                     |
+| `splash.min_ms`           | `1950`                | 开场动画最短认多久（毫秒）：描字 1500 + 停留 450，字没描完就别揭幕，重启生效 |
+| `splash.max_ms`           | `3000`                | 开场动画最长多久（毫秒）：首页还没铺好也硬揭，别把人晾着，重启生效 |
 | `reader.restore_progress` | `true`                | 进章节时自动回到上次那一页                                   |
 | `reader.click_to_page`    | `true`                | 点击左右两侧翻页，关掉后只剩滚轮 / 方向键                    |
 | `reader.mode`             | `webtoon`             | 连续滚动 webtoon / 单页翻页 single，阅读器里改是立即生效      |
@@ -161,7 +165,8 @@ guzhu_comic/
         ├── webstatus.ts    # 等 pywebview 把桥注入好
         ├── prefetch.ts     # 后台预热：列表 -> 详情缓存，详情 / 阅读 -> 章节图
         ├── recommend.ts    # 推荐段（首页第一段 / 搜索页结果下方共用）
+        ├── splash.ts       # 开场闪屏：揭幕时机 + 飞进左上角（画面本身内联在 index.html）
         ├── pywebview.d.ts  # js_api 的类型声明
-        ├── pages/          # board（热门/分类共用）/ popular / category / search / forum / detail / reader / history / favorites / settings
+        ├── pages/          # board（热门/分类共用）/ popular / category / search / forum / detail / reader / history / favorites / downloads / settings
         └── components/     # album-card（含「已收藏」角标）、album-list、recommend、hero、picker、states、icons
 ```

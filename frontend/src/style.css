@@ -70,6 +70,10 @@ body { margin: 0; min-height: 100vh; padding-left: var(--rail); }
 .brand-avatar { flex: none; display: block; width: 30px; height: 30px; border-radius: 8px; }
 .brand-text { min-width: 0; }
 .brand-mark { display: block; font-size: 15px; font-weight: 600; letter-spacing: .5px; }
+/* 开场闪屏飞过来的字标落在这儿：一份静态 SVG（路径数据就是 index.html 那份闪屏上的，
+   splash.ts 克隆过来）。宽高按 #nav 的 208px 定 —— 飞行落位是按这个矩形对上的，别随便改。 */
+.brand-logo { display: block; width: 88px; height: auto; shape-rendering: geometricPrecision; }
+.brand-logo path { fill: none; stroke: currentColor; stroke-width: 25; stroke-linecap: round; stroke-linejoin: round; }
 .brand-sub { display: block; margin-top: 2px; color: var(--faint); font-size: 11px; }
 
 .nav-links { display: flex; flex-direction: column; gap: 4px; }

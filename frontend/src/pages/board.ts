@@ -10,6 +10,7 @@ import { renderHero, renderHeroSkeleton } from '../components/hero.js'
 import type { HeroHandle } from '../components/hero.js'
 import { onUnmount } from '../router.js'
 import { warmAlbumList } from '../prefetch.js'
+import { splashReady } from '../splash.js'
 import { waitForApi } from '../webstatus.js'
 import { loadState, pickKey, saveState } from '../store.js'
 import type { AlbumSummary } from '../types.js'
@@ -54,7 +55,7 @@ function colsFor(inner: number): number {
   return Math.max(2, Math.floor((inner + CARD_GAP) / (CARD_W + CARD_GAP)))
 }
 
-interface BoardPrefs {
+export interface BoardPrefs {
   range: RankRange
   sort: SortOrder
 }
@@ -66,6 +67,11 @@ function loadPrefs(): BoardPrefs {
     range: pickKey(saved.range, RANGE_KEYS, 'week'),
     sort: pickKey(saved.sort, SORT_KEYS, 'views'),
   }
+}
+
+/** 首页这一刻会用的榜单条件：闪屏预热要跟它完全一致，所以由这里出这一份（见 main.ts） */
+export function homePrefs(): BoardPrefs {
+  return loadPrefs()
 }
 
 /** 首页那一页：hero 之下的分类横条，一个分类一段 */
@@ -397,6 +403,15 @@ export function boardPage(category: ComicCategory): HTMLElement {
     warmVisible()
   }
 
+  /**
+   * 首页各分类横条全铺完（成功失败都算）—— 闪屏在等这个信号，别让它干等到上限。
+   * 每条本来就是各拉各的、谁先回来谁先铺，这里只等"最后一条也落定"。
+   */
+  async function fillRows(my: number): Promise<void> {
+    await Promise.all(rows.map((row) => fillRow(row, my))).catch(() => undefined)
+    if (my === token) splashReady()
+  }
+
   /** 分类页往后翻页；图源不给总数，就用"这一页空了"当到底 */
   async function loadMore(): Promise<void> {
     if (busy || done || home) return
@@ -491,6 +506,7 @@ export function boardPage(category: ComicCategory): HTMLElement {
       errorText = 'pywebview api 还没就绪'
       paintPanel()
       showMessage()
+      splashReady()
       void waitForApi()
         .then(() => { if (my === token && state === 'error') void load(current.range, current.sort) })
         .catch(() => undefined)
@@ -518,18 +534,20 @@ export function boardPage(category: ComicCategory): HTMLElement {
         state = 'empty'
         paintPanel()
         showMessage()
+        splashReady()
         return
       }
       state = 'ready'
       if (home) {
         paintPanel()
-        for (const row of rows) void fillRow(row, my)
+        void fillRows(my)
       } else {
         cards.push(...top.slice(3))   // 前三部在 hero 里，列表从第 4 部接着铺
         done = top.length <= 3        // 第一页就没剩几部，说明这期到底了
         paintPanel()
         warmVisible()
         armReveal(gridEl)             // 整页列表也虚化入场（只在这次加载演一次）
+        splashReady()                 // 分类页不是启动路径，但信号照给，别让闪屏干等
       }
     } catch (err) {
       if (my !== token) return
@@ -540,7 +558,7 @@ export function boardPage(category: ComicCategory): HTMLElement {
         renderHeroError(heroEl, errorText, () => void load(current.range, current.sort))
         state = 'ready'
         paintPanel()
-        for (const row of rows) void fillRow(row, my)
+        void fillRows(my)
         scheduleRetry()
         return
       }
@@ -549,6 +567,7 @@ export function boardPage(category: ComicCategory): HTMLElement {
       heroEl.innerHTML = ''
       paintPanel()
       showMessage()
+      splashReady()
       scheduleRetry()
     }
   }

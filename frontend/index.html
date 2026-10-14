@@ -5,8 +5,77 @@
     <link rel="icon" href="/apple-touch-icon.png" type="image/png" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>frontend</title>
+    <style>
+      /* 「GuZhu」开场闪屏：写死在 index.html 里。
+         它是这个页面里最早就位的东西 —— main.ts 还得先拉一整张模块图，那几百毫秒里
+         闪屏已经在画了（放 main.ts 里就会先白一下）。所以：
+         颜色尺寸一律写字面值（style.css 这会儿还没加载，--bg 那套变量用不了），
+         资源一律不外链（字体 / 图片 / JS 都不引），首帧才稳。 */
+      html { background: #07080a; }
+      #splash { position: fixed; inset: 0; z-index: 100; display: grid; place-items: center; }
+      /* 深色毛玻璃：毛玻璃窗（pywebview transparent）后面是桌面，这层糊的就是它；
+         不透明窗下糊的是 html 底色，看着就是一块带光的深色板。 */
+      #splash-bg {
+        position: absolute; inset: 0;
+        background:
+          radial-gradient(120% 80% at 50% 42%, rgba(255,255,255,.07), transparent 60%),
+          radial-gradient(90% 70% at 50% 118%, rgba(96,132,255,.16), transparent 62%),
+          rgba(8,9,12,.66);
+        -webkit-backdrop-filter: blur(24px) saturate(150%);
+        backdrop-filter: blur(24px) saturate(150%);
+        transition: opacity .12s linear;
+      }
+      #splash[data-out] #splash-bg { opacity: 0; }
+      #splash-mark {
+        position: relative; display: block;
+        width: min(56vw, 620px); height: auto; overflow: visible;
+        shape-rendering: geometricPrecision;
+        /* 墨迹的辉光：写完（1s）再亮起来，省得描字那 1 秒每帧都重算一次 filter */
+        filter: drop-shadow(0 0 0 rgba(0,0,0,0));
+        animation: splash-glow .7s ease-out 1.05s forwards;
+      }
+      #splash-mark path {
+        fill: none;
+        stroke: url(#splash-ink);
+        stroke-width: 25;
+        stroke-linecap: round;
+        stroke-linejoin: round;
+        stroke-dasharray: 1;    /* 每条 path 都写了 pathLength="1"，所以 1 = 整条笔画 */
+        stroke-dashoffset: 1;
+        animation: splash-write .12s linear forwards;   /* 真正用的时长 / 延迟每条自己带 */
+      }
+      @keyframes splash-write { to { stroke-dashoffset: 0 } }
+      @keyframes splash-glow { to { filter: drop-shadow(0 10px 38px rgba(146,170,255,.34)) } }
+      @media (prefers-reduced-motion: reduce) {
+        #splash-mark { animation: none; filter: drop-shadow(0 10px 38px rgba(146,170,255,.34)); }
+        #splash-mark path { animation: none; stroke-dashoffset: 0; }
+      }
+    </style>
   </head>
   <body>
+    <div id="splash" aria-hidden="true">
+      <div id="splash-bg"></div>
+      <!-- 一笔一条 path：时长按各笔长度分（合起来 1500ms，所以笔速一致），顺序就是下笔顺序。
+           几何：笔画 25；大写顶中心 62 / x 高顶中心 100 / 基线中心 189；绕基线斜切 14°（斜体）。
+           圆弧全都换成了三次贝塞尔 —— 斜切对贝塞尔是精确的，对 A 弧不是（会变成椭圆弧）。
+           h 的肩膀终点落在竖线中心线上 —— 偏一点左边就探出个小疙瘩（所以别乱改）。
+           splash.ts 落位时只从这里克隆一份进左侧导航 —— 路径数据全项目就这一处。 -->
+      <svg id="splash-mark" viewBox="37 45 645 161" role="img" aria-label="GuZhu">
+        <defs>
+          <linearGradient id="splash-ink" gradientUnits="userSpaceOnUse" x1="60" y1="60" x2="640" y2="200">
+            <stop offset="0" stop-color="#ffffff" />
+            <stop offset="42%" stop-color="#f2f5fb" />
+            <stop offset="100%" stop-color="#aab4c6" />
+          </linearGradient>
+        </defs>
+        <path pathLength="1" style="animation-duration:367ms;animation-delay:0ms" d="M 168.7 73.5 C 146.9 55 109.8 59.2 82.4 83.3 C 55 107.4 46 143.6 61.4 167.7 C 76.8 191.8 111.8 196 142.8 177.5 L 153.7 133.5 L 117.3 133.5" />
+        <path pathLength="1" style="animation-duration:220ms;animation-delay:367ms" d="M 218.2 100 L 203.2 160 C 193.6 198.7 251.6 198.7 261.2 160 L 276.2 100" />
+        <path pathLength="1" style="animation-duration:403ms;animation-delay:587ms" d="M 341.7 62 L 446.7 62 L 310 189 L 415 189" />
+        <path pathLength="1" style="animation-duration:133ms;animation-delay:990ms" d="M 502.7 62 L 471 189" />
+        <path pathLength="1" style="animation-duration:157ms;animation-delay:1123ms" d="M 529 189 L 544 129 C 548 113 538.2 100 522.2 100 C 506.2 100 490 113 486 129" />
+        <path pathLength="1" style="animation-duration:220ms;animation-delay:1280ms" d="M 607.2 100 L 592.2 160 C 582.6 198.7 640.6 198.7 650.2 160 L 665.2 100" />
+      </svg>
+    </div>
     <div id="nav"></div>
     <div id="app"></div>
     <script type="module" src="/src/main.ts"></script>

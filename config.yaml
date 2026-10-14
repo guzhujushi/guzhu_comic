@@ -34,6 +34,10 @@ download:
   dir: ~/.jmreader/downloads
   retries: 3
   auto_resume: true
+splash:
+  enabled: true
+  min_ms: 1950
+  max_ms: 3000
 cache:
   photo_ttl: 86400
   album_ttl: 86400

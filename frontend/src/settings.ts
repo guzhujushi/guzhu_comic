@@ -9,6 +9,7 @@ export interface AppSettings {
     glass_opacity: number
   }
   dev: { url: string; debug: boolean }
+  splash: { enabled: boolean; min_ms: number; max_ms: number }
   reader: {
     restore_progress: boolean
     click_to_page: boolean
@@ -58,6 +59,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
     glass: 'none', glass_opacity: 0.92,   // 浏览器里没有 DWM，兜底不要玻璃
   },
   dev: { url: 'http://localhost:5173', debug: true },
+  splash: { enabled: true, min_ms: 1950, max_ms: 3000 },
   reader: {
     restore_progress: true, click_to_page: true,
     mode: 'webtoon', background: 'dark', page_gap: 0, auto_scroll: 0, width: 1080,
@@ -86,6 +88,7 @@ export async function loadSettings(force = false): Promise<AppSettings> {
       ...raw,
       window: { ...DEFAULT_SETTINGS.window, ...raw.window },
       dev: { ...DEFAULT_SETTINGS.dev, ...raw.dev },
+      splash: { ...DEFAULT_SETTINGS.splash, ...raw.splash },
       reader: { ...DEFAULT_SETTINGS.reader, ...raw.reader },
       detail: { ...DEFAULT_SETTINGS.detail, ...raw.detail },
       prefetch: { ...DEFAULT_SETTINGS.prefetch, ...raw.prefetch },

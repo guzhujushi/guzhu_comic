@@ -51,6 +51,11 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "retries": 3,                     # 单张图失败重试几次（配上下次开窗的续传 = 断线重连）
         "auto_resume": True,              # 开窗几秒后自动接着下没下完的（关窗 / 断电中断的都算）
     },
+    "splash": {
+        "enabled": True,     # 开窗先播「GuZhu」描字动画（内联在 index.html 里，改完要重开窗口）
+        "min_ms": 1950,      # 最早揭幕：从页面开始加载算起（描字 1500 + 停留 450 就是 1950）
+        "max_ms": 3000,      # 硬上限：到点必揭，宁可露出骨架也不把启动拖在这
+    },
     "cache": {
         "photo_ttl": 86400,
         "album_ttl": 86400,
