@@ -9,7 +9,7 @@
 
 改了这里记得同步 `scripts/build_exe.ps1` 的 -Version 与 `scripts/publish_frontend.ps1` 的 manifest。
 """
-APP_VERSION = "0.1.0"
+APP_VERSION = "0.1.1"
 
 # 打包进 exe 的那份 dist 的构建号（打包脚本不写就是空串）
 BUNDLED_WEB = ""

@@ -53,6 +53,8 @@
   + `frontend/index.html` 标题 `frontend` → `Guzhu Comic`
   + 跨平台兜底用例 `tmp/_check_platform_failopen.py`（非 Windows 上 glass / 单实例 / WebView2 三条都得放行）
   + 攒完改动**只打一次包**并过 Defender / VirusTotal：exe 2/75 报、zip 0/75 报，国内杀软全放行（见下面「第二次出包」）
+- [x] **第五次出包（2026-10-14，0.1.1 正式 release）**：版本号 `0.1.0` → `0.1.1`（`backend/version.py` + `-Version 0.1.1`）重打包，
+      打包态六项验收全绿、Defender 三处 no threats（**VirusTotal 这版没扫**：本机没配 API key）；产物与校验和见下面「第五次出包」一节
 - [x] 加固 + **第四次出包（2026-10-14，发布版，给同学用之前）**：图片文件名收口（`_img_name`）+ 本地服务 **Host 白名单**
   + 运行足迹 / 中文路径 / 打包态 Host 三类验收（见下面「第三次出包」「第四次出包」）
 - [x] 体验三项（2026-10-14，用户从“还能优化什么”里挑的**前三项**）：
@@ -466,6 +468,32 @@ hero（封面 / 标题 / 作者 / 热度 / 日期 / 标签）→ 阅读·下载�
   - `build_out/GuzhuComic/GuzhuComic.exe`（SHA256 `F9F472FEFF4BE9588CE70EC6E879203547D2D6162CE422F047EA331E88982ABF`，6.86 MiB）
   - `build_out/GuzhuComic-0.1.0-win64.zip`（SHA256 `EED8632782F017345FEAFCA60C3A97007C5648AFF6033ADAD5E58B09AED09C1E`，20.1 MB）
 - **zip 与 exe 要分开看**：同学解压后落盘的是 exe，别人机器上的杀软看的是那个 exe（不是 zip）。分发时给 zip + 校验和。
+
+### 第五次出包（2026-10-14，0.1.1 正式 release）
+
+A / B 组后端补齐 + 前端热更新通道（§「A / B 组后端补齐」「A / B 组收尾」）落码并过回归之后重打的一次包 —— **这一版是 A / B 组那批功能的第一份成品**。
+
+- **版本号升到 0.1.1**：`backend/version.py` 的 `APP_VERSION` 与 `scripts\build_exe.ps1 -Version 0.1.1` 一起改
+  （exe 版本资源、`get_version()` 与更新通道的 `app_min` 都看它）。`BUNDLED_WEB` 仍是空串 = 包内那份前端的构建号未知
+  （客户端第一件事就是"让对方说了算"，见 §9）。
+- **打包**：`powershell -ExecutionPolicy Bypass -File scripts\build_exe.ps1 -Version 0.1.1`（本机约 32 秒）
+  —— 前端先 `npm run build`，`_internal/dist` 里那份与 `frontend/dist` **逐字节相同**（`index.html` 哈希一致，
+  `index-DC8FsTan.js` / `index-DfzuLBwi.css`）。
+- **产物**：
+  - `build_out/GuzhuComic-0.1.1-win64.zip`（SHA256 `5B4DCC02980A6962A9F561F5046DC1174B632D89AA7E58D962D332D23A56C51F`，20.19 MiB，265 个条目）
+  - `build_out/GuzhuComic/GuzhuComic.exe`（SHA256 `1FF672AC520E65A10418B0A0B968175A477A4EE4BC8BFA13B538551270B7D902`，7.08 MiB）
+  - 旧版 `GuzhuComic-0.1.0-win64.zip` 还在 `build_out/` 里，**别混着发**。
+- **打包态验收（全绿）**：`_check_exe_package`（真窗口，页面回报 `kids=1|rec=shown|cards=10|resume=shown|rows=30`，图片同源 200、
+  `~/.jmreader/webview` 1018 个文件）、`_check_exe_real`（**真首启**：清掉旧 `config.yaml` 与 `webview/` 后能起、
+  窗口活着、静态服务 200、首启写出配置 —— 跑之前先备份这两样，跑完已还原）、`_check_exe_host`（8/8）、
+  `_check_exe_footprint`（6/6）、`_check_exe_nonascii_path`（6/6，中文用户名 + 中文目录）、`_check_exe_single`（6/6）。
+- **前端接线回归**（对着包内同一份 dist 跑）：`_check_detail_offline`（8/8）、`_check_settings_page`（15/15）、
+  `_check_updater`（39/0）、`_check_backend_apis`（83/0）、`_check_api_smoke` 全绿。
+- **杀软**：Defender 对 onedir / exe / zip 各扫一遍 **no threats**，`Get-MpThreat` 无活动威胁。
+  **VirusTotal 这版没扫**（本机没配 API key）；要留档就跑 `tmp/_vt_scan.py` 那套或手动拖到 virustotal.com。
+- **发布口径没变**：只发那个 zip + 校验和；zip 与 exe 要分开看（杀软看的是解压后的 exe）。
+- **这一版之后**：再改前端**不用重打包** —— 跑 `scripts\publish_frontend.ps1` 把 `web_dist_out/` 两个产物传到更新地址即可（§9）。
+  注意它的 `-AppMin` 默认取 `APP_VERSION`（= 0.1.1）：0.1.0 那个 exe 里**没有** `updater.py`，收不到热更，得换新安装包。
 
 ### 直连可用性实测：**不需要科学上网**（2026-10-14）
 

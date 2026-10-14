@@ -80,6 +80,20 @@ python main.py
 
 `config.yaml` 里的 `dev.url` 就是窗口加载的地址，默认指向 Vite 开发服务器；前端 `npm run build` 之后也可以改成打包出来的 `dist/index.html`。
 
+## 打包发布
+
+```powershell
+# 打 Windows 免安装包（内含前端 dist）：产物在 build_out\ （一个目录 + 一个 zip）
+powershell -ExecutionPolicy Bypass -File scripts\build_exe.ps1 -Version 0.1.1
+
+# 只发前端（热更新包）：产物在 web_dist_out\，传到更新地址即可，不用重打包
+powershell -ExecutionPolicy Bypass -File scripts\publish_frontend.ps1
+```
+
+- 版本号要跟 `backend/version.py` 的 `APP_VERSION` 一起改（exe 的版本资源、`get_version()` 与更新通道的 `app_min` 都看它）。
+- 分发给别人时**只发那个 zip**（连同校验和）—— 解压后整个 `GuzhuComic` 文件夹一起拷走，双击 `GuzhuComic.exe` 即可，不需要 Python / Node / 管理员权限。
+- 装上去之后前端（页面与素材）可以**热更**：改完 `frontend/` 跑一次发布脚本、把产物传上去就行，exe 不用重发。
+
 ## 页面
 
 | 页面     | 路由                            | 说明                                                     |
