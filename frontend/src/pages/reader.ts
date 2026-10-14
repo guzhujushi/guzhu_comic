@@ -1,6 +1,7 @@
 import { onUnmount } from '../router.js'
 import { icons, morphIcon, setIcon } from '../components/icons.js'
 import { loadSettings } from '../settings.js'
+import { warmChapterStart } from '../prefetch.js'
 import type { AppSettings } from '../settings.js'
 import type { Chapter } from '../types.js'
 
@@ -83,6 +84,8 @@ export function readerPage(params: Record<string, string>): HTMLElement {
   let currentIndex = 0
   let progressReady = false   // 上次进度读出来之前，currentIndex 是无意义的 0
   let clickToPage = true      // 点击左右两侧翻页，设置里可以关掉
+  let prefetchNextAt = 0      // 一话看到多少（0~1）就预加载下一话，来自 config 的 prefetch.next_at
+  let warmedNext = false      // 这一话的「预热下一话」只触发一次
   let restoreCancelled = false
   let restoring = false       // 正在滚回上次那页，这期间的页码只是过渡值
   // 我们自己滚到的位置：scroll 事件里拿它比对，用来区分"我们滚的"和"用户滚的"
@@ -331,6 +334,7 @@ export function readerPage(params: Record<string, string>): HTMLElement {
     el.style.setProperty('--page-gap', `${s.reader.page_gap}px`)
     el.style.setProperty('--reader-col', s.reader.width > 0 ? `${s.reader.width}px` : '100%')
     autoSpeed = s.reader.auto_scroll
+    prefetchNextAt = s.prefetch.next_at
     autoBtn.hidden = autoSpeed <= 0
     if (autoSpeed <= 0) setAutoScroll(false)
     setMode(s.reader.mode)
@@ -507,6 +511,21 @@ export function readerPage(params: Record<string, string>): HTMLElement {
     const total = images.length
     pageEl.textContent = total ? `${currentIndex + 1} / ${total}` : ''
     rulerEl.style.width = total ? `${((currentIndex + 1) / total) * 100}%` : '0%'
+    maybeWarmNext()
+  }
+
+  /**
+   * 一话看到 prefetch.next_at（默认 90%）就把下一话的开头几张先下下来，换话时不用等图。
+   * 没有下一话、或者配置里关掉了，就什么都不做。页码每变一次都会走到这儿，
+   * 所以第一件事是看 warmedNext（同一话只触发一次）。
+   */
+  function maybeWarmNext(): void {
+    if (warmedNext || prefetchNextAt <= 0 || images.length === 0) return
+    const next = chapterIndex >= 0 ? chapters[chapterIndex + 1] : undefined
+    if (!next) return
+    if ((currentIndex + 1) / images.length < prefetchNextAt) return
+    warmedNext = true
+    warmChapterStart(next.photo_id)
   }
 
   let toastTimer = 0

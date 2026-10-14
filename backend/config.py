@@ -33,6 +33,11 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "chapters_collapse": 20,   # 章节数超过这个就先折叠（0 = 全部展开）
         "comment_preview": 5,      # 右侧评论区先显示几条（0 = 不显示评论区）
     },
+    "prefetch": {
+        "albums": 12,           # 列表铺完后后台预热前 N 部的详情缓存（0 = 关）
+        "chapter_images": 3,    # 进详情页 / 一话看到 next_at 时先下的图片张数（0 = 关）
+        "next_at": 0.9,         # 一话看到这个比例就预加载下一话（0 = 关）
+    },
     "download": {
         "workers": 8,
     },

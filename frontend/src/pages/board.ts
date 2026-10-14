@@ -8,6 +8,7 @@ import { renderAlbumSkeleton, renderEmpty, renderError } from '../components/sta
 import { renderHero, renderHeroSkeleton } from '../components/hero.js'
 import type { HeroHandle } from '../components/hero.js'
 import { onUnmount } from '../router.js'
+import { warmAlbumList } from '../prefetch.js'
 import { waitForApi } from '../webstatus.js'
 import { loadState, pickKey, saveState } from '../store.js'
 import type { AlbumSummary } from '../types.js'
@@ -182,6 +183,7 @@ export function boardPage(category: ComicCategory): HTMLElement {
   let cols = 5
   let state: 'loading' | 'ready' | 'empty' | 'error' = 'loading'
   let errorText = ''
+  let heroIds: string[] = []   // hero 那三部的 ID，跟横条一起送去预热详情
 
   // 分类页的整页列表：第 1 页的前三部已经进了 hero，从第 4 部接着铺
   const cards: AlbumSummary[] = []
@@ -352,6 +354,20 @@ export function boardPage(category: ComicCategory): HTMLElement {
     paintGrid()
   }
 
+  /**
+   * 把「这一刻摆在屏幕上」的作品交给后端预热详情缓存：封面 + 标题先铺，详情随后慢慢来。
+   * 只送真的铺出来的那几张（一行只铺 --cols 张、分类页就送已铺出来的那些）。
+   * 每次重发整份清单没关系 —— 后端认过的不要，一次也只预热有限几部。
+   */
+  function warmVisible(): void {
+    const ids = [...heroIds]
+    for (const row of rows) {
+      if (row.items) ids.push(...row.items.slice(0, cols).map((item) => item.id))
+    }
+    for (const card of cards) ids.push(card.id)
+    warmAlbumList(ids)
+  }
+
   /** 一个分类的请求：首页各拉各的，谁先回来谁先铺，不互相等 */
   async function fillRow(row: CatRow, my: number): Promise<void> {
     const api = window.pywebview?.api
@@ -373,6 +389,7 @@ export function boardPage(category: ComicCategory): HTMLElement {
       row.error = String(err)
     }
     paintRow(row)
+    warmVisible()
   }
 
   /** 分类页往后翻页；图源不给总数，就用"这一页空了"当到底 */
@@ -405,7 +422,10 @@ export function boardPage(category: ComicCategory): HTMLElement {
     } finally {
       busy = false
     }
-    if (my === token) paintGrid()
+    if (my === token) {
+      paintGrid()
+      warmVisible()
+    }
   }
 
   function showMessage(): void {
@@ -445,6 +465,7 @@ export function boardPage(category: ComicCategory): HTMLElement {
     boardMsgEl.hidden = true
     boardMsgEl.innerHTML = ''
     cards.length = 0
+    heroIds = []
     page = 0
     done = false
     busy = false
@@ -484,6 +505,8 @@ export function boardPage(category: ComicCategory): HTMLElement {
         window.location.hash = `#/album?id=${id}`
       })
       if (top.length === 0) heroEl.innerHTML = ''
+      heroIds = top.slice(0, 3).map((item) => item.id)
+      warmVisible()
 
       if (top.length === 0) {         // 这一页整块没数据，别留一片空白
         state = 'empty'
@@ -499,6 +522,7 @@ export function boardPage(category: ComicCategory): HTMLElement {
         cards.push(...top.slice(3))   // 前三部在 hero 里，列表从第 4 部接着铺
         done = top.length <= 3        // 第一页就没剩几部，说明这期到底了
         paintPanel()
+        warmVisible()
         armReveal(gridEl)             // 整页列表也虚化入场（只在这次加载演一次）
       }
     } catch (err) {

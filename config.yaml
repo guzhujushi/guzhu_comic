@@ -19,6 +19,10 @@ reader:
 detail:
   chapters_collapse: 20
   comment_preview: 5
+prefetch:
+  albums: 12
+  chapter_images: 3
+  next_at: 0.9
 download:
   workers: 8
 cache:

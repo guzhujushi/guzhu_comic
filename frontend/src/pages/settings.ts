@@ -53,6 +53,14 @@ const GROUPS: { title: string; fields: FieldDef[] }[] = [
     ],
   },
   {
+    title: '预加载',
+    fields: [
+      { path: 'prefetch.albums', label: '列表铺完后预热几部的详情', type: 'number', min: 0, max: 30, hint: '列表铺完后，后台一批最多预热这么多部的详情（0 = 关）；列表是分批铺的，铺一批预热点一批；详情里有 tag，留给以后的推荐用', restart: true },
+      { path: 'prefetch.chapter_images', label: '预下载图片张数', type: 'number', min: 0, max: 20, hint: '进详情页先下要读那一话的前几张；一话看到「下一话阈值」再下下一话的前几张（0 = 关）', restart: true },
+      { path: 'prefetch.next_at', label: '一话看到几成预加载下一话', type: 'number', min: 0, max: 1, step: 0.05, hint: '0.9 = 看到 90%；0 = 关；没有下一话就不会预加载' },
+    ],
+  },
+  {
     title: '下载与缓存',
     fields: [
       { path: 'download.workers', label: '图片下载并发数', type: 'number', min: 1, max: 32, hint: '太大容易被图源限速', restart: true },

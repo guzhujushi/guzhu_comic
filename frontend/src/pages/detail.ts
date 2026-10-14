@@ -3,6 +3,7 @@ import { renderAlbumList } from '../components/album-list.js'
 import { renderEmpty, renderError } from '../components/states.js'
 import { icons, morphIcon, setIcon } from '../components/icons.js'
 import { loadSettings } from '../settings.js'
+import { warmChapterStart } from '../prefetch.js'
 import type { AppSettings } from '../settings.js'
 import type { AlbumDetail, AlbumProgress, CommentItem } from '../types.js'
 
@@ -74,6 +75,8 @@ function renderDetail(
   // 上次读到的那一话还在的话就接着读；列表里找不到（比如图源改了章节）就从第一话开始
   const resumeChapter = progress ? data.chapters.find((c) => c.photo_id === progress.photo_id) : undefined
   const startChapter = resumeChapter ?? data.chapters[0]
+  // 进详情页就把「阅读按钮要打开的那一话」开头几张先下下来（看过的话磁盘上已经有，后端会跳过）
+  if (startChapter) warmChapterStart(startChapter.photo_id)
   const readLabel = resumeChapter ? `继续阅读 · 第 ${progress!.page_index + 1} 页` : '开始阅读'
 
   // 封面地址同时喂给虚化层，引号先转义掉，免得把 CSS 里的 url() 拆坏

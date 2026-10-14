@@ -105,6 +105,9 @@ class API:
         self._search_ttl = _cfg_int(cfg["cache"]["search_ttl"], 3600, 0, 30 * 86400)
         self._ranking_ttl = _cfg_int(cfg["cache"]["ranking_ttl"], 3600, 0, 30 * 86400)
         self._comment_ttl = _cfg_int(cfg["cache"]["comment_ttl"], 600, 0, 30 * 86400)
+        # 预加载（列表 -> 详情缓存、详情/阅读 -> 章节图）：见 config.yaml 的 prefetch 组
+        self._pf_albums = _cfg_int(cfg["prefetch"]["albums"], 12, 0, 30)
+        self._pf_images = _cfg_int(cfg["prefetch"]["chapter_images"], 3, 0, 20)
 
         # jmcomic 建客户端时要连图源（更新域名、拉 setting），图源抖一下这一步就能卡十几秒。
         # 所以挪到"第一次真要数据"的时候再做（见下面 client 属性），窗口立刻就能起来，
@@ -118,6 +121,10 @@ class API:
         # （这个锁只保护下面那个登记表，不串行化下载本身）
         self._dl_batch_lock = threading.Lock()
         self._dl_photo_ids: set[str] = set()
+        # 批次在跑的时候又有人要整话（用户真进了阅读器）：记一笔，等这批跑完补一次
+        self._dl_pending: set[str] = set()
+        # 这次开窗期间已经预热过详情的本子（重复调用直接跳过，别白读一次库）
+        self._prefetch_done: set[str] = set()
         # 开窗的同时后台先把图源连上（更新域名、拉 setting 那一步可能要十几秒），
         # 这样窗口立刻就能出来，首页第一次要数据时也不用干等
         threading.Thread(target=self._warm_client, daemon=True).start()
@@ -344,7 +351,7 @@ class API:
     def _keep_photo_ids(self) -> tuple[set[str], set[str]]:
         """返回 (绝对不删, 尽量别删)：正在下载/刚看的不删；最近读过的排在最后删"""
         with self._dl_batch_lock:      # 清理线程和下载线程会同时碰它
-            always = set(self._dl_photo_ids)
+            always = set(self._dl_photo_ids) | set(self._dl_pending)
         if self._last_photo_id:
             always.add(self._last_photo_id)
         with sqlite3.connect(DATA_DB) as conn:
@@ -603,6 +610,68 @@ class API:
                     titles[aid] = title
         return titles
 
+    def prefetch_albums(self, album_ids: list) -> int:
+        """
+        列表铺完之后，后台把这几部的详情缓存拉好（详情里有 tag，留给以后的推荐用）。
+
+        立刻返回"这次要去预热的条数"，真正的请求交给后台线程 —— 页面接下来的点击不能等它。
+        已经预热过的（这次开窗期间记着）直接跳过，一次最多 self._pf_albums 个。
+        """
+        if self._pf_albums <= 0:
+            return 0
+        if not isinstance(album_ids, (list, tuple)):
+            raise ValueError("本子 ID 要传列表")
+        todo: list[str] = []
+        for raw in album_ids:
+            aid = str(raw).strip()
+            if not aid or aid in todo or aid in self._prefetch_done:
+                continue
+            todo.append(aid)
+        todo = todo[:self._pf_albums]
+        if todo:
+            # 先记账再起线程：首页几个分类先后铺好、连着来两次也只跑一次
+            self._prefetch_done.update(todo)
+            threading.Thread(target=self._prefetch_albums_run, args=(todo,), daemon=True).start()
+        return len(todo)
+
+    def _prefetch_albums_run(self, ids: list[str]) -> None:
+        """后台预热详情；失败的不记账，下次进这一页再试"""
+        failed: list[str] = []
+
+        def one(aid: str) -> None:
+            try:
+                self.get_album_detail(aid)   # 缓存里有就只是读一次库
+            except Exception:
+                failed.append(aid)
+
+        with ThreadPoolExecutor(max_workers=min(4, len(ids))) as pool:
+            list(pool.map(one, ids))
+        self._prefetch_done.difference_update(failed)
+
+    def prefetch_chapter(self, photo_id: str) -> int:
+        """
+        后台把这一话"开头那几张"下下来：进详情页预热要读的那一话，阅读时预热下一话。
+
+        立刻返回要下的张数（真的下载在后台线程里）。开头那几张已经在磁盘上就返回 0 ——
+        之前看过的话本来就有缓存，不用再预加载。张数取 config 的 prefetch.chapter_images。
+        """
+        if self._pf_images <= 0:
+            return 0
+        photo_id = str(photo_id).strip()
+        if not photo_id:
+            raise ValueError("缺少章节 ID")
+        img_dir = IMG_DIR / photo_id
+        files = self._cache_get(f"photo:{photo_id}", self._photo_ttl)
+        if files:
+            head = files[:self._pf_images]
+            if head and all((img_dir / name).exists() for name in head):
+                return 0
+        # 目录得自己建：get_chapter 进章节时会建，预加载这条路不走它，
+        # 而 jmcomic 碰上不存在的目录是"静默不落盘"（请求照发、异常照吞、文件没有）
+        img_dir.mkdir(parents=True, exist_ok=True)
+        self._spawn_download(photo_id, None, self._pf_images)
+        return self._pf_images
+
     def _start_img_server(self) -> str:
         """启动本地图片静态服务（只监听本机），返回 base url"""
         handler = partial(_QuietHandler, directory=str(CACHE_DIR))
@@ -647,15 +716,26 @@ class API:
             "images": [f"{self.img_base}/images/{photo_id}/{name}" for name in files],
         }
 
-    def _spawn_download(self, photo_id: str, jobs: list[tuple] | None) -> None:
-        """起一个后台下载批次；jobs 为 None 表示要去网络取图列表（同一章节只跑一批）"""
+    def _spawn_download(self, photo_id: str, jobs: list[tuple] | None,
+                        limit: int | None = None) -> None:
+        """
+        起一个后台下载批次；jobs 为 None 表示要去网络取图列表（同一章节只跑一批）。
+        limit 只下前几张（预加载用）；为 None 就是这一话缺多少下多少。
+        """
         with self._dl_batch_lock:
             if photo_id in self._dl_photo_ids:
+                # 已经有批次在跑：预加载那种"只下几张"并进去就行（更全的在后头）；
+                # 但"要整话"的必须记一笔 —— 否则用户真进阅读器时那次请求被静默吃掉，
+                # 剩下的图就永远下不下来（页面上一直转圈重试）。
+                if limit is None:
+                    self._dl_pending.add(photo_id)
                 return
             self._dl_photo_ids.add(photo_id)
-        threading.Thread(target=self._run_download, args=(photo_id, jobs), daemon=True).start()
+        threading.Thread(target=self._run_download, args=(photo_id, jobs, limit), daemon=True).start()
 
-    def _run_download(self, photo_id: str, jobs: list[tuple] | None) -> None:
+    def _run_download(self, photo_id: str, jobs: list[tuple] | None,
+                      limit: int | None = None) -> None:
+        again = False
         try:
             if jobs is None:
                 img_dir = IMG_DIR / photo_id
@@ -663,15 +743,24 @@ class API:
                     photo = self.client.get_photo_detail(photo_id)
                 except Exception:
                     return  # 网络不通就留着下次进章节再补
+                # 顺手把文件名列表也缓存了（get_chapter 也这么写）：预加载靠它判断
+                # "开头那几张已经在磁盘上"，不用每次都去网络问一遍
+                self._cache_set(f"photo:{photo_id}", [img.filename for img in photo])
                 jobs = [
                     (img, img_dir / img.filename)
                     for img in photo
                     if not (img_dir / img.filename).exists()
                 ]
+            if limit is not None:
+                jobs = jobs[:limit]
             self._download_images(jobs)
         finally:
             with self._dl_batch_lock:
                 self._dl_photo_ids.discard(photo_id)
+                again = photo_id in self._dl_pending
+                self._dl_pending.discard(photo_id)
+            if again:
+                self._spawn_download(photo_id, None)   # 这批期间有人要整话，补一次全的
 
     def _download_images(self, jobs: list[tuple]) -> None:
         """并发下载；每张图先写 .part 再改名，中断不留坏文件"""
@@ -881,6 +970,16 @@ class API:
             if "comment_preview" in detail:
                 cfg["detail"]["comment_preview"] = _setting_int(
                     detail["comment_preview"], 0, 50, "评论预览条数")
+
+            prefetch = settings.get("prefetch") or {}
+            if "albums" in prefetch:
+                cfg["prefetch"]["albums"] = _setting_int(prefetch["albums"], 0, 30, "预加载详情条数")
+            if "chapter_images" in prefetch:
+                cfg["prefetch"]["chapter_images"] = _setting_int(
+                    prefetch["chapter_images"], 0, 20, "预加载图片张数")
+            if "next_at" in prefetch:
+                cfg["prefetch"]["next_at"] = _setting_float(
+                    prefetch["next_at"], 0, 1, "预加载下一话的进度比例")
 
             download = settings.get("download") or {}
             if "workers" in download:

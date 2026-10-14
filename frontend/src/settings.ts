@@ -22,6 +22,11 @@ export interface AppSettings {
     chapters_collapse: number
     comment_preview: number
   }
+  prefetch: {
+    albums: number
+    chapter_images: number
+    next_at: number
+  }
   download: { workers: number }
   cache: {
     photo_ttl: number
@@ -46,6 +51,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
     mode: 'webtoon', background: 'dark', page_gap: 0, auto_scroll: 0, width: 1080,
   },
   detail: { chapters_collapse: 20, comment_preview: 5 },
+  prefetch: { albums: 12, chapter_images: 3, next_at: 0.9 },
   download: { workers: 8 },
   cache: {
     photo_ttl: 86400, album_ttl: 86400, search_ttl: 3600, ranking_ttl: 3600, comment_ttl: 600,
@@ -69,6 +75,7 @@ export async function loadSettings(force = false): Promise<AppSettings> {
       dev: { ...DEFAULT_SETTINGS.dev, ...raw.dev },
       reader: { ...DEFAULT_SETTINGS.reader, ...raw.reader },
       detail: { ...DEFAULT_SETTINGS.detail, ...raw.detail },
+      prefetch: { ...DEFAULT_SETTINGS.prefetch, ...raw.prefetch },
       download: { ...DEFAULT_SETTINGS.download, ...raw.download },
       cache: { ...DEFAULT_SETTINGS.cache, ...raw.cache },
     }

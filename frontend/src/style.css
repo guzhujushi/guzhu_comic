@@ -229,6 +229,52 @@ input:focus { outline: 2px solid var(--primary-soft); outline-offset: 1px; borde
 .search-filters { display: flex; align-items: center; flex-wrap: wrap; gap: 4px; margin: -14px 0 20px; }
 .search-filters-hint { color: var(--faint); font-size: 12px; margin-right: 2px; }
 
+/* 搜索页的「最近搜索」：本地记录，一行 chips；记录空了整块收起来 */
+.search-recent { margin: -8px 0 18px; }
+.search-recent[hidden] { display: none; }
+.recent-head { display: flex; align-items: center; gap: 6px; margin: 0 0 8px; }
+.recent-title { color: var(--faint); font-size: 12px; }
+.recent-row { display: flex; flex-wrap: wrap; gap: 6px; }
+.recent-chip {
+  display: inline-flex;
+  align-items: center;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface-2);
+}
+.recent-chip:hover { border-color: var(--border-strong); }
+.recent-hit {
+  max-width: 220px;
+  padding: 5px 4px 5px 11px;
+  background: transparent;
+  border-color: transparent;
+  border-radius: 0;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 400;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.recent-del {
+  padding: 5px 9px 5px 4px;
+  background: transparent;
+  border-color: transparent;
+  border-radius: 0;
+  color: var(--faint);
+}
+.recent-clear {
+  padding: 2px 6px;
+  background: transparent;
+  border-color: transparent;
+  color: var(--faint);
+  font-size: 12px;
+  font-weight: 400;
+}
+.recent-hit:hover, .recent-del:hover { background: transparent; color: var(--text); }
+.recent-clear:hover { background: var(--surface); color: var(--text-soft); }
+
 /* ============ 空状态 / 骨架屏 ============ */
 .empty-state {
   grid-column: 1 / -1;      /* 落在卡片网格里也占满一整行 */
