@@ -136,8 +136,8 @@ if (-not (Test-Path (Join-Path $Channel '.git'))) {
   & git -C $Channel pull --ff-only
   if ($LASTEXITCODE -ne 0) { Write-Host '  ！pull 没成功（本地分叉或没网），按现状继续' }
 }
-# 空仓库 clone 出来没有分支，统一按 main 走（Gitea 那边默认分支就是 main）
-$Branch = ((& git -C $Channel rev-parse --abbrev-ref HEAD) -join '').Trim()
+# 空仓库 clone 出来 HEAD 是 unborn（还没提交），rev-parse 会打 fatal；symbolic-ref 照样能报出分支名
+$Branch = ((& git -C $Channel symbolic-ref --short HEAD) -join '').Trim()
 if ($Branch -ne 'main') { & git -C $Channel checkout -B main | Out-Null }
 
 $Web = Join-Path $Channel 'web'

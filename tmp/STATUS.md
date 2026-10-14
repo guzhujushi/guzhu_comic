@@ -507,7 +507,7 @@ A / B 组后端补齐 + 前端热更新通道（§「A / B 组后端补齐」「
 - **发布脚本**：`tmp/_gh_release.py`（幂等：验身份 → push `main` → 本地打 tag + push tag → 建或改 release → 缺资产才上传；
   认证走 `GIT_CONFIG_KEY_0=http.https://github.com/.extraheader` 环境变量，不写进 `.git/config`、不出现在命令行）。
 
-### 前端热更通道：发布端就绪（2026-10-14）
+### 前端热更通道：已上线（2026-10-14）
 
 客户端那一侧早落码了（`backend/updater.py`，见 `tmp/交接文档.md` §9），这次把**发布端**补齐并验通。
 
@@ -521,11 +521,23 @@ A / B 组后端补齐 + 前端热更新通道（§「A / B 组后端补齐」「
   `version.json` 记下构建号与版本号、装完再查就没有新版。
 - **公网可达性**（这条不过整条通道就白搭）：`code.guzhujushi.cn` → `8.145.36.108`，本机直连通；
   再经 mihomo 代理（出口 `52.53.179.148`，等效"国外用户视角"）**也通** → 用户侧不需要科学上网。
-- **卡在最后一步**：Gitea 上 `guzhujushi/guzhu_comic` 仓库还没建。服务端 `ENABLE_PUSH_CREATE_USER` 是关的
-  （push 报 `Push to create is not enabled for users.`）；两边都找不到可用的 Gitea 凭据（Windows 凭据管理器 /
-  `~/.git-credentials` / `~/.netrc` / `tea` / 本机 58 个与服务器 113 个 hex40 候选全试过）；也没有 root
-  （`ssh root@100.115.86.48` 被拒、`ssh root@8.145.36.108` 超时、`sudo -n` 要密码），所以没法用 `gitea admin` 造 token。
-  → 只能网页上点一下：https://code.guzhujushi.cn/repo/create ，名字 `guzhu_comic`、**公开**、**不要勾"初始化仓库"**。
+- **已上线**：仓库 `guzhujushi/guzhu_comic` 由用户在 Gitea 网页上建好（**公开**、空仓库、默认分支 `main`），
+  `publish_frontend.ps1 -Push` 首次推送 = 通道仓库提交 `13e0a93`；线上构建号 **`20261014-2222-cc69097`**（版本 0.1.1）。
+  客户端读的地址：`https://code.guzhujushi.cn/guzhujushi/guzhu_comic/raw/branch/main/web/manifest.json`。
+- **建仓库为什么只能走网页**（记一笔，别再白翻）：服务端 `ENABLE_PUSH_CREATE_USER` 关着（push 报
+  `Push to create is not enabled for users.`）；Windows 凭据管理器 / `~/.git-credentials` / `~/.netrc` / `tea` /
+  本机 58 个与服务器 113 个 hex40 候选全试过，没有一个可用 token；也没有 root（`ssh root@100.115.86.48` 被拒、
+  `ssh root@8.145.36.108` 超时、`sudo -n` 要密码），所以 `gitea admin` 那条路也走不通。
+- **三条验收（都对上）**：
+  - `tmp/_check_publish_real.py`（21/21）—— **发布前**：拿 `web_dist_out\` 里那两个真产物当发布端跑 check + apply；
+  - `tmp/_check_channel_live.py`（15/15）—— **发布后**：对线上地址裸拉 manifest、裸下载 zip 核 sha256，再走
+    `check()` + `apply()`，装完再查无新版（这条同时证明**不需要代理**）；
+  - `tmp/_check_exe_hotupdate.py`（14 项）—— **真 exe** 走线上通道：`check_update` 认出新版（avail=true、构建号与线上
+    一致）→ `apply_update` 成功（6 个文件）→ 装完请求 `/version.json` 拿到 **200 且带新构建号**。最后这条是关键：
+    包内 `_internal\dist` 里**没有** version.json，它出现只能来自覆盖层 —— 即**打包后那个本地静态服务真的每请求重挑根**
+    （`backend/server.py` 的 `translate_path` → `_pick_root`），热更装完刷新页面即生效、不用重启窗口。
+- **以后发一版前端就一条命令**：`powershell -ExecutionPolicy Bypass -File scripts\publish_frontend.ps1 -Push`
+  （用户下次开窗右下角提示一下，他点一下才换）。
 
 ### 直连可用性实测：**不需要科学上网**（2026-10-14）
 
@@ -1181,10 +1193,9 @@ A / B 组后端补齐 + 前端热更新通道（§「A / B 组后端补齐」「
 
 10. ~~**发布版之后又动过的前端**（品牌行落位 + 搜索页返回修复）~~ —— **2026-10-14 已完成**：第五次出包（0.1.1）重打了，
     包内 dist 与 `frontend/dist` 逐字节一致，并已发 GitHub release `v0.1.1`（见上面「第五次出包」那节）。
-11. **热更通道：只差建仓库**（进行中）：发布端（`scripts\publish_frontend.ps1 -Push` + `tmp/_check_publish_real.py`）
-    已就绪并验通，见上面「前端热更通道：发布端就绪」一节。剩下的事只有一件、而且只能网页上点：
-    https://code.guzhujushi.cn/repo/create → 名字 `guzhu_comic`、可见性**公开**、**不勾"初始化仓库"**；
-    建好之后跑 `powershell -ExecutionPolicy Bypass -File scripts\publish_frontend.ps1 -Push` 就算上线。
+11. ~~**热更通道**~~ —— **2026-10-14 已上线**：仓库 `guzhujushi/guzhu_comic` 已建（公开），首次 `-Push` 发布
+    构建号 `20261014-2222-cc69097`；发布端三条验收（发布前自检 / 线上 check+apply / 真 exe 走通道）全过，
+    见上面「前端热更通道：已上线」一节。以后改前端只需 `scripts\publish_frontend.ps1 -Push`。
 12. ~~**可选清理（本机环境）**~~ —— **2026-10-14 已完成**：删掉用户级 `GH_TOKEN` / `GITHUB_TOKEN`（那俩是同一个过期 token，
     留着会让 `gh auth login` / `gh auth token` 读到旧值）；`~/.gitconfig` 里 github 与 gist 两处 credential helper 指向的
     `gh.exe` 从**已被删除**的 `.openclaw\bin\gh-cli\bin\gh.exe` 改成实际存在的 `agent-tools\bin\gh-cli\bin\gh.exe`
