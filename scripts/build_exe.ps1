@@ -56,12 +56,17 @@ New-Item -ItemType Directory -Force -Path $Work, $Out | Out-Null
 # 2) 图标 + 版本信息（PyInstaller 只认 .ico 与 version-file；版本信息是"少挨杀软"的重要一项）
 Write-Host '[2/4] 生成图标与版本信息 …'
 $Ico = Join-Path $Work 'app.ico'
-$Png = Join-Path $Root 'frontend\public\apple-touch-icon.png'
+# 源图优先用 256 那张过：Pillow 写 ICO 只会缩、不会放（源图 180 时 256 那帧根本产不出来），
+# 有 256 的源，资源管理器/任务栏的大图标才不是放大糊的。没有就退回 180 那张。
+$PngBig = Join-Path $Root 'frontend\public\apple-touch-icon-256.png'
+$Png = if (Test-Path $PngBig) { $PngBig } else { Join-Path $Root 'frontend\public\apple-touch-icon.png' }
 $pyIcon = @"
 from PIL import Image
 im = Image.open(r'$Png').convert('RGBA')
-im.save(r'$Ico', sizes=[(16, 16), (24, 24), (32, 32), (48, 48), (64, 64), (128, 128), (180, 180), (256, 256)])
-print('icon ok', im.size)
+wanted = [(16, 16), (24, 24), (32, 32), (48, 48), (64, 64), (128, 128), (180, 180), (256, 256)]
+sizes = [s for s in wanted if s[0] <= min(im.size)]
+im.save(r'$Ico', sizes=sizes)
+print('icon ok', im.size, '->', len(sizes), 'sizes')
 "@
 & $Python -c $pyIcon
 if ($LASTEXITCODE -ne 0) { throw '图标生成失败（Pillow 生成 .ico）' }

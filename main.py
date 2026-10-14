@@ -1,6 +1,9 @@
+import logging
+import sys
+
 import webview
 
-from backend import glass, paths, single_instance, webview2
+from backend import glass, logging_setup, paths, single_instance, webview2
 from backend.api import API
 from backend.config import load_config, save_config
 from backend.server import DEFAULT_PORT, start_static_server
@@ -87,11 +90,13 @@ def _gate(config: dict) -> bool:
     """
     if not single_instance.acquire():
         title = str(config["window"]["title"])
+        logging.getLogger("app").warning("已经有一个实例在跑，这次不再开窗")
         hit = single_instance.focus_existing(title)
         _alert("孤竹漫画已经在运行了，" + ("那个窗口已经切到前面。" if hit else "去任务栏找一下它的窗口。"))
         return False
 
     if not webview2.installed():
+        logging.getLogger("app").error("缺 WebView2 运行时，窗口开不出来")
         _alert("这台机器还缺 WebView2 运行时，窗口显示不出来。\n\n"
                "它是微软的组件，装一次就行（免费，约 2 MB，装完自动更新）。\n"
                "点「确定」后会自动打开下载页；装好再双击本程序即可。")
@@ -104,7 +109,23 @@ def _gate(config: dict) -> bool:
     return True
 
 
+def _banner(config: dict, url: str, base: str | None, log_path) -> None:
+    """
+    开机那几行日志：用户反馈问题时，光凭它们就能定位大半 —— 是不是打包态、配置读的哪一份、
+    页面加载的哪个地址（vite 还是包内 dist）。
+    """
+    log = logging.getLogger("app")
+    log.info("孤竹漫画启动：frozen=%s python=%s", paths.is_frozen(), sys.version.split()[0])
+    log.info("配置：%s", paths.config_path())
+    log.info("加载地址：%s（图片 base=%s）", url, base or "由 API 自己起一个服务")
+    log.info("窗口：%sx%s 毛玻璃=%s 调试=%s 日志=%s",
+             config["window"]["width"], config["window"]["height"],
+             config["window"]["glass"], config["dev"]["debug"], log_path or "装不上（磁盘 / 权限）")
+
+
 def main() -> None:
+    # 第一件事就是装日志：后面每一步（包括 _prepare_user_dir 里的失败）都要留痕
+    log_path = logging_setup.setup()
     _prepare_user_dir()
     config = load_config()
     window_cfg = config["window"]
@@ -112,6 +133,7 @@ def main() -> None:
     if not _gate(config):
         return
     url, base = _pick_url(config)
+    _banner(config, url, base, log_path)
 
     api = API(base_url=base)
 

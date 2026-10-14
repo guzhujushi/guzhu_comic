@@ -1,0 +1,25 @@
+{
+  "sha256": "bf755dc1e738f1cf2162fc38c245f4d312972a17d1601078df10c2ec3866b2b3",
+  "stats": {
+    "malicious": 2,
+    "suspicious": 0,
+    "undetected": 69,
+    "harmless": 0,
+    "timeout": 0,
+    "confirmed-timeout": 0,
+    "failure": 0,
+    "type-unsupported": 4
+  },
+  "hits": [
+    [
+      "APEX",
+      "Malicious",
+      "malicious"
+    ],
+    [
+      "Skyhigh",
+      "BehavesLike.Win64.Backdoor.vc",
+      "malicious"
+    ]
+  ]
+}

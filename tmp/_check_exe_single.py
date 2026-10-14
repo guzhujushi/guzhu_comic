@@ -12,7 +12,22 @@ import time
 from pathlib import Path
 
 EXE = Path("D:/guzhu_comic/build_out/GuzhuComic/GuzhuComic.exe")
-WIN_TITLE = "Guzhu Comic"
+CFG = Path.home() / ".jmreader" / "config.yaml"
+
+
+def config_title():
+    """窗口标题以用户配置为准：别的用例会把 title 临时改成探针串，写死会误判"""
+    try:
+        text = CFG.read_text(encoding="utf-8")
+    except OSError:
+        return "Guzhu Comic"
+    for line in text.splitlines():
+        if line.strip().startswith("title:"):
+            return line.split(":", 1)[1].strip().strip("'\"") or "Guzhu Comic"
+    return "Guzhu Comic"
+
+
+WIN_TITLE = config_title()
 DIALOG_TITLE = "孤竹漫画"
 
 user32 = ctypes.WinDLL("user32", use_last_error=True)

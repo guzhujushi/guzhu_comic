@@ -41,7 +41,14 @@
 - [x] 打包 P0 落码（2026-10-14 完成，见下面「打包落地」一节）：`backend/paths.py` + `backend/server.py`（静态服务，页面与图同源）+ `main.py` 起服务 + `dev.use_dev_server` / `server.port` + `private_mode=False, storage_path=~/.jmreader/webview`；已出包并过验收（onedir 39 MB / zip 19.9 MB）
 - [x] 打包 P1 之二（2026-10-14）：**单实例检测**（命名互斥体，第二个实例弹一句提示 + 把已有窗口拉到前台后退出）
   + **WebView2 缺失提示**（查 EdgeUpdate 注册表 `pv`，缺了就给人话提示并自动打开微软下载页，不再是对着一个白窗口）
-- [ ] 打包 P1 剩余（待办）：256×256 的 `.ico` 源图、日志落盘 `~/.jmreader/logs/`
+- [x] 打包 P1 收尾（2026-10-14，用户："先把 p1 落地，把需要完善的完善好再打包扫描"）：**日志落盘**
+  （`backend/logging_setup.py`：`~/.jmreader/logs/app.log` 按天切留 7 天 + Tee 掉 stdout/stderr + 未捕获异常/后台线程异常
+  连栈落盘；顺手把 jmcomic 自带的 stdout handler 收编，不然每条 jm 日志在文件里重两遍）
+  + **256×256 图标源图**（`frontend/public/apple-touch-icon-256.png`，构建脚本优先用它生成 `.ico`；
+  原来的 180 源图根本产不出 256 那一帧 —— Pillow 写 ICO 只缩不放）
+  + `frontend/index.html` 标题 `frontend` → `Guzhu Comic`
+  + 跨平台兜底用例 `tmp/_check_platform_failopen.py`（非 Windows 上 glass / 单实例 / WebView2 三条都得放行）
+  + 攒完改动**只打一次包**并过 Defender / VirusTotal：exe 2/75 报、zip 0/75 报，国内杀软全放行（见下面「第二次出包」）
 
 ## 打包落地（P0 迁移）+ 杀软检测（2026-10-14）
 
@@ -99,8 +106,72 @@
 - `MpCmdRun -Scan -ScanType 3` 分别扫 **onedir 目录 / exe / zip** → 三处 **found no threats**；`Get-MpThreatDetection` 无历史告警。
 - exe **未签名**（`Get-AuthenticodeSignature` → NotSigned）→ SmartScreen 会出「未知发布者」，这是误报画像里最重的一条，
   根治只能买代码签名证书（设计文档 §8-1）。
-- **第三方引擎（360 / 火绒 / 腾讯）本机没有，VirusTotal 没有 API key —— 都没测**。要测：给一个 VirusTotal free API key
-  （我脚本化上传 + 拉 70+ 引擎报告），或手动把 zip 传上去（**样本会共享给杀软厂商**，得用户点头）。
+- ~~第三方引擎（360 / 火绒 / 腾讯）本机没有，VirusTotal 没测~~ —— **2026-10-14 用 VirusTotal 补上了**，
+  见下面「第二次出包」一节（脚本 `tmp/_vt_scan.py` + `tmp/_vt_detail.py`，报告留在 `tmp/_vt/`）。
+
+### 第二次出包：P1 收尾 + Defender / VirusTotal 双扫（2026-10-14）
+
+用户口径：**"不要一次改动就打包一次，等改完再打包"** —— 这一轮就是攒完所有改动，只打了一次。
+
+**这一轮改了什么**：
+- `backend/logging_setup.py`（新）：日志落到 `~/.jmreader/logs/app.log`（按天切、留 7 天）；`sys.stdout` / `sys.stderr`
+  接一层 Tee 进同一个文件（项目里大量 `print(..., flush=True)` 是给人的现场信息，没控制台不能丢）；
+  `sys.excepthook` / `threading.excepthook` 连栈落盘（后台线程炸的最难查）；装不上只提示一句、**绝不拦开窗**。
+  两处只在冻结态才有的坑：`--windowed` 下 stdout 可能是 `None`，异常钩子因此走 `logging` 而不是 `print`。
+- `logging_setup._adopt_jmcomic_logger()`：jmcomic import 时给自己挂 `StreamHandler(sys.stdout)`，而我们装了 Tee →
+  每条 jm 日志在文件里**写两遍**，还因为它的格式串要 `%(topic)s` 而给没带 topic 的记录抛一坨
+  `Formatting field not found`。现在摘掉它那个 handler、只留 propagate，放个 `NullHandler` 占位（它 `if not handlers`
+  才补），topic 用 filter 折进消息（`【api】…`）—— 文件里每条 jm 日志**只出现一遍**。
+- `frontend/public/apple-touch-icon-256.png`（新，96 KB）：`apple-touch-icon.png` 只有 180×180，而 **Pillow 写 ICO
+  只会缩不会放**（`IcoImagePlugin._save` 里 `size > 宽高` 直接 continue）→ 老包的最大一帧就是 180，任务栏大图标是放大糊的。
+  256 那张是用 Pillow LANCZOS + 轻量 UnsharpMask 从 180 原图等比放大的（原画是平涂梗图，放大没有细节损失），
+  `scripts/build_exe.ps1` 现在优先用 256 源图（没有就退回 180，尺寸表按源图尺寸裁）。
+- `frontend/index.html`：`<title>frontend</title>` → `Guzhu Comic`（窗口标题由 pywebview 定，这个管浏览器/任务栏悬停）。
+- `tmp/_check_logging.py`（新，**17/17**）：print / root logging / jmcomic logger / topic 折叠 / 主线程与后台线程异常 /
+  重复 setup 不叠 handler / stdout 为 None / 日志目录建不出来时返回 None 不抛异常。
+- `tmp/_check_platform_failopen.py`（新，**8/8**）：把 `sys.platform` 临时改成 darwin —— 毛玻璃整条跳过、单实例放行且
+  真没建互斥体、WebView2 检查不碰注册表、`ctypes.windll` 不存在时 `_alert` 不二次崩。**这是"将来上 mac / 安卓"的基础**，
+  但只验到"分支走得到且 fail-open"，真机没试过。
+- 验收脚本自身的坑（顺手修）：`_check_exe_package.py` 会把探针串写进用户配置的 `window.title`，跑完不还原 →
+  后跑的 `_check_exe_single.py` 按标题找窗口就找不到（假 FAIL）。现在收尾会把配置从 `config.yaml.bak` 还回去，
+  `_check_exe_single.py` 也改成**从配置读期望标题**。
+
+**产物**（`scripts/build_exe.ps1`，onedir **39.2 MB** / zip **20.1 MB**，构建约 26 秒）：
+- `build_out/GuzhuComic/GuzhuComic.exe`（SHA256 `BF755DC1E738F1CF2162FC38C245F4D312972A17D1601078DF10C2EC3866B2B3`，7.19 MB）
+- `build_out/GuzhuComic-0.1.0-win64.zip`（SHA256 `FED239FD89412F20862423B24BE59D81BC1E1A9BD9249B44D56144086D43D590`）
+- `build_work/app.ico` 现在**真的有 256×256 那一帧**（16/24/32/48/64/128/180/256，实测读回没错）。
+
+**打包态验收（真 exe，三份都全绿）**：
+- `_check_exe_package.py`：窗口标题 `Guzhu Comic`、`:47753/index.html` 就是包内 dist、`/images` 同源取图 200（164 KB）、
+  `webview/` 318 个文件、页面回报 `kids=1|rec=shown|cards=10|resume=shown|rows=30`。
+- `_check_exe_real.py`：清掉 `config.yaml` 与 WebView2 用户数据后真首启 → 进程活着、标题对、`:47753` 正常、首启写出配置。
+- `_check_exe_single.py`（6/6）：第一个起窗口 → 第二个弹「孤竹漫画已经在运行了」并 exit 0 → 第一个窗口原样还在。
+- **日志在冻结态实测可用**（这次新加的，日志本身就是验收对象）：`~/.jmreader/logs/app.log` 里能看到 banner——
+  `孤竹漫画启动：frozen=True python=3.14.6` / 配置路径 / 加载地址 / 窗口参数，接着是 jmcomic 的
+  `【api.setting】change APP_VERSION from [2.1.7] to [2.1.11]`（topic 折进去了、**没有重复行、没有格式报错**）。
+- 旧回归重跑全绿：`_check_hero_dedupe` / `_check_coldstart` / `_check_bridge_wipe` / `_check_nav` / `_check_history` /
+  `_check_reader_sheet` / `_check_router_guard` / `_check_hardening` / `_check_imgserver` / `_check_api_smoke` /
+  `_check_webview2` / `_check_webview2_gate` / `_check_single_instance`；`tsc && vite build` exit 0。
+
+**Defender 复扫**：onedir / exe / zip 三处 `MpCmdRun -ScanType 3` 仍 **found no threats**。
+
+**VirusTotal（75 引擎，走 `127.0.0.1:7890` 代理；上传即把样本共享给厂商，用户点头过）**：
+- `GuzhuComic-0.1.0-win64.zip` → **0 / 75 报毒**（undetected 66、type-unsupported 7、timeout 2）——
+  **发出去的就是这个包，用户拿到的判定是干净的**。
+- `GuzhuComic.exe` → **2 / 75 报毒**，两家都是"行为启发式"而不是特征命中：
+  `APEX: Malicious`（VT 上出了名的滥报）、`Skyhigh: BehavesLike.Win64.Backdoor.vc`
+  （McAfee 那条云引擎，`BehavesLike` 是启发式命名，PyInstaller 打包的 Python 程序是它的常客）。
+- **大厂全放行**：Microsoft / Kaspersky / ESET-NOD32 / BitDefender / Avast / AVG / Symantec / TrendMicro /
+  Sophos / Fortinet / PaloAlto / Google / SentinelOne / CrowdStrike / Elastic / F-Secure / Malwarebytes。
+- **国内杀软也全放行**（这是用户最关心的一条）：`huorong`(火绒) / `Tencent`(腾讯) / `Kingsoft`(金山) /
+  `Rising`(瑞星) / `Alibaba` + `alibabacloud` / `Antiy-AVL`(安天) / `Jiangmin`(江民) / `Sangfor`(深信服) —— 全是 undetected。
+- 原始报告留在 `tmp/_vt/*.json`（`*.full.json` 是逐引擎判定）。要不要为那两家启发式引擎提误报申诉：**用户定**（还没提）。
+
+**踩到的坑（写给以后）**：
+- Node 读写带 BOM 的文件要小心：`fs.readFileSync(p, 'utf8')` **不会**吃掉 BOM（它变成 `\uFEFF`），再自己补一个 BOM 就变成两个 →
+  PowerShell 直接解析失败（`Unexpected token ')'`，报在注释块里，看着像内容坏了其实是 BOM）。改 `.ps1` 一律"先剥 BOM 再补一个"。
+- `_check_exe_real.py` 会**删掉** `~/.jmreader/config.yaml` 与 `webview/`（它验的就是真首启）—— 跑它之前心里有数：
+  阅读记录在 `data/app.db`（不动），但 localStorage 里的主题 / 偏好会回到默认。
 
 ### 直连可用性实测：**不需要科学上网**（2026-10-14）
 

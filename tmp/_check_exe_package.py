@@ -155,9 +155,14 @@ def main():
         print("FAIL  WebView2 的 user data 没落到用户目录（localStorage 会丢）", flush=True)
         ok = False
 
-    # 5) 收尾：杀掉进程树
+    # 5) 收尾：杀掉进程树，再把被探针改过的用户配置还回去 —— 不还原的话，下一个用例读到的
+    #    窗口标题就是 "PROBE|…"（_check_exe_single / _check_exe_real 都按标题找窗口）
     subprocess.run(["taskkill", "/PID", str(proc.pid), "/T", "/F"], capture_output=True, text=True)
     time.sleep(1)
+    bak = Path(str(CFG) + ".bak")
+    if bak.exists():
+        shutil.copy2(str(bak), str(CFG))
+        print("[teardown] 用户配置已从 config.yaml.bak 还原", flush=True)
 
     if not payload:
         print("FAIL  40 秒内没等到页面通过桥回报（页面可能压根没渲染出来）", flush=True)
