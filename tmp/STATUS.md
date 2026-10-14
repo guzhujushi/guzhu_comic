@@ -39,7 +39,9 @@
 - [x] 健壮性审计（用户："不加功能了，看看代码有没有漏洞，补齐漏洞和可能崩溃的地方，最后检验"）：全库只读审查 →
   补 13 处"会整窗空白 / 会静默丢数据 / 会以 TypeError 直穿 JS 桥 / 会信息暴露"的点 + 新增 3 个回归脚本（2026-10-14）
 - [x] 打包 P0 落码（2026-10-14 完成，见下面「打包落地」一节）：`backend/paths.py` + `backend/server.py`（静态服务，页面与图同源）+ `main.py` 起服务 + `dev.use_dev_server` / `server.port` + `private_mode=False, storage_path=~/.jmreader/webview`；已出包并过验收（onedir 39 MB / zip 19.9 MB）
-- [ ] 打包 P1（待办）：256×256 的 `.ico` 源图、单实例检测、WebView2 Runtime 缺失提示、日志落盘 `~/.jmreader/logs/`
+- [x] 打包 P1 之二（2026-10-14）：**单实例检测**（命名互斥体，第二个实例弹一句提示 + 把已有窗口拉到前台后退出）
+  + **WebView2 缺失提示**（查 EdgeUpdate 注册表 `pv`，缺了就给人话提示并自动打开微软下载页，不再是对着一个白窗口）
+- [ ] 打包 P1 剩余（待办）：256×256 的 `.ico` 源图、日志落盘 `~/.jmreader/logs/`
 
 ## 打包落地（P0 迁移）+ 杀软检测（2026-10-14）
 
@@ -68,9 +70,9 @@
 （用户机器上这个 origin 只会有一条来源），但暴露了「`index.html` 被缓存 = 升级后老页面配新包 = 白屏」的真隐患，
 已加 `no-store` 堵掉。验收脚本因此改成"跑前清 config.yaml + webview 目录"的真首启。
 
-**产物**（`scripts/build_exe.ps1`，onedir 39 MB / zip 19.9 MB，约 26 秒）：
-- `build_out/GuzhuComic/GuzhuComic.exe`（SHA256 `390E7BC67E201A092E430F77E74E3C419B2DBBF6E5909675B3AF4308E534C114`）
-- `build_out/GuzhuComic-0.1.0-win64.zip`（SHA256 `FA9E4D90C37BC65313E0CB81A0A432A2254A0E120966BB7E6B7300D5813B2E55`）
+**产物**（`scripts/build_exe.ps1`，onedir 39 MB / zip 19.9 MB，约 26 秒；下表哈希是**补完两道闸之后**那次构建的）：
+- `build_out/GuzhuComic/GuzhuComic.exe`（SHA256 `724A5BFF6FAC27E98DD41B9612B52B1D42F0127100833DF54C601CC2FDB2EC45`）
+- `build_out/GuzhuComic-0.1.0-win64.zip`（SHA256 `9E7828C0C4796FBAEC39EA402A506F85EED80351EF333A52452CADBB2C6272A9`）
 
 **验收**：
 - `tmp/_check_exe_package.py`（真 exe 的**副本**，往 `index.html` 注入探针，走产品自己的桥回报）→ 全绿：窗口标题
@@ -79,6 +81,18 @@
 - `tmp/_check_exe_real.py`（**未改动**的正式包，真首启）→ 全绿：进程活着、窗口标题 `Guzhu Comic`、`:47753` 正常、
   首启写出 `~/.jmreader/config.yaml`（`title: Guzhu Comic` / `use_dev_server: false` / `debug: false` / `port: 47753`）。
 - 老回归重跑：`_check_imgserver` / `_check_hardening` / `_check_api_smoke` 全绿；`tsc` / `npm run build` exit 0。
+- **开窗前两道闸**（2026-10-14 补）：
+  - `tmp/_check_webview2.py`（6/6）：本机 pv=`155.0.4283.45` → 已装；三个位置都查不到 / 空串 / `0.0.0.0` → 判定没装；
+    注册表读不了（权限）→ **fail-open 放行**（宁可让 pywebview 自己报错，也不拦能跑的机器）。
+  - `tmp/_check_single_instance.py`（5/5）：第一个进程拿到锁、第二个拿不到且自己退出、前一个退了又能拿到；
+    `focus_existing()` 找不到窗口时返回 False 不抛异常。
+  - `tmp/_check_webview2_gate.py`（6/6）：把 `installed()` 强制改成 False 跑一遍 `main()` —— 提示框出来、文案里有 WebView2 与
+    「装好再双击」、自动打开 `https://go.microsoft.com/fwlink/p/?LinkId=2124703`、**不开白窗口**、点确定后线程正常结束。
+  - `tmp/_check_exe_single.py`（真 exe）：第一个实例起窗口 → 开第二个 → 第二个弹「孤竹漫画已经在运行了」（class `#32770`）
+    并 exit 0 → 第一个窗口原样还在。
+  - 打包态能不能用上这两条，专门查过：`winreg` 是**内建模块**（`sys.builtin_module_names` 里有，不需要 `--hidden-import`），
+    `webbrowser` 已在 PYZ 里 —— 否则这两条在 exe 里会静默失效（fail-open 把问题藏起来）。
+  - 新产物 Defender 复扫：onedir / exe / zip 三处仍 **no threats**。
 
 **杀软检测（只做了本机能做的）**：
 - 本机**只装了 Windows Defender**（`root/SecurityCenter2` 只有它一项；引擎 4.18.26090.9 / 特征库 1.461.18.0）。

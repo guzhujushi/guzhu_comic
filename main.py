@@ -1,6 +1,6 @@
 import webview
 
-from backend import glass, paths
+from backend import glass, paths, single_instance, webview2
 from backend.api import API
 from backend.config import load_config, save_config
 from backend.server import DEFAULT_PORT, start_static_server
@@ -77,11 +77,40 @@ def _pick_url(config: dict) -> tuple[str, str | None]:
     return base + "/", base
 
 
+def _gate(config: dict) -> bool:
+    """
+    开窗前的两道闸。返回 False = 这次不开窗（已经提示过用户了）。
+
+    ① 单实例：已经有一个在跑就把那个拉到前台 —— 两个实例会抢同一个端口、同一份缓存目录，
+       而且 user data 目录被两个进程同时开着，WebView2 自己也会闹脾气。
+    ② WebView2 Runtime：缺了 pywebview 起不来，用户只会看到一个白窗口，所以先查、先说话。
+    """
+    if not single_instance.acquire():
+        title = str(config["window"]["title"])
+        hit = single_instance.focus_existing(title)
+        _alert("孤竹漫画已经在运行了，" + ("那个窗口已经切到前面。" if hit else "去任务栏找一下它的窗口。"))
+        return False
+
+    if not webview2.installed():
+        _alert("这台机器还缺 WebView2 运行时，窗口显示不出来。\n\n"
+               "它是微软的组件，装一次就行（免费，约 2 MB，装完自动更新）。\n"
+               "点「确定」后会自动打开下载页；装好再双击本程序即可。")
+        try:
+            import webbrowser
+            webbrowser.open(webview2.DOWNLOAD_URL)
+        except Exception as e:
+            print(f"[webview2] 下载页没打开（地址在弹窗里）: {e}", flush=True)
+        return False
+    return True
+
+
 def main() -> None:
     _prepare_user_dir()
     config = load_config()
     window_cfg = config["window"]
     dev_cfg = config["dev"]
+    if not _gate(config):
+        return
     url, base = _pick_url(config)
 
     api = API(base_url=base)
