@@ -8,6 +8,7 @@ import { renderAlbumSkeleton, renderEmpty, renderError } from '../components/sta
 import { renderHero, renderHeroSkeleton } from '../components/hero.js'
 import type { HeroHandle } from '../components/hero.js'
 import { onUnmount } from '../router.js'
+import { waitForApi } from '../webstatus.js'
 import { loadState, pickKey, saveState } from '../store.js'
 import type { AlbumSummary } from '../types.js'
 
@@ -75,6 +76,8 @@ interface CatRow {
   error: string | null
   /** 已经挂过"进视口演一次入场"，重排时别再演 */
   armed: boolean
+  /** 失败已经自动重来过一次，别再没完没了地重试 */
+  retried: boolean
 }
 
 export function boardPage(category: ComicCategory): HTMLElement {
@@ -164,7 +167,7 @@ export function boardPage(category: ComicCategory): HTMLElement {
       row.className = 'album-list cat-row'
       section.append(head, row)
       panelEl.appendChild(section)
-      rows.push({ key, el: section, rowEl: row, items: null, error: null, armed: false })
+      rows.push({ key, el: section, rowEl: row, items: null, error: null, armed: false, retried: false })
     }
   } else {
     gridEl.className = 'album-list reveal'
@@ -175,6 +178,7 @@ export function boardPage(category: ComicCategory): HTMLElement {
   let current: BoardPrefs = prefs
   let hero: HeroHandle | null = null
   let token = 0                 // 每换一次条件加一，晚回来的旧结果直接丢
+  let retries = 0               // 整页失败自动重试的次数（成功后清零）
   let cols = 5
   let state: 'loading' | 'ready' | 'empty' | 'error' = 'loading'
   let errorText = ''
@@ -203,9 +207,53 @@ export function boardPage(category: ComicCategory): HTMLElement {
   /** 让这一块"进视口时演一次虚化入场"；已经演过的就别重演（重排会闪） */
   function armReveal(target: HTMLElement): void {
     target.classList.remove('in')
-    if (reveal) reveal.observe(target)
-    else target.classList.add('in')
+    if (!reveal) {
+      target.classList.add('in')
+      return
+    }
+    reveal.observe(target)
+    // 兜底：IntersectionObserver 得等窗口真的在绘制才会回调（窗口刚起来还没画第一帧、
+    // 被别的窗口整个盖住的时候是不回调的），那样首页就会一直停在模糊态、看着像没加载。
+    // 所以过一小会儿自己量一次，在视口里的就直接亮出来。
+    for (const delay of [400, 1500]) {
+      window.setTimeout(() => {
+        if (!document.contains(target)) return
+        revealSoon(target)
+      }, delay)
+    }
   }
+
+  /** 兜底用：这一刻在视口里就亮出来，还在屏幕外的交给观察器（滚动时再演） */
+  function revealSoon(target: HTMLElement): void {
+    if (target.classList.contains('in')) return
+    const box = target.getBoundingClientRect()
+    const height = window.innerHeight || document.documentElement.clientHeight
+    if (box.top < height && box.bottom > 0) {
+      reveal?.unobserve(target)
+      target.classList.add('in')
+    }
+  }
+
+  /**
+   * 窗口从"没在画"（最小化 / 被别的窗口整个盖住）回到前台：
+   * 把还没亮的横条补亮；页面要是还停在错误上，就当用户"切页回来"了，自己重来一次。
+   */
+  function recover(): void {
+    for (const row of rows) {
+      if (row.armed) revealSoon(row.el)
+    }
+    if (!home && state === 'ready') revealSoon(gridEl)
+    if (state === 'error' || heroEl.querySelector('.hero-error') !== null) {
+      retries = 0                     // 人回来了，再给两次自动重试的机会
+      void load(current.range, current.sort)
+    }
+  }
+
+  const onVisible = (): void => {
+    if (document.visibilityState === 'visible') recover()
+  }
+  document.addEventListener('visibilitychange', onVisible)
+  window.addEventListener('focus', recover)
 
   /** 卡片编号写进 --i，CSS 拿它错开每一张的入场延迟 */
   function stagger(container: HTMLElement): void {
@@ -314,6 +362,14 @@ export function boardPage(category: ComicCategory): HTMLElement {
       row.items = items
     } catch (err) {
       if (my !== token) return
+      // 图源第一次请求容易抖（客户端刚起来 / 缓存是空的），自动补一次再让用户看见失败
+      if (!row.retried) {
+        row.retried = true
+        window.setTimeout(() => {
+          if (my === token && row.items === null) void fillRow(row, my)
+        }, 1500)
+        return
+      }
       row.error = String(err)
     }
     paintRow(row)
@@ -365,6 +421,16 @@ export function boardPage(category: ComicCategory): HTMLElement {
     void load(current.range, current.sort)
   }
 
+  /** 整页挂了、或者首页的 hero 挂了：先自己重来两次（图源冷启动爱抖），两次都还挂才交给用户点 */
+  function scheduleRetry(): void {
+    if (retries >= 2) return
+    retries++
+    window.setTimeout(() => {
+      const stillBroken = state === 'error' || heroEl.querySelector('.hero-error') !== null
+      if (stillBroken) void load(current.range, current.sort)
+    }, 1200 * retries)
+  }
+
   async function load(range: RankRange, sort: SortOrder): Promise<void> {
     current = { range, sort }
     saveState('popular', current)   // 换一次记一次，下次进这一页还是这个榜单
@@ -387,15 +453,21 @@ export function boardPage(category: ComicCategory): HTMLElement {
       row.items = null
       row.error = null
       row.armed = false
+      row.retried = false
       row.el.classList.remove('in')
     }
 
     if (!window.pywebview?.api) {
+      // 首次启动桥偶尔慢半拍：先把话说清楚，同时盯着它，一就绪自己重来一次，
+      // 省得用户自己"切到别的页再切回来"
       heroEl.innerHTML = ''
       state = 'error'
       errorText = 'pywebview api 还没就绪'
       paintPanel()
       showMessage()
+      void waitForApi()
+        .then(() => { if (my === token && state === 'error') void load(current.range, current.sort) })
+        .catch(() => undefined)
       return
     }
 
@@ -407,6 +479,7 @@ export function boardPage(category: ComicCategory): HTMLElement {
       // hero 永远是"当前这一页的分类"最火的三部
       const top = await window.pywebview.api.get_ranking(range, category, 1, sort)
       if (my !== token) return
+      retries = 0
       hero = top.length === 0 ? null : renderHero(heroEl, top.slice(0, 3), (id) => {
         window.location.hash = `#/album?id=${id}`
       })
@@ -430,11 +503,23 @@ export function boardPage(category: ComicCategory): HTMLElement {
       }
     } catch (err) {
       if (my !== token) return
-      state = 'error'
       errorText = String(err)
+      if (home) {
+        // 首页的 hero 挂了不该连累下面各分类：hero 位置上给个重试，横条照铺
+        heroEl.innerHTML = ''
+        renderHeroError(heroEl, errorText, () => void load(current.range, current.sort))
+        state = 'ready'
+        paintPanel()
+        for (const row of rows) void fillRow(row, my)
+        scheduleRetry()
+        return
+      }
+      // 分类页整页就靠这一次请求，挂了就整页重试（先自动来一次，别一上来就让用户点）
+      state = 'error'
       heroEl.innerHTML = ''
       paintPanel()
       showMessage()
+      scheduleRetry()
     }
   }
 
@@ -480,6 +565,8 @@ export function boardPage(category: ComicCategory): HTMLElement {
     hero?.destroy()
     reveal?.disconnect()
     resizeObserver?.disconnect()
+    document.removeEventListener('visibilitychange', onVisible)
+    window.removeEventListener('focus', recover)
     document.removeEventListener('click', closeMenus)
     window.removeEventListener('keydown', onKey)
     window.removeEventListener('keydown', onSlash)
@@ -489,4 +576,18 @@ export function boardPage(category: ComicCategory): HTMLElement {
   void load(prefs.range, prefs.sort)
 
   return el
+}
+
+/** hero 那一条加载失败：别整页塌掉，就在 hero 位置上给一句话 + 重试 */
+function renderHeroError(container: HTMLElement, message: string, retry: () => void): void {
+  const box = document.createElement('p')
+  box.className = 'hero-error'
+  box.textContent = `最火的三部没拉下来：${message.replace(/^Error:\s*/, '')}`
+  const btn = document.createElement('button')
+  btn.type = 'button'
+  btn.className = 'hero-error-btn'
+  btn.textContent = '重试'
+  btn.addEventListener('click', retry)
+  box.appendChild(btn)
+  container.appendChild(box)
 }

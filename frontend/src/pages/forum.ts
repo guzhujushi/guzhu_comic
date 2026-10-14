@@ -1,8 +1,9 @@
 // pages/forum.ts
 // 论坛：全站评论流（只读，不需要登录）。每条评论下面挂一个"来自本子"的封面条，点它进详情。
 import { createIcon, icons } from '../components/icons.js'
-import { renderEmpty, renderError } from '../components/states.js'
+import { renderCommentSkeleton, renderEmpty, renderError } from '../components/states.js'
 import { onUnmount } from '../router.js'
+import { waitForApi } from '../webstatus.js'
 import type { ForumComment } from '../types.js'
 
 export function forumPage(): HTMLElement {
@@ -25,6 +26,8 @@ export function forumPage(): HTMLElement {
   let page = 0                 // 已经取到的页数
   let hasMore = true
   let busy = false
+  let retries = 0              // 首屏失败自动重来的次数
+  let skeletons: HTMLElement[] = []
   let alive = true             // 切走之后晚回来的请求就别碰页面了
   const titles = new Map<string, string>()   // 已经拿到的本子标题
   const asked = new Set<string>()            // 已经问过的本子，别重复问
@@ -34,6 +37,17 @@ export function forumPage(): HTMLElement {
   function setHint(text: string): void {
     hintEl.textContent = text
     hintEl.hidden = !text
+  }
+
+  /** 等图源的时候铺几行假评论：这条要等十几秒，什么都不铺就像"论坛是空的" */
+  function showSkeletons(count: number): void {
+    clearSkeletons()
+    skeletons = renderCommentSkeleton(listEl, count)
+  }
+
+  function clearSkeletons(): void {
+    for (const el of skeletons) el.remove()
+    skeletons = []
   }
 
   /** 摊开一页：封面条先拿 JM<id> 顶住，标题下一秒后台补上 */
@@ -73,19 +87,26 @@ export function forumPage(): HTMLElement {
     if (busy) return
     const api = window.pywebview?.api
     if (!api) {
+      // 桥慢半拍就这样：先提示 + 给个重试按钮，同时盯着桥，就绪了自己接上
       renderError(listEl, 'pywebview api 还没就绪', () => {
         listEl.innerHTML = ''
         void load()
       })
+      void waitForApi()
+        .then(() => { if (alive && skeletons.length === 0 && page === 0) { listEl.innerHTML = ''; void load() } })
+        .catch(() => undefined)
       return
     }
     busy = true
     moreBtn.disabled = true
     moreBtn.textContent = '加载中…'
     setHint('')
+    showSkeletons(page === 0 ? 5 : 3)
     try {
       const data = await api.get_forum(page + 1)
       if (!alive) return
+      clearSkeletons()
+      retries = 0
       page++
       hasMore = data.has_more && data.items.length > 0
       if (page === 1 && data.items.length === 0) {
@@ -96,9 +117,17 @@ export function forumPage(): HTMLElement {
       paint(data.items)
     } catch (err) {
       if (!alive) return
+      clearSkeletons()
       const message = String(err).replace(/^Error:\s*/, '')
       if (page === 0) {
-        // 第一页就没拿到：整页给个重试，别的什么都不铺
+        // 首屏失败先自己重来两次（图源冷启动爱抖），还不行再让用户点重试
+        if (retries < 2) {
+          retries++
+          hasMore = false   // 自动重试期间"加载更多"先收起来（finally 里会按它设 hidden）
+          setHint(`图源没响应，正在重试（第 ${retries} 次）…`)
+          window.setTimeout(() => { if (alive) void load() }, 1500 * retries)
+          return
+        }
         hasMore = false
         renderError(listEl, message, () => {
           listEl.innerHTML = ''

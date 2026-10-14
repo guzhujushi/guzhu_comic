@@ -47,6 +47,23 @@ export function renderError(container: HTMLElement, message: string, retry?: () 
 }
 
 /** 卡片列表的占位：用假的卡片骨架顶住布局，别让页面先塌一下再跳 */
+/** 评论流的占位：图源第一次响应能等十几秒，这会儿不能什么都不铺，不然看着像"论坛是空的" */
+export function renderCommentSkeleton(container: HTMLElement, count = 5): HTMLElement[] {
+  const made: HTMLElement[] = []
+  for (let i = 0; i < count; i++) {
+    const el = document.createElement('article')
+    el.className = 'comment comment-skeleton'
+    el.innerHTML = `
+      <div class="skeleton sk-line short"></div>
+      <div class="skeleton sk-line"></div>
+      <div class="skeleton sk-line"></div>
+    `
+    container.appendChild(el)
+    made.push(el)
+  }
+  return made
+}
+
 export function renderAlbumSkeleton(container: HTMLElement, count = 10): void {
   container.innerHTML = Array.from({ length: count }, () => `
     <div class="album-skeleton">

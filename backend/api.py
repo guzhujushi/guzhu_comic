@@ -106,7 +106,11 @@ class API:
         self._ranking_ttl = _cfg_int(cfg["cache"]["ranking_ttl"], 3600, 0, 30 * 86400)
         self._comment_ttl = _cfg_int(cfg["cache"]["comment_ttl"], 600, 0, 30 * 86400)
 
-        self.client = JmOption.default().new_jm_client()
+        # jmcomic 建客户端时要连图源（更新域名、拉 setting），图源抖一下这一步就能卡十几秒。
+        # 所以挪到"第一次真要数据"的时候再做（见下面 client 属性），窗口立刻就能起来，
+        # 页面上先看骨架，别让人对着一个还没出现的窗口发呆。
+        self._client_lock = threading.Lock()
+        self._client = None
         self._init_db()
         self.img_base = self._start_img_server()
         self._last_photo_id = ""   # 最近打开的章节，清理缓存时留着别删
@@ -114,7 +118,25 @@ class API:
         # （这个锁只保护下面那个登记表，不串行化下载本身）
         self._dl_batch_lock = threading.Lock()
         self._dl_photo_ids: set[str] = set()
+        # 开窗的同时后台先把图源连上（更新域名、拉 setting 那一步可能要十几秒），
+        # 这样窗口立刻就能出来，首页第一次要数据时也不用干等
+        threading.Thread(target=self._warm_client, daemon=True).start()
         threading.Thread(target=self._cache_loop, daemon=True).start()
+
+    @property
+    def client(self):
+        """jmcomic 客户端：第一次用到时才建（连图源那一步别挡着开窗）"""
+        with self._client_lock:
+            if self._client is None:
+                self._client = JmOption.default().new_jm_client()
+            return self._client
+
+    def _warm_client(self) -> None:
+        """后台预热图源连接；连不上就算了，等页面自己重试"""
+        try:
+            self.client
+        except Exception as e:
+            print(f"[warmup] 图源没连上，交给页面重试: {e}", flush=True)
 
     def _init_db(self) -> None:
         """建目录建库，并迁移老版本的单一 app.db"""

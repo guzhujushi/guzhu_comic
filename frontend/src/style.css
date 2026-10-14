@@ -611,6 +611,11 @@ album-card .album-sub { display: block; color: var(--faint); font-size: 12px; ma
   transition-delay: calc(var(--i, 0) * 55ms);
 }
 
+/* 首页 hero 拉失败时那一行提示（别让整个首页跟着塌掉） */
+.hero-error { margin: 0 0 20px; padding: 14px 16px; text-align: center; font-size: 13px; color: var(--muted); background: var(--surface); border: 1px dashed var(--border); border-radius: var(--radius); }
+.hero-error-btn { margin-left: 10px; padding: 4px 12px; font-size: 12px; color: var(--text); background: var(--surface-2); border: 1px solid var(--border); border-radius: 999px; }
+.hero-error-btn:hover { background: var(--surface-3); border-color: var(--border-strong); }
+
 /* 分类页：返回 + 「加载更多」 */
 .cat-back { margin: 0 0 10px; }
 .load-more { display: flex; justify-content: center; align-items: center; margin: 20px 0 0; }
@@ -793,6 +798,11 @@ album-card .album-sub { display: block; color: var(--faint); font-size: 12px; ma
 .comment-more:hover { color: var(--text); border-color: var(--border-strong); }
 .comment-more[hidden] { display: none; }
 .comment-hint { margin: 0; color: var(--faint); font-size: 12px; }
+
+/* 评论骨架：复用 .skeleton 的呼吸，只在评论流里铺三行假文字 */
+.comment-skeleton .sk-line { height: 12px; margin: 0 0 8px; }
+.comment-skeleton .sk-line.short { width: 38%; }
+.comment-skeleton .sk-line:last-child { margin-bottom: 0; }
 
 /* ============ 论坛：全站评论流 ============ */
 /* 评论卡复用详情页评论区那一套（.comment / .comment-head / .comment-text 等），
