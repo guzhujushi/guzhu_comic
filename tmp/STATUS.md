@@ -16,6 +16,7 @@
 - [x] B4 本地收藏 + 「我的收藏」页（**不登录**：本地 sqlite 表 + 详情页心形 + `#/favorites`）（2026-10-13）
 - [x] 热门榜单改版：按分类分区（每类一行 / 右侧「更多」进分类页 / 卡片虚化入场 / 分类标签条与面板接成一块）（2026-10-13）
 - [x] 卡片悬浮手感：鼠标悬停再放大一点 + 加阴影（2026-10-13）
+- [x] 首页 hero 去重：hero 展示的那三部，下面的推荐段与各分类横条里不再出现（2026-10-14）
 - [x] 首进首页空白**真根因**修复：`API.client` / `API.download_dir` 是**公开**属性 → pywebview 注入桥时 `dir()`+`getattr()` 把它们递归展开（447 条，还现场把 jmcomic 客户端建出来 0.855s）→ 两步注入窗口被拉到秒级、WebView2 又注两遍 → 第二遍重建在飞回调表 → promise 永不 settle → `await loadSettings()` 挂死、**整窗空白**。改名 `_jm` / `_download_dir`（35 条 / 0.000s，桥就绪 ~100ms）；前端补 `waitForBridge` 静默窗 + `bridgeCall`（2026-10-14）
 - [x] 首进首页缺失修复：「为你推荐 / 热门推荐」段与左下角「继续阅读」卡**冷启动自愈** —— 启动闸门改成等桥**挂好方法**（`waitForBridge`）+ 这两块各自失败重试；闸门的「安静窗」改为按**方法引用变化**判重注入（只听 `pywebviewready` 会漏），`quietMs` 400→800（2026-10-14）
 - [x] 首屏 / 论坛「加载不出来」修复：客户端懒加载 + 后台预热、虚化入场兜底、失败自动重试、窗口回前台自愈（2026-10-14）
@@ -37,6 +38,30 @@
 - [x] 导航栏「设置」移到底部左下角 + 新增「关于」页（`#/about`：能干什么 / 怎么用 / 数据在哪，README 的用户视角精简版）（2026-10-14）
 - [ ] 打包 P0 落码（待办）：`backend/paths.py` + `backend/server.py` + `main.py` 起静态服务 + `config.yaml` 的 `dev.use_dev_server` / `server.port` + `private_mode=False, storage_path=~/.jmreader/webview`
 - [ ] 打包 P1（待办）：256×256 的 `.ico` 源图、单实例检测、WebView2 Runtime 缺失提示、日志落盘 `~/.jmreader/logs/`
+
+## 首页 hero 去重 改动清单（2026-10-14）
+
+用户要求：**hero 展示的漫画不要在下面再出现一次**。首页 DOM 顺序是 hero → 面板（推荐段 → 各分类横条），
+所以"下面"这两块都要去重。**还没打包**。
+
+- `frontend/src/pages/board.ts`：
+  - 新增 `dropHero(items)`：在**取回来的整页里**先剔掉 hero 那几部、再切前 `--cols` 张
+    （切完再过滤的话横条会短一截，看着像少了一部；多出来的候选正好补上空位）。`fillRow()` 统一走它，
+    所以 `paintRow()` 与 `warmVisible()`（预热）看到的是同一份名单。
+  - 推荐段建起来时把 hero 的 ID 透过去：`createRecommendSection('home', () => heroIds)`；
+    `rec?.load()` **从"开始加载就调"挪到 hero 落定之后**（拿到那三部才有得避开），
+    hero 挂了（`renderHeroError` 那条路）也照常调一次 —— 没有要避开的 ID，不能连它一起没了。
+- `frontend/src/components/recommend.ts`：`createRecommendSection(kind, shownAbove?)` ——
+  `shownAbove()` 返回"页面上方已经展示过的 ID"，跟内部 `shown`（「换一批」用的）**并起来**当
+  `get_recommendations` 的 `exclude`。后端是在**打分之前**剔候选的，所以去重不掉张数。
+- **验收**：`tsc --noEmit` + `npm run build` exit 0；新回归 `tmp/_check_hero_dedupe.py`
+  （无头 Chrome + 假桥，故意喂重叠榜单：hero 取 H1/H2/H3，同人那一行前三部也正好是 H1/H2/H3）
+  **PASS** —— hero = H1/H2/H3、五条横条一个 H 都没有且同人那行**没被削短**（D4…D8 五张，跟别的行一样）、
+  推荐段收到的 `exclude` 正好是 H1/H2/H3、铺出来的卡里没有 H。
+  **反向对照**：把 `dropHero` 的 skip 集合临时置空 + 去掉 `shownAbove` 再 build 一份，同一脚本
+  FAIL（同人横条出现 H2/H1/H3、推荐段 `exclude` 为空、推荐卡里出现 H1/H2/H3）—— 证明这个脚本抓得住。
+  真窗口 `tmp/_probe_bridge.py` 也加了一项 `heroVsBelow`：真图源跑两趟都是 `{hero: 3, dup: []}`。
+  其余回归 `_check_coldstart.py` / `_check_bridge_wipe.py` / `_check_nav.py` 全 PASS。
 
 ## 首进首页「整窗空白」：闸门按方法引用判重注入 改动清单（2026-10-14）
 
@@ -508,6 +533,7 @@
 - **2026-10-14**：详情页标题 / 作者 / 观看收藏数 / 标签的实色底**写死颜色**，不用 `--bg` 变量：毛玻璃开着时
   那套变量是半透明的，拿它垫等于没垫。
 
+- **2026-10-14**：首页 hero 与下面的推荐段 / 分类横条**去重**（用户要求）：在**取回来的整页里**剔、再切前 `--cols` 张（切完再剔会把横条削短）；去重名单由 `board.ts` 持有（`heroIds`），推荐段通过 `shownAbove()` 拿 —— 所以**推荐段的 `load()` 必须等 hero 落定才调**（早调拿到的是空名单，等于没去重）。
 - **2026-10-14**：判断 pywebview「又注入了一遍」**别只听 `pywebviewready`**，看**方法引用变没变**（`_createApi()` 每次都 `new Function()`）：事件有可能在我们的监听挂上之前就派发完了（桥比脚本先就绪），那种情况下"最近一次注入"无从得知，闸门会当场放行。`waitForBridge` 的 `quietMs` 取 **800ms**（实测两遍最多差 ~400ms）；等它的代价是 0 —— 闪屏要等首页铺完（`splashReady`）才揭幕。
 - **2026-10-14**：真窗口验证**用真的 pywebview**（`tmp/_probe_bridge.py`，三路仪器打时间线），别只信无头 Chrome 里的假桥 —— 这个 bug 恰恰只在真桥「注两遍」的时序里现形。
 - **2026-10-14**：开场动画**写死在 `index.html` 里**（内联 HTML + CSS + SVG），不放 `main.ts`：它是唯一“早于应用 JS”的位置，dev 态模块图那几百 ms 里就已经在画了。
@@ -552,6 +578,7 @@
    导出成文件包。
 
 
+4.5 ~~**首页 hero 去重**~~ —— **2026-10-14 已完成**（见上面那份改动清单）：推荐段与分类横条都不再出现 hero 那三部。
 5. ~~**推荐段健壮性**~~ —— **2026-10-14 已修，并查到了真正的根因**（闸门另按方法引用判重注入、`quietMs=800`，见上面那份改动清单）：pywebview 启动会注两遍桥，第二次 `_createApi()` 重建在飞回调表 → 那些 promise 永不 settle → `await loadSettings()` 挂死、整窗空白。根因在后端 `API.client` / `API.download_dir` 是公开属性（被递归展开成 447 条、现场建客户端 0.855s，把两步窗口拉到秒级），已改私有名；前端配 `waitForBridge` 静默窗 + `bridgeCall` 重试。回归：`tmp/_check_coldstart.py`（假桥晚挂方法）、`tmp/_check_bridge_wipe.py`（模拟注两遍）。还想要的（可选）：候选池真空时兜底用榜单数据铺热度。
 6. ~~开场动画~~ —— **2026-10-14 已完成**（设计 `tmp/开场动画设计.md`，调研 `tmp/开场动画调研.md`）。真机验收两件事：① 现在的落位是「字标取代 `孤竹漫画` 整行，下面 `Guzhu Comic` 不动」，若要的是只换掉「孤竹」留下「漫画」（`GuZhu漫画`），改一处文案即可；② 毛玻璃开着时开场那一下的底色（设计稿 §3.4）。
 

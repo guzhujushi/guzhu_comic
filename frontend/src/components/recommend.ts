@@ -15,7 +15,17 @@ export interface RecommendSection {
   load(): void
 }
 
-export function createRecommendSection(kind: 'home' | 'search'): RecommendSection {
+/**
+ * `shownAbove`（可选）：页面上方已经展示过的 ID（首页就是 hero 那几部）—— 这一段不再给这些，
+ * 免得同一部书上下各出现一次。
+ *
+ * **首页要等 hero 请求回来之后再调 `load()`**（见 `board.ts`）：早调的话这里拿到的是空名单，
+ * 去重就落空了。候选池是在**打分之前**就把这些剔掉的（`get_recommendations` 的 `exclude`），
+ * 所以剔掉几部不影响这一段铺满一行。
+ */
+export function createRecommendSection(
+  kind: 'home' | 'search', shownAbove?: () => string[],
+): RecommendSection {
   const el = document.createElement('section')
   el.className = 'cat-section rec-section'
   el.hidden = true
@@ -88,7 +98,8 @@ export function createRecommendSection(kind: 'home' | 'search'): RecommendSectio
       renderAlbumSkeleton(row, kind === 'home' ? 5 : 6)
     }
     try {
-      const page: RecommendPage = await bridgeCall('get_recommendations', [kind, undefined, shown])
+      const exclude = shownAbove ? [...shown, ...shownAbove()] : shown
+      const page: RecommendPage = await bridgeCall('get_recommendations', [kind, undefined, exclude])
       const items = page?.items ?? []
       if (items.length === 0) {
         if (painted === 0) retryLater()       // 候选池还冷：留着骨架再试，三次都空才藏

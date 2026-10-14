@@ -95,7 +95,13 @@ DOM_SCRIPT = "JSON.stringify({" \
     "appKids: document.querySelectorAll('#app > *').length," \
     "rec: (function(){var r=document.querySelector('.rec-section'); return r ? (r.hidden ? 'hidden' : 'shown') : 'none';})()," \
     "recCards: document.querySelectorAll('.rec-section album-card').length," \
-    "resume: (function(){var r=document.querySelector('.nav-resume'); return r ? (r.hidden ? 'hidden' : 'shown') : 'none';})()" \
+    "resume: (function(){var r=document.querySelector('.nav-resume'); return r ? (r.hidden ? 'hidden' : 'shown') : 'none';})()," \
+    "heroVsBelow: (function(){" \
+    "var hero=[].map.call(document.querySelectorAll('.hero-title'),function(n){return n.textContent.trim()});" \
+    "var dup=[];" \
+    "document.querySelectorAll('.rec-row album-card p').forEach(function(p){var t=p.textContent.trim();if(hero.indexOf(t)>=0)dup.push('rec:'+t)});" \
+    "document.querySelectorAll('.cat-section:not(.rec-section) album-card p').forEach(function(p){var t=p.textContent.trim();if(hero.indexOf(t)>=0)dup.push('row:'+t)});" \
+    "return {hero:hero.length,dup:dup};})()" \
     "})"
 
 
@@ -155,6 +161,7 @@ print("SUMMARY " + json.dumps({
     "returnValueOk": sorted({d for t, k, d in ev if k == "return-value-ok"}),
     "returnValueFAIL": [(t, d[:40]) for t, k, d in ev if k == "return-value-FAIL"],
     "missingApi": [d for t, k, d in ev if k == "missing-api"],
+    "heroVsBelow": (dom or {}).get("heroVsBelow") if isinstance(dom, dict) else None,
     "dom": dom if dom is not None else OUT.get("dom"),
     "domErr": OUT.get("dom_err"),
 }, ensure_ascii=False), flush=True)

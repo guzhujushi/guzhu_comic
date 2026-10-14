@@ -150,7 +150,8 @@ export function boardPage(category: ComicCategory): HTMLElement {
   panelEl.appendChild(boardMsgEl)
 
   // 推荐段：面板里第一段（各分类横条之前）。铺不出来就整段不出现（见 recommend.ts）
-  const rec = home ? createRecommendSection('home') : null
+  // 首页这一段就在 hero 下面：把 hero 那几部排除掉，同一部书别上下各出现一次（2026-10-14）
+  const rec = home ? createRecommendSection('home', () => heroIds) : null
   if (rec) panelEl.insertBefore(rec.el, boardMsgEl.nextSibling)
 
   const rows: CatRow[] = []
@@ -379,12 +380,23 @@ export function boardPage(category: ComicCategory): HTMLElement {
     warmAlbumList(ids)
   }
 
+  /**
+   * hero 已经摆在最上面了，下面这些横条里就别再出现同一部（2026-10-14 用户要求）。
+   * 在**取回来的整页里**先剔掉、再切前 `--cols` 张（切完再过滤的话，一条横条会短一截，
+   * 看着像少了一部）；多出来的候选正好把空位补上。
+   */
+  function dropHero(items: AlbumSummary[]): AlbumSummary[] {
+    if (heroIds.length === 0) return items
+    const skip = new Set(heroIds)
+    return items.filter((item) => !skip.has(item.id))
+  }
+
   /** 一个分类的请求：首页各拉各的，谁先回来谁先铺，不互相等 */
   async function fillRow(row: CatRow, my: number): Promise<void> {
     try {
       const items = await bridgeCall('get_ranking', [current.range, row.key, 1, current.sort])
       if (my !== token) return
-      row.items = items
+      row.items = dropHero(items)
     } catch (err) {
       if (my !== token) return
       // 图源第一次请求容易抖（客户端刚起来 / 缓存是空的），自动补一次再让用户看见失败
@@ -512,7 +524,7 @@ export function boardPage(category: ComicCategory): HTMLElement {
     applyCols()
     renderHeroSkeleton(heroEl)
     paintPanel()
-    rec?.load()
+    // 推荐段（rec?.load()）等 hero 落定再开 —— 它要用 hero 那几部的 ID 去重（见下面两处调用）
 
     try {
       // hero 永远是"当前这一页的分类"最火的三部
@@ -524,6 +536,7 @@ export function boardPage(category: ComicCategory): HTMLElement {
       })
       if (top.length === 0) heroEl.innerHTML = ''
       heroIds = top.slice(0, 3).map((item) => item.id)
+      rec?.load()            // hero 落定了：推荐段现在知道该避开哪几部
       warmVisible()
 
       if (top.length === 0) {         // 这一页整块没数据，别留一片空白
@@ -554,6 +567,7 @@ export function boardPage(category: ComicCategory): HTMLElement {
         renderHeroError(heroEl, errorText, () => void load(current.range, current.sort))
         state = 'ready'
         paintPanel()
+        rec?.load()          // hero 没出来：没有要避开的 ID，这一段照常铺
         void fillRows(my)
         scheduleRetry()
         return
