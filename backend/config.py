@@ -17,6 +17,9 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "min_size": [800, 600],
         "glass": "acrylic",   # none / mica / acrylic / tabbed（Win11 22H2+）
         "glass_opacity": 0.92,
+        "remember_geometry": True,   # 关窗那一刻记下位置与大小，下次开窗照着摆
+        # 上次的位置与大小 [x, y, 宽, 高]；不是给人填的，由 backend/desktop.py 在关窗时写
+        "last_geometry": [],
     },
     "dev": {
         "url": "http://localhost:5173",
@@ -61,6 +64,21 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "enabled": True,     # 开窗先播「GuZhu」描字动画（内联在 index.html 里，改完要重开窗口）
         "min_ms": 1950,      # 最早揭幕：从页面开始加载算起（描字 1500 + 停留 450 就是 1950）
         "max_ms": 3000,      # 硬上限：到点必揭，宁可露出骨架也不把启动拖在这
+    },
+    # 前端热更新通道：只更"页面与素材"（~/.jmreader/web 覆盖层），exe 一行都不碰。
+    # 详见 backend/updater.py 与 tmp/交接文档.md §9。
+    "update": {
+        "enabled": True,
+        "url": "https://code.guzhujushi.cn/guzhujushi/guzhu_comic/raw/branch/main/web",
+        "auto": True,      # 开窗后自动查一次（只在界面上提示，装不装由用户点）
+    },
+    # 桌面集成（Windows）：托盘 / 系统通知 / 开机自启 / 全局快捷键
+    "desktop": {
+        "notify": True,
+        "tray": True,
+        "autostart": False,
+        "hotkeys": False,
+        "hotkey_toggle": "Ctrl+Alt+G",
     },
     "cache": {
         "photo_ttl": 86400,

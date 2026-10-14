@@ -32,3 +32,5 @@ build_out/
 build_work/
 tmp/_exe/
 tmp/_exe_verify/
+# 前端热更产物（scripts/publish_frontend.ps1 的输出：整包 + manifest，往更新地址上传）
+web_dist_out/

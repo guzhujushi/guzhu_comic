@@ -20,6 +20,10 @@ DATA_DB = DATA_DIR / "app.db"
 CACHE_DIR = APP_DIR / "cache"
 CACHE_DB = CACHE_DIR / "cache.db"
 IMG_DIR = CACHE_DIR / "images"
+# 前端热更新的覆盖层：包内 dist 是只读的（Program Files / 只读盘都可能有），所以"更新下来的
+# 前端"放用户目录，静态服务每请求解析一次 —— 用哪个根由这里说了算（见 web_dist_dir）。
+WEB_DIR = APP_DIR / "web"
+
 # WebView2 的 user data：不固定在这儿的话 pywebview 每次开窗都用临时目录，localStorage 里的
 # 主题 / 榜单偏好就活不过一次重启（见 tmp/打包分发设计.md §1 第 4 条）
 WEBVIEW_DIR = APP_DIR / "webview"
@@ -48,6 +52,17 @@ def config_path() -> Path:
 def dist_dir() -> Path:
     """前端产物：打包时 `--add-data "frontend/dist;dist"` 落到 <exe>/_internal/dist"""
     return (bundle_dir() / "dist") if is_frozen() else (bundle_dir() / "frontend" / "dist")
+
+
+def web_dist_dir() -> Path:
+    """
+    这次该喂哪一份前端：用户目录里的覆盖层（热更新下来的）**优先**，没有就用包内那份。
+
+    每请求调用一次（见 backend/server.py），所以更新完只要刷新页面就生效，不用重启窗口。
+    """
+    if (WEB_DIR / "index.html").is_file():
+        return WEB_DIR
+    return dist_dir()
 
 
 def resolve_download_dir(raw: Any) -> Path:

@@ -4,8 +4,8 @@ import type { IconInput } from 'morphicons/element'
 import {
   ArrowLeft, BadgeInfo, BookOpen, Check, ChevronDown, ChevronLeft, ChevronRight, ChevronUp, CircleCheck,
   Clock, Database, Download, Eraser, Flame, HardDriveDownload, Heart, HeartPulse, Info, List, Loader,
-  MessageSquareText, MessagesSquare, Moon, Pause, Play, RefreshCw, Save, Search, SearchCheck, Settings,
-  SlidersHorizontal, Sun, Trash2, TrendingUp, Watch, X,
+  FolderOpen, MessageSquareText, MessagesSquare, Moon, Pause, Play, RefreshCw, Save, ScrollText,
+  Search, SearchCheck, Settings, SlidersHorizontal, Sun, Trash2, TrendingUp, Upload, Watch, X,
 } from 'lucide'
 
 defineMorphIcon()
@@ -49,6 +49,11 @@ export const icons = {
   forumOn: MessageSquareText,
   themeDark: Moon,
   themeLight: Sun,
+  // 设置页后加的那几块（版本 / 磁盘 / 日志 / 导入导出）
+  folder: FolderOpen,
+  log: ScrollText,
+  upload: Upload,
+  update: RefreshCw,
 } as const
 
 export type IconName = keyof typeof icons

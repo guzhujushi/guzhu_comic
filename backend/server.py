@@ -89,18 +89,32 @@ class _QuietHandler(SimpleHTTPRequestHandler):
 
 
 def start_static_server(dist: Path, extra_roots: dict[str, Path] | None = None,
-                        port: int = DEFAULT_PORT) -> str:
+                        port: int = DEFAULT_PORT, overlay: Path | None = None) -> str:
     """
     起服务并返回 base url（形如 http://127.0.0.1:47753）。
 
     端口首选 47753，被占就往后试到 47760，全被占才退回 0（系统随机）。回退有副作用：
     页面 origin 一变，WebView2 里那个 origin 的 localStorage 就是另一份，用户会觉得
     「主题 / 偏好被重置了」—— 所以换端口这件事要打一行日志，别让它悄没声地发生。
+
+    `overlay` 是前端热更新的覆盖层（`~/.jmreader/web`）：**每个请求**都重挑一次根 ——
+    覆盖层里有 index.html 就用它，否则用包内 dist。所以要热更新前端，下完刷新页面就行，
+    不用重启窗口（换根这件事发生在进程里，端口 / origin 都不变，localStorage 也就没动）。
     """
     roots = dict(extra_roots or {})
 
+    def _pick_root() -> Path:
+        if overlay is not None and (overlay / "index.html").is_file():
+            return overlay
+        return dist
+
     class _Handler(_QuietHandler):
         extra_roots = roots
+
+        def translate_path(self, path: str) -> str:
+            # 换根只在这一处：SimpleHTTPRequestHandler 每次翻译路径都现读 self.directory
+            self.directory = str(_pick_root())
+            return super().translate_path(path)
 
     handler = partial(_Handler, directory=str(dist))
     for candidate in list(range(port, port + 8)) + [0]:

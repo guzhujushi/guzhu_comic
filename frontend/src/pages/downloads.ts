@@ -28,11 +28,13 @@ export function downloadsPage(): HTMLElement {
       <h1 class="page-title">我的下载</h1>
       <p class="page-sub">存在本机的离线副本，清缓存、断网都能看；没下完的会接着下</p>
     </header>
+    <p class="dl-summary"></p>
     <p class="dl-error" hidden></p>
     <div class="album-list"></div>
   `
 
   const listEl = el.querySelector<HTMLDivElement>('.album-list')!
+  const summaryEl = el.querySelector<HTMLElement>('.dl-summary')!
   const errorEl = el.querySelector<HTMLParagraphElement>('.dl-error')!
   const cells = new Map<string, Cell>()
   let tasks: DownloadTask[] = []
@@ -48,18 +50,57 @@ export function downloadsPage(): HTMLElement {
 
   const clean = (err: unknown): string => String(err).replace(/^Error:\s*/, '')
 
-  /** 话数进度那一句 */
+  /** 话数进度那一句（在跑的时候把图片张数也带上：一话几十张，光看话数像不动） */
   function progressLine(task: DownloadTask): string {
     const held = `${task.done}/${task.total} 话`
     if (task.state === 'done') return `已下载 ${task.total} 话`
     if (task.state === 'paused') return `已暂停（${held}）`
     if (task.state === 'error') return `下到 ${held}，还有没下完的`
-    return `下载中 ${held}`
+    const images = task.images_total ? ` · 图 ${task.images_done}/${task.images_total}` : ''
+    return `下载中 ${held}${images}`
+  }
+
+  const humanSpeed = (bps: number): string => {
+    if (!bps || bps < 0) return ''
+    if (bps < 1024) return `${bps.toFixed(0)} B/s`
+    if (bps < 1024 * 1024) return `${(bps / 1024).toFixed(0)} KB/s`
+    return `${(bps / 1024 / 1024).toFixed(2)} MB/s`
+  }
+
+  const humanEta = (seconds: number): string => {
+    if (!seconds || seconds < 0) return ''
+    if (seconds < 60) return `${Math.round(seconds)} 秒`
+    if (seconds < 3600) return `${Math.round(seconds / 60)} 分钟`
+    return `${(seconds / 3600).toFixed(1)} 小时`
+  }
+
+  /** 速度与剩余时间（后端现算：算不出来就是空，别写个假数字） */
+  function speedLine(task: DownloadTask): string {
+    if (!task.running || !task.speed_bps) return ''
+    return [humanSpeed(task.speed_bps), task.eta_s ? `剩约 ${humanEta(task.eta_s)}` : '']
+      .filter(Boolean)
+      .join(' · ')
   }
 
   function subtitle(task: DownloadTask): string {
     const read = task.read ? `读到第 ${task.read.page_index + 1} 页` : ''
-    return read ? `${progressLine(task)} · ${read}` : progressLine(task)
+    return [progressLine(task), speedLine(task), read].filter(Boolean).join(' · ')
+  }
+
+  /** 离线副本一共占多少、这块盘还剩多少（只在任务集合变了的时候问一次，别跟着轮询刷） */
+  async function refreshDisk(): Promise<void> {
+    const api = window.pywebview?.api
+    if (!api?.get_disk_usage) return
+    try {
+      const disk = await api.get_disk_usage()
+      const total = disk.download_mb >= 1024
+        ? `${(disk.download_mb / 1024).toFixed(2)} GB`
+        : `${disk.download_mb} MB`
+      const free = disk.free_mb === null ? '' : `，这块盘还剩 ${(disk.free_mb / 1024).toFixed(0)} GB`
+      summaryEl.textContent = `离线副本共 ${total}（${disk.offline_chapters} 话）${free}`
+    } catch {
+      summaryEl.textContent = ''    // 取不到就不显示，不拿这个烦人
+    }
   }
 
   function badgeText(task: DownloadTask): string {
@@ -162,6 +203,7 @@ export function downloadsPage(): HTMLElement {
     if (ids !== renderedIds) {
       renderedIds = ids
       paint()
+      void refreshDisk()      // 任务集合变了：离线副本总量也可能变了
       return
     }
     for (const task of tasks) paintCell(task)

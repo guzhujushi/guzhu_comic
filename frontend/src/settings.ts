@@ -9,6 +9,9 @@ export interface AppSettings {
     min_size: number[]
     glass: 'none' | 'mica' | 'acrylic' | 'tabbed'
     glass_opacity: number
+    remember_geometry: boolean
+    /** 上次的位置与大小 [x, y, 宽, 高]：不是给人填的，关窗时由后端写 */
+    last_geometry: number[]
   }
   dev: { url: string; use_dev_server: boolean; debug: boolean }
   server: { port: number }
@@ -53,6 +56,20 @@ export interface AppSettings {
     max_size_mb: number
     cleanup_interval: number
   }
+  /** 前端热更新通道（只更前端：装完刷新页面即生效，exe 不动） */
+  update: {
+    enabled: boolean
+    url: string
+    auto: boolean
+  }
+  /** 桌面集成：系统通知 / 托盘 / 开机自启 / 全局快捷键 */
+  desktop: {
+    notify: boolean
+    tray: boolean
+    autostart: boolean
+    hotkeys: boolean
+    hotkey_toggle: string
+  }
 }
 
 /** 和后端 DEFAULT_CONFIG 保持一致：桥没就绪或读失败时兜底，别让页面直接炸 */
@@ -60,6 +77,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   window: {
     title: 'Guzhu Comic', width: 1200, height: 800, min_size: [800, 600],
     glass: 'none', glass_opacity: 0.92,   // 浏览器里没有 DWM，兜底不要玻璃
+    remember_geometry: true, last_geometry: [],
   },
   dev: { url: 'http://localhost:5173', use_dev_server: false, debug: false },
   server: { port: 47753 },
@@ -76,6 +94,12 @@ export const DEFAULT_SETTINGS: AppSettings = {
     photo_ttl: 86400, album_ttl: 86400, search_ttl: 3600, ranking_ttl: 3600, comment_ttl: 600,
     max_size_mb: 2048, cleanup_interval: 600,
   },
+  update: {
+    enabled: true,
+    url: 'https://code.guzhujushi.cn/guzhujushi/guzhu_comic/raw/branch/main/web',
+    auto: true,
+  },
+  desktop: { notify: true, tray: true, autostart: false, hotkeys: false, hotkey_toggle: 'Ctrl+Alt+G' },
 }
 
 let cached: AppSettings | null = null
@@ -101,6 +125,8 @@ export async function loadSettings(force = false): Promise<AppSettings> {
       recommend: { ...DEFAULT_SETTINGS.recommend, ...raw.recommend },
       download: { ...DEFAULT_SETTINGS.download, ...raw.download },
       cache: { ...DEFAULT_SETTINGS.cache, ...raw.cache },
+      update: { ...DEFAULT_SETTINGS.update, ...raw.update },
+      desktop: { ...DEFAULT_SETTINGS.desktop, ...raw.desktop },
     }
   } catch (err) {
     console.error('读配置失败，用默认值', err)

@@ -28,41 +28,6 @@ def _cfg_float(value: Any, default: float, lo: float, hi: float) -> float:
     return max(lo, min(hi, n))
 
 
-def _setting_int(value: Any, lo: int, hi: int, name: str) -> int:
-    """设置页提交的整数，非法直接报错"""
-    try:
-        n = int(float(value))
-    except (TypeError, ValueError):
-        raise ValueError(f"{name}要填数字") from None
-    if not (lo <= n <= hi):
-        raise ValueError(f"{name}要在 {lo}~{hi} 之间")
-    return n
-
-
-def _setting_float(value: Any, lo: float, hi: float, name: str) -> float:
-    """设置页提交的小数，非法直接报错"""
-    try:
-        n = float(value)
-    except (TypeError, ValueError):
-        raise ValueError(f"{name}要填数字") from None
-    if not (lo <= n <= hi):
-        raise ValueError(f"{name}要在 {lo}~{hi} 之间")
-    return round(n, 2)
-
-
-def _setting_section(settings: dict, name: str, label: str) -> dict:
-    """
-    取设置里的一段。没给就是空（这次保存不动它）；给了但不是映射（手改过 / 老前端发来的
-    `window: 5`）当场报错说清楚 —— 不拦的话下面那句 `"title" in win` 会抛 TypeError 直穿到 JS 桥。
-    """
-    value = settings.get(name)
-    if value is None:
-        return {}
-    if not isinstance(value, dict):
-        raise ValueError(f"{label}那一段要是一个小节（键值对）")
-    return value
-
-
 # 写冲突时等多久（秒）：整本下载逐话写库、界面同时存进度，默认的 5 秒偶尔不够
 DB_TIMEOUT = 15.0
 
@@ -113,6 +78,8 @@ from backend.paths import (APP_DIR, CACHE_DIR, CACHE_DB, DATA_DB, DATA_DIR, IMG_
                            resolve_download_dir)
 # 本地静态服务的基类：图服务与打包后的前端页面共用（打包态是同一个端口）
 from backend.server import _QuietHandler   # noqa: F401
+# 设置项的声明式表（校验与前端表单都靠它）/ 桌面集成（托盘、通知、开机自启…）/ 前端热更新
+from backend import desktop, settings_spec, updater
 
 # 用户目录（~/.jmreader）与只读资源目录都从 backend.paths 来 —— 那里是源码态 / 冻结态的
 # 唯一分叉点。import 进来保持旧名字，api.py 里的用法一行不用改。
@@ -211,6 +178,11 @@ class API:
         self._album_dl_threads: dict[str, threading.Thread] = {}
         self._album_dl_pause: dict[str, threading.Event] = {}   # set = 暂停
         self._album_dl_stop: dict[str, threading.Event] = {}    # set = 任务已删，别再写库
+        # 下载速度 / 剩余时间：只记"这次会话里新下下来多少字节"（按专辑分），
+        # 每个采样点是 (时刻, 累计字节)，窗口 30 秒 —— 界面每 1.5 秒问一次，
+        # 现算就行，不用另外开线程盯着磁盘（见 _dl_speed）。
+        self._dl_bytes_lock = threading.Lock()
+        self._dl_bytes: dict[str, dict[str, Any]] = {}
         # 开窗的同时后台先把图源连上（更新域名、拉 setting 那一步可能要十几秒），
         # 这样窗口立刻就能出来，首页第一次要数据时也不用干等
         threading.Thread(target=self._warm_client, daemon=True).start()
@@ -1036,38 +1008,43 @@ class API:
             if again:
                 self._spawn_download(photo_id, None)   # 这批期间有人要整话，补一次全的
 
-    def _download_images(self, jobs: list[tuple]) -> None:
+    def _download_images(self, jobs: list[tuple], album_id: str | None = None) -> None:
         """并发下载；每张图先写 .part 再改名，中断不留坏文件"""
-        self._download_images_batched(jobs)
+        self._download_images_batched(jobs, album_id=album_id)
 
     def _download_images_batched(self, jobs: list[tuple],
-                                pause: threading.Event | None = None) -> None:
+                                pause: threading.Event | None = None,
+                                album_id: str | None = None) -> None:
         """
         并发下这些图，每批 workers 张。
 
         分批是为了"暂停"能很快生效：`with ThreadPoolExecutor` 会等已提交的任务跑完，
         一次全提交的话暂停得等整话下完（几十张）。批间检查一下，最多多下一批。
+
+        `album_id` 只有整本下载那条路给（缓存补图不给）：下完一张就往这本的字节账上记一笔，
+        界面上的"速度 / 剩余时间"就是从那儿现算的（见 _note_bytes / _dl_speed）。
         """
         jobs = [(img, path) for img, path in jobs if not path.exists()]
         size = max(1, self._dl_workers)
+        worker = partial(self._download_one_retry, album_id=album_id)
         while jobs:
             if pause is not None and pause.is_set():
                 return
             batch, jobs = jobs[:size], jobs[size:]
             with ThreadPoolExecutor(max_workers=size) as pool:
-                list(pool.map(self._download_one_retry, batch))
+                list(pool.map(worker, batch))
 
-    def _download_one_retry(self, job: tuple) -> bool:
+    def _download_one_retry(self, job: tuple, album_id: str | None = None) -> bool:
         """单张图带重试；返回最终有没有拿到文件（退避一下，别按着刚抖的图源猛敲）"""
         attempts = self._dl_retries + 1
         for i in range(attempts):
-            if self._download_one(job):
+            if self._download_one(job, album_id):
                 return True
             if i + 1 < attempts:
                 time.sleep(0.6 * (i + 1))
         return False
 
-    def _download_one(self, job: tuple) -> bool:
+    def _download_one(self, job: tuple, album_id: str | None = None) -> bool:
         """下一张图；失败只删这张的 .part，已经下好的图不动（下次续传只补缺的）"""
         img, path = job
         if path.exists():
@@ -1077,10 +1054,66 @@ class API:
         try:
             self._jm.download_by_image_detail(img, str(tmp))
             tmp.rename(path)
+            self._note_bytes(album_id, path)
             return True
         except Exception:
             tmp.unlink(missing_ok=True)
             return False
+
+    # ---------- 下载速度 / 剩余时间（现算，不开线程） ----------
+
+    _SPEED_WINDOW = 30.0     # 采样窗口（秒）：太短数字乱跳，太长又把"刚才很快"算进来显得虚高
+
+    def _note_bytes(self, album_id: str | None, path: Path) -> None:
+        """一张图落地了：记进这本的字节账（速度 / 剩余时间从这儿现算，见 _dl_speed）"""
+        if not album_id:
+            return
+        try:
+            size = path.stat().st_size
+        except OSError:
+            return
+        now = time.time()
+        with self._dl_bytes_lock:
+            entry = self._dl_bytes.setdefault(str(album_id), {"total": 0, "count": 0, "samples": []})
+            entry["total"] += size
+            entry["count"] += 1
+            samples = entry["samples"]
+            samples.append((now, entry["total"]))
+            cutoff = now - self._SPEED_WINDOW
+            while len(samples) > 2 and samples[0][0] < cutoff:
+                samples.pop(0)
+
+    def _dl_speed(self, album_id: str, done: int, total: int,
+                  state: str) -> tuple[float, float | None, int]:
+        """
+        (每秒字节数, 还要多久（秒）, 这次会话已经下了多少字节)。
+
+        * 没在跑就是 0 / None；刚点下载那一两秒采样点不够，也算不出来（返回 0，界面别显示）；
+        * 只算**这次会话新下的**：以前下的那份不在窗口里（不然续传会显示成一个虚高的速度）；
+        * 剩余时间按"平均一张图多大 × 还剩几张图"估 —— 一话里的图大小能差好几倍，
+          所以这只是一个估算，界面上别写得太斩钉截铁。
+        """
+        if state not in ("queued", "running"):
+            return 0.0, None, 0
+        with self._dl_bytes_lock:
+            entry = self._dl_bytes.get(str(album_id))
+            if not entry:
+                return 0.0, None, 0
+            samples = list(entry["samples"])
+            sent = int(entry["total"])
+            count = int(entry["count"])
+        if len(samples) < 2:
+            return 0.0, None, sent
+        span = samples[-1][0] - samples[0][0]
+        moved = samples[-1][1] - samples[0][1]
+        if span <= 0.2 or moved <= 0:
+            return 0.0, None, sent
+        speed = moved / span
+        eta = None
+        left = max(0, int(total) - int(done))
+        if left and count:
+            eta = (sent / count) * left / speed
+        return round(speed, 1), (round(eta, 1) if eta is not None else None), sent
 
     # ==================== 整本离线下载（data/app.db + download.dir） ====================
     # 一句话：进度就是磁盘上那些文件。续传时不看内存里的计数，只把缺的挑出来补 ——
@@ -1120,14 +1153,18 @@ class API:
         now = time.time()
         with _db(DATA_DB) as conn:
             old = conn.execute(
-                "SELECT added_at FROM download_album WHERE album_id = ?", (aid,)
+                "SELECT added_at, title, cover_url FROM download_album WHERE album_id = ?", (aid,)
             ).fetchone()
             added_at = old[0] if old else now     # 重开一次任务不改"第一次下载"的时间
+            # 这次没带标题 / 封面（比如阅读器里点"下载这一话"）就沿用原来那份：
+            # 直接用空串会把已经存好的本子名抹掉，下载页上就变成"漫画 422866"了
+            book_title = str(title or "").strip() or (str(old[1] or "") if old else "")
+            book_cover = str(cover_url or "").strip() or (str(old[2] or "") if old else "")
             conn.execute(
                 "INSERT OR REPLACE INTO download_album"
                 " (album_id, title, cover_url, total, done, state, error, added_at, updated_at)"
                 " VALUES (?, ?, ?, 0, 0, ?, '', ?, ?)",
-                (aid, str(title or "").strip(), str(cover_url or ""), "queued", added_at, now),
+                (aid, book_title, book_cover, "queued", added_at, now),
             )
             # 已有的话保留原状态：下过的不重下，只把没见过的话加进来
             conn.executemany(
@@ -1208,6 +1245,7 @@ class API:
         """一行任务记录 -> 前端要的形状"""
         album_id = str(row[0])
         state = str(row[3])
+        speed = self._dl_speed(album_id, int(row[9]), int(row[10]), state)
         return {
             "album_id": album_id,
             "title": row[1],
@@ -1220,9 +1258,12 @@ class API:
             "images_total": int(row[10]),
             "added_at": row[7],
             "updated_at": row[8],
-            # 阅读进度现拼：跟「最近阅读」同一个口径（同一张 history 表），不进任何缓存
             "read": self.get_album_progress(album_id),
             "running": state in ("queued", "running"),
+            # 速度 / 剩余时间 / 这次会话下了多少字节：现算（见 _dl_speed），界面上就是个参考
+            "bytes_done": speed[2],
+            "speed_bps": speed[0],
+            "eta_s": speed[1],
         }
 
     def _refresh_album_progress(self, album_id: str, state: str | None = None,
@@ -1296,6 +1337,8 @@ class API:
             if thread is not None and thread.is_alive():
                 return
             self._album_dl_stop.pop(album_id, None)     # 上次删过就翻篇
+            with self._dl_bytes_lock:
+                self._dl_bytes.pop(str(album_id), None)  # 速度采样重新开始（续传也算新一轮）
             pause = self._album_dl_pause.setdefault(album_id, threading.Event())
             pause.clear()
             thread = threading.Thread(
@@ -1375,7 +1418,7 @@ class API:
         folder.mkdir(parents=True, exist_ok=True)
         pairs = list(zip(photo, files))
         jobs = [(img, folder / name) for img, name in pairs if not (folder / name).exists()]
-        self._download_images_batched(jobs, pause)
+        self._download_images_batched(jobs, pause, album_id=album_id)
         missing = [name for _img, name in pairs if not (folder / name).exists()]
         return (not missing), len(files) - len(missing), len(files)
 
@@ -1876,153 +1919,523 @@ class API:
         """当前配置（含默认值）"""
         return load_config()
 
+    def get_settings_spec(self) -> dict:
+        """
+        设置页表单的定义：段 / 字段 / 标签 / 类型 / 范围 / 提示 / 要不要重启。
+
+        **表单是后端生成的**（来源 `backend/settings_spec.py` 那张表）：加一个配置项只要在
+        那张表里加一行，前端的设置页不用改 —— 也就不会出现"后端加了键、前端没这个框"的错位。
+        """
+        return settings_spec.spec_payload()
+
     def save_settings(self, settings: dict) -> dict:
-        """保存设置到 config.yaml 并返回完整配置（重启生效的项由前端提示）"""
-        if not isinstance(settings, dict):
-            raise RuntimeError("保存失败：设置内容格式不对")
+        """保存设置到 config.yaml 并返回完整配置（按 settings_spec 那张表逐项校验）"""
         cfg = load_config()
         try:
-            win = _setting_section(settings, "window", "窗口")
-            if "title" in win:
-                title = str(win["title"]).strip()
-                if not title:
-                    raise ValueError("窗口标题不能为空")
-                cfg["window"]["title"] = title
-            if "width" in win:
-                cfg["window"]["width"] = _setting_int(win["width"], 400, 5000, "窗口宽度")
-            if "height" in win:
-                cfg["window"]["height"] = _setting_int(win["height"], 400, 5000, "窗口高度")
-            if "min_size" in win:
-                size = win["min_size"]
-                if not isinstance(size, (list, tuple)) or len(size) != 2:
-                    raise ValueError("最小尺寸要填两个数字（宽、高）")
-                cfg["window"]["min_size"] = [
-                    _setting_int(size[0], 200, 5000, "最小宽度"),
-                    _setting_int(size[1], 200, 5000, "最小高度"),
-                ]
-            if "glass" in win:
-                glass_kind = str(win["glass"]).strip().lower()
-                if glass_kind not in ("none", "mica", "acrylic", "tabbed"):
-                    raise ValueError("窗口毛玻璃只能是 none / mica / acrylic / tabbed")
-                cfg["window"]["glass"] = glass_kind
-            if "glass_opacity" in win:
-                cfg["window"]["glass_opacity"] = _setting_float(
-                    win["glass_opacity"], 0.35, 1.0, "窗口不透明度")
-
-            dev = _setting_section(settings, "dev", "启动")
-            if "url" in dev:
-                url = str(dev["url"]).strip()
-                if not url.startswith(("http://", "https://", "file://")):
-                    raise ValueError("启动地址要以 http:// 或 https:// 或 file:// 开头")
-                cfg["dev"]["url"] = url
-            if "debug" in dev:
-                cfg["dev"]["debug"] = bool(dev["debug"])
-            if "use_dev_server" in dev:
-                cfg["dev"]["use_dev_server"] = bool(dev["use_dev_server"])
-
-            srv = _setting_section(settings, "server", "本地服务")
-            if "port" in srv:
-                cfg["server"]["port"] = _setting_int(srv["port"], 1024, 65535, "本地服务端口")
-
-            reader = _setting_section(settings, "reader", "阅读器")
-            for key in ("restore_progress", "click_to_page"):
-                if key in reader:
-                    cfg["reader"][key] = bool(reader[key])
-            if "mode" in reader:
-                if reader["mode"] not in ("webtoon", "single"):
-                    raise ValueError("阅读模式只能是 webtoon（连续滚动）或 single（单页翻页）")
-                cfg["reader"]["mode"] = reader["mode"]
-            if "background" in reader:
-                if reader["background"] not in ("dark", "black", "gray", "light"):
-                    raise ValueError("背景色只能是 dark / black / gray / light")
-                cfg["reader"]["background"] = reader["background"]
-            if "page_gap" in reader:
-                cfg["reader"]["page_gap"] = _setting_int(reader["page_gap"], 0, 64, "页间距")
-            if "width" in reader:
-                cfg["reader"]["width"] = _setting_int(reader["width"], 0, 2400, "阅读器图片宽度")
-            if "auto_scroll" in reader:
-                cfg["reader"]["auto_scroll"] = _setting_int(reader["auto_scroll"], 0, 1000, "自动滚屏速度")
-
-            detail = _setting_section(settings, "detail", "详情页")
-            if "chapters_collapse" in detail:
-                cfg["detail"]["chapters_collapse"] = _setting_int(
-                    detail["chapters_collapse"], 0, 500, "章节折叠阈值")
-            if "comment_preview" in detail:
-                cfg["detail"]["comment_preview"] = _setting_int(
-                    detail["comment_preview"], 0, 50, "评论预览条数")
-
-            prefetch = _setting_section(settings, "prefetch", "预加载")
-            if "albums" in prefetch:
-                cfg["prefetch"]["albums"] = _setting_int(prefetch["albums"], 0, 30, "预加载详情条数")
-            if "chapter_images" in prefetch:
-                cfg["prefetch"]["chapter_images"] = _setting_int(
-                    prefetch["chapter_images"], 0, 20, "预加载图片张数")
-            if "next_at" in prefetch:
-                cfg["prefetch"]["next_at"] = _setting_float(
-                    prefetch["next_at"], 0, 1, "预加载下一话的进度比例")
-
-            recommend = _setting_section(settings, "recommend", "推荐")
-            if "limit" in recommend:
-                cfg["recommend"]["limit"] = _setting_int(recommend["limit"], 0, 50, "推荐条数")
-            if "candidates" in recommend:
-                cfg["recommend"]["candidates"] = _setting_int(
-                    recommend["candidates"], 5, 200, "推荐候选池大小")
-            if "hot_weight" in recommend:
-                cfg["recommend"]["hot_weight"] = _setting_float(
-                    recommend["hot_weight"], 0, 1, "推荐里热度先验的占比")
-            if "author_boost" in recommend:
-                cfg["recommend"]["author_boost"] = _setting_float(
-                    recommend["author_boost"], 0, 5, "作者命中的加成倍数")
-            if "half_life_days" in recommend:
-                cfg["recommend"]["half_life_days"] = _setting_int(
-                    recommend["half_life_days"], 1, 365, "画像半衰期")
-
-            download = _setting_section(settings, "download", "下载")
-            if "workers" in download:
-                cfg["download"]["workers"] = _setting_int(download["workers"], 1, 32, "下载并发数")
-            if "dir" in download:
-                text = str(download["dir"]).strip()
-                if not text:
-                    raise ValueError("下载目录不能为空")
-                path = _resolve_download_dir(text)
-                try:
-                    path.mkdir(parents=True, exist_ok=True)   # 当场建一下，路径错了立刻能说清
-                except OSError as e:
-                    raise ValueError(f"下载目录建不出来（{path}）：{e}") from None
-                cfg["download"]["dir"] = text
-            if "retries" in download:
-                cfg["download"]["retries"] = _setting_int(
-                    download["retries"], 0, 10, "下载重试次数")
-            if "auto_resume" in download:
-                cfg["download"]["auto_resume"] = bool(download["auto_resume"])
-
-            cache = _setting_section(settings, "cache", "缓存")
-            for key, label, lo, hi in (
-                ("photo_ttl", "章节图列表缓存时长", 0, 30 * 86400),
-                ("album_ttl", "漫画详情缓存时长", 0, 30 * 86400),
-                ("search_ttl", "搜索缓存时长", 0, 30 * 86400),
-                ("ranking_ttl", "榜单缓存时长", 0, 30 * 86400),
-                ("comment_ttl", "评论缓存时长", 0, 30 * 86400),
-                ("max_size_mb", "缓存上限", 0, 102400),
-                ("cleanup_interval", "定时清理间隔", 30, 86400),
-            ):
-                if key in cache:
-                    cfg["cache"][key] = _setting_int(cache[key], lo, hi, label)
-
-            splash = _setting_section(settings, "splash", "开场动画")
-            if "enabled" in splash:
-                cfg["splash"]["enabled"] = bool(splash["enabled"])
-            if "min_ms" in splash:
-                cfg["splash"]["min_ms"] = _setting_int(splash["min_ms"], 0, 10000, "闪屏最短时长")
-            if "max_ms" in splash:
-                cfg["splash"]["max_ms"] = _setting_int(splash["max_ms"], 0, 10000, "闪屏最长时长")
+            merged = settings_spec.merge(cfg, settings)
         except (ValueError, TypeError) as e:
             # TypeError 也接住：手改过的 config.yaml 可能让某个字段不是预期形状，
             # 那种异常不该以原始形态直穿到 JS 桥（页面上只会看到一句看不懂的 Python 报错）
             raise RuntimeError(f"保存失败：{e}") from e
-
         try:
-            save_config(cfg)
+            save_config(merged)
         except OSError as e:
             raise RuntimeError(f"保存失败：config.yaml 写不进去（{e}）") from e
-        return cfg
+        desktop.sync_autostart(merged)      # 配置说要自启 / 不要，注册表那边跟着对齐
+        return merged
+
+    # ==================== 版本 / 前端热更新 ====================
+    # 只更新前端（页面与素材）：下完刷新页面就生效，exe 一行都不碰（见 backend/updater.py）。
+    # 发布端在 scripts/publish_frontend.ps1（打 zip + 算 sha256 + 写 manifest.json）。
+
+    def get_version(self) -> dict:
+        """版本信息：app（安装包）/ web（当前这份前端）/ 更新通道设置 / 现在是哪份 dist"""
+        return updater.version_info()
+
+    def check_update(self) -> dict:
+        """
+        查一下有没有新版前端。
+
+        **不抛异常**：开窗与打开设置页都会顺手调它，失败只把原因写在 `error` 里
+        （连不上、没发布、通道关着…），界面上安静地不提这事就行。
+        """
+        return updater.check()
+
+    def apply_update(self, force: bool = False) -> dict:
+        """下载并装上前端更新；装完请 `location.reload()`（静态服务每请求重挑根，不用重启窗口）"""
+        try:
+            return updater.apply(force=bool(force))
+        except updater.UpdateError as e:
+            raise RuntimeError(str(e)) from e
+
+    def rollback_update(self) -> dict:
+        """退回上一版前端（更新完界面不对了，用它救回来）"""
+        try:
+            return updater.rollback()
+        except updater.UpdateError as e:
+            raise RuntimeError(str(e)) from e
+
+    def notify_booted(self) -> bool:
+        """
+        前端起来后报到一次。
+
+        没报到（页面白着、脚本炸了）的话，下次开窗会把这份前端**自动撤掉**、退回上一版 ——
+        不然用户只能手动去删 `~/.jmreader/web`。详见 backend/updater.py 的 review_boot。
+        """
+        updater.notify_booted()
+        return True
+
+    def open_url(self, url: str) -> bool:
+        """用系统默认浏览器打开链接（只放行 http / https）"""
+        return desktop.open_url(url)
+
+    def open_folder(self, kind: str) -> dict:
+        """
+        在资源管理器里打开 logs / downloads / data / cache / web / app 目录。
+        数据、日志、离线副本都在哪，一句话说不清时点一下最省事。
+        """
+        return desktop.open_folder(kind)
+
+    def get_desktop_state(self) -> dict:
+        """桌面集成的**实际**状态（配置只是"想要什么"：这里能看到托盘起没起、快捷键注册上没有）"""
+        return desktop.desktop_state()
+
+    # ==================== 磁盘 / 日志 ====================
+
+    def get_disk_usage(self) -> dict:
+        """
+        磁盘账本：缓存 / 离线下载 / 用户数据各占多少，加上所在盘还剩多少。
+
+        设置页与下载页显示用。只算总量不列明细 —— 几千张图扫一遍是毫秒级，页面上点开才调一次。
+        """
+        cache_bytes = self._dir_size(CACHE_DIR)
+        download_bytes = self._dir_size(self._download_dir)
+        data_bytes = self._dir_size(DATA_DIR)
+        free = total = None
+        anchor = self._download_dir if self._download_dir.exists() else APP_DIR
+        try:
+            usage = shutil.disk_usage(str(anchor))
+            free, total = int(usage.free), int(usage.total)
+        except OSError as e:
+            print(f"[disk] 读磁盘剩余空间失败: {e}", flush=True)
+        with _db(DATA_DB) as conn:
+            offline = conn.execute(
+                "SELECT COUNT(*) FROM download_chapter WHERE state = 'done'"
+            ).fetchone()[0]
+        return {
+            "cache_mb": round(cache_bytes / 1024 / 1024, 1),
+            "cache_limit_mb": self._max_cache_mb,
+            "download_mb": round(download_bytes / 1024 / 1024, 1),
+            "data_mb": round(data_bytes / 1024 / 1024, 1),
+            "free_mb": None if free is None else round(free / 1024 / 1024, 1),
+            "total_mb": None if total is None else round(total / 1024 / 1024, 1),
+            "download_dir": str(self._download_dir),
+            "chapters": sum(1 for d in IMG_DIR.glob("*") if d.is_dir()),
+            "offline_chapters": int(offline or 0),
+        }
+
+    _LOG_TAIL_BYTES = 2 * 1024 * 1024    # 只看最后 2 MB：日志按天切、留 7 天，最近的够看
+    _LOG_LINE_CHARS = 500                # 一行最多留这么多：别人机器上的 traceback 能有整屏
+
+    def _log_file(self) -> Path | None:
+        """当前该看的那个日志文件（app.log 不在就看最新切下来的那份）"""
+        folder = APP_DIR / "logs"
+        fresh = folder / "app.log"
+        if fresh.is_file():
+            return fresh
+        try:
+            left = [p for p in folder.glob("app.log*") if p.is_file()]
+        except OSError:
+            return None
+        return max(left, key=lambda p: p.stat().st_mtime) if left else None
+
+    def get_log_tail(self, lines: int = 200) -> dict:
+        """
+        日志的尾巴（"出问题了把日志发我"那一句）。返回 {path, lines, truncated, error}。
+        """
+        want = _cfg_int(lines, 200, 1, 2000)
+        path = self._log_file()
+        if path is None:
+            return {"path": "", "lines": [], "truncated": False, "error": "还没有日志文件"}
+        try:
+            size = path.stat().st_size
+            with path.open("rb") as f:
+                if size > self._LOG_TAIL_BYTES:
+                    f.seek(size - self._LOG_TAIL_BYTES)
+                    f.readline()          # 从半行中间切开的，丢掉
+                data = f.read()
+        except OSError as e:
+            return {"path": str(path), "lines": [], "truncated": False, "error": str(e)}
+        text = data.decode("utf-8", errors="replace")
+        rows = [line[:self._LOG_LINE_CHARS] for line in text.splitlines()][-want:]
+        return {"path": str(path), "lines": rows,
+                "truncated": size > self._LOG_TAIL_BYTES, "error": ""}
+
+    # ==================== 按话下载 / 磁盘上有什么 ====================
+
+    def _cached_album_title(self, album_id: str) -> str:
+        """详情缓存里那句标题（只读本地缓存，不发请求）；没有就算了"""
+        data = self._cache_get(f"album:v2:{album_id}", 10 * 365 * 86400)
+        if isinstance(data, dict):
+            return str(data.get("title") or "")
+        return ""
+
+    def download_chapter(self, album_id: str, photo_id: str, index: str = "",
+                         chapter_title: str = "", title: str = "",
+                         cover_url: str = "") -> dict:
+        """
+        按话下载：把这一话加进（没有就新建）这本的任务，然后复用整本下载那套话单 ——
+        暂停 / 继续 / 断点续传 / 删除 / 错误重试，跟整本下载完全是同一套状态机。
+        """
+        pid = str(photo_id or "").strip()
+        if not pid:
+            raise ValueError("缺少章节 ID")
+        aid = self._need_album_id(album_id)
+        if not str(title or "").strip():
+            title = self._cached_album_title(aid)
+        return self.start_download(
+            aid, title=title, cover_url=cover_url,
+            chapters=[{"photo_id": pid, "index": index, "title": chapter_title}],
+        )
+
+    def is_album_offline(self, album_id: str) -> dict:
+        """
+        这本在本地是不是有**完整**的离线副本（详情页的"离线可看"用）。
+
+        `done >= chapters` 才算完整：中途失败或删了几话的，页面上就该说"下了一半"。
+        """
+        aid = self._need_album_id(album_id)
+        with _db(DATA_DB) as conn:
+            row = conn.execute(
+                "SELECT COUNT(*), SUM(CASE WHEN state = 'done' THEN 1 ELSE 0 END)"
+                " FROM download_chapter WHERE album_id = ?", (aid,),
+            ).fetchone()
+        chapters = int(row[0] or 0)
+        done = int(row[1] or 0)
+        folder = self._download_dir / aid
+        return {
+            "album_id": aid,
+            "chapters": chapters,
+            "done": done,
+            "offline": chapters > 0 and done >= chapters,
+            "images": self._count_files(folder, True),
+            "bytes": self._dir_size(folder),
+            "dir": str(folder),
+        }
+
+    def list_cached_chapters(self, album_id: str = "", limit: int = 200) -> list[dict]:
+        """
+        磁盘上到底有哪几话、各占多少地方。
+
+        两个来源都算：随手补下的章节图（`cache/images/<photo_id>`）与整本下载的离线副本
+        （`download.dir/<album_id>/<photo_id>`）。**只读磁盘与本地库，一个网络请求都不发。**
+        按最近碰过的排前面（mtime），`limit` 封顶（默认 200，最多 1000）。
+        """
+        want = _cfg_int(limit, 200, 1, 1000)
+        aid = str(album_id or "").strip()
+        rows: dict[str, dict] = {}
+
+        with _db(DATA_DB) as conn:
+            sql = ("SELECT c.photo_id, c.album_id, c.index_no, c.title, c.state,"
+                   " c.done, c.total, a.title FROM download_chapter c"
+                   " LEFT JOIN download_album a ON a.album_id = c.album_id")
+            args: tuple = ()
+            if aid:
+                sql += " WHERE c.album_id = ?"
+                args = (aid,)
+            for pid, book, index_no, chapter_title, state, done, total, book_title in                     conn.execute(sql, args).fetchall():
+                folder = self._download_dir / str(book) / str(pid)
+                rows[str(pid)] = {
+                    "photo_id": str(pid),
+                    "album_id": str(book),
+                    "album_title": str(book_title or ""),
+                    "index": str(index_no or ""),
+                    "title": str(chapter_title or ""),
+                    "state": str(state),
+                    "images": self._count_files(folder),
+                    "total": int(total or 0),
+                    "bytes": self._dir_size(folder),
+                    "offline": True,
+                    "mtime": self._folder_mtime(folder),
+                }
+
+        for folder in IMG_DIR.glob("*"):
+            if not folder.is_dir() or folder.name in rows:
+                continue
+            if aid:
+                continue                    # 只看某一本时，缓存里那些散话归不到本子上，跳过
+            rows[folder.name] = {
+                "photo_id": folder.name, "album_id": "", "album_title": "",
+                "index": "", "title": "", "state": "cached",
+                "images": self._count_files(folder), "total": 0,
+                "bytes": self._dir_size(folder), "offline": False,
+                "mtime": self._folder_mtime(folder),
+            }
+
+        ordered = sorted(rows.values(), key=lambda item: item["mtime"], reverse=True)
+        return ordered[:want]
+
+    @staticmethod
+    def _folder_mtime(folder: Path) -> float:
+        """目录里最新碰过的文件的时间（拿来排序；读不了就当 0）"""
+        newest = 0.0
+        try:
+            for f in folder.glob("*"):
+                try:
+                    if f.is_file():
+                        newest = max(newest, f.stat().st_mtime)
+                except OSError:
+                    pass
+        except OSError:
+            pass
+        return newest
+
+    # ==================== 最近阅读：删一条 / 清空 ====================
+
+    def remove_history(self, album_id: str, photo_id: str = "") -> dict:
+        """
+        删「最近阅读」里的记录。
+
+        给了 photo_id 就只删这一话；没给就删这本的全部 —— 最近阅读一部漫画只显示一条
+        （那条代表"最近读到的那一话"），所以界面上那个 ✕ 想删的其实是整本。
+        """
+        aid = self._need_album_id(album_id)
+        with _db(DATA_DB) as conn:
+            if str(photo_id or "").strip():
+                cur = conn.execute("DELETE FROM history WHERE album_id = ? AND photo_id = ?",
+                                   (aid, str(photo_id).strip()))
+            else:
+                cur = conn.execute("DELETE FROM history WHERE album_id = ?", (aid,))
+            removed = cur.rowcount
+        return {"removed": int(removed or 0)}
+
+    def clear_history(self) -> dict:
+        """清空最近阅读（阅读进度一起没；收藏、离线副本、设置都不动）"""
+        with _db(DATA_DB) as conn:
+            removed = conn.execute("DELETE FROM history").rowcount
+        return {"removed": int(removed or 0)}
+
+    # ==================== 导出 / 导入 ====================
+    # 导的是**用户数据**（收藏 / 阅读记录 / 设置），落成一个 JSON：换机器、重装、发给别人都行。
+    # 不导缓存与离线图 —— 那些是再生资源，动辄几个 G。
+
+    _EXPORT_KINDS = ("favorites", "history", "settings", "all")
+
+    @staticmethod
+    def _json_list(raw: Any) -> list:
+        try:
+            value = json.loads(raw or "[]")
+        except (TypeError, ValueError):
+            return []
+        return value if isinstance(value, list) else []
+
+    def _export_payload(self, kind: str) -> dict:
+        out: dict[str, Any] = {
+            "app": "guzhu_comic",
+            "kind": kind,
+            "version": updater.APP_VERSION,
+            "exported_at": time.time(),
+        }
+        if kind in ("favorites", "all"):
+            with _db(DATA_DB) as conn:
+                rows = conn.execute(
+                    "SELECT album_id, title, cover_url, added_at, tags_json, authors_json"
+                    " FROM favorite ORDER BY added_at DESC").fetchall()
+            out["favorites"] = [
+                {"album_id": r[0], "title": r[1], "cover_url": r[2], "added_at": r[3],
+                 "tags": self._json_list(r[4]), "authors": self._json_list(r[5])}
+                for r in rows
+            ]
+        if kind in ("history", "all"):
+            with _db(DATA_DB) as conn:
+                rows = conn.execute(
+                    "SELECT album_id, photo_id, page_index, title, cover_url, updated_at"
+                    " FROM history ORDER BY updated_at DESC").fetchall()
+            out["history"] = [
+                {"album_id": r[0], "photo_id": r[1], "page_index": int(r[2] or 0),
+                 "title": r[3], "cover_url": r[4], "updated_at": r[5]}
+                for r in rows
+            ]
+        if kind in ("settings", "all"):
+            out["settings"] = load_config()
+        if kind == "all":
+            out["count"] = len(out.get("favorites") or []) + len(out.get("history") or [])
+        else:
+            out["count"] = len(out.get(kind) or []) if kind != "settings" else 0
+        return out
+
+    def export_data(self, kind: str = "all", path: str = "") -> dict:
+        """
+        导出用户数据。
+
+        `kind`：favorites / history / settings / all。`path` 空着就弹一个"另存为"
+        （取消返回 `{ok: False, cancelled: True}`）；给了路径就直接写那儿。
+        """
+        kind = str(kind or "all").strip().lower()
+        if kind not in self._EXPORT_KINDS:
+            raise ValueError(f"导出不了这种数据：{kind}（只能是 {' / '.join(self._EXPORT_KINDS)}）")
+        payload = self._export_payload(kind)
+        target = str(path or "").strip()
+        if not target:
+            default_dir = APP_DIR / "export"
+            try:
+                default_dir.mkdir(parents=True, exist_ok=True)
+            except OSError:
+                default_dir = APP_DIR
+            picked = self.create_file_dialog(
+                "save",
+                filename=f"guzhu-{kind}-{time.strftime('%Y%m%d-%H%M%S')}.json",
+                directory=str(default_dir),
+                file_types=["JSON 文件 (*.json)"],
+            )
+            if not picked:
+                return {"ok": False, "cancelled": True, "kind": kind}
+            target = picked[0]
+        file = Path(target)
+        if file.is_dir():
+            raise RuntimeError("选的是一个目录：导出要选一个文件名")
+        if not file.suffix:
+            file = file.with_suffix(".json")     # 对话框里手打名字时常常没有后缀
+        try:
+            file.parent.mkdir(parents=True, exist_ok=True)
+            file.write_text(json.dumps(payload, ensure_ascii=False, indent=2),
+                            encoding="utf-8", newline="\n")
+        except OSError as e:
+            raise RuntimeError(f"写不进去（{file}）：{e}") from e
+        return {"ok": True, "cancelled": False, "kind": kind, "path": str(file),
+                "count": int(payload.get("count") or 0), "bytes": file.stat().st_size}
+
+    def _import_favorites(self, items: list) -> tuple[int, int]:
+        done = skipped = 0
+        with _db(DATA_DB) as conn:
+            for item in items:
+                if not isinstance(item, dict) or not str(item.get("album_id") or "").strip():
+                    skipped += 1
+                    continue
+                try:
+                    added = float(item.get("added_at") or time.time())
+                except (TypeError, ValueError):
+                    added = time.time()
+                conn.execute(
+                    "INSERT OR REPLACE INTO favorite"
+                    " (album_id, title, cover_url, added_at, tags_json, authors_json)"
+                    " VALUES (?, ?, ?, ?, ?, ?)",
+                    (str(item["album_id"]).strip(), str(item.get("title") or ""),
+                     str(item.get("cover_url") or ""), added,
+                     json.dumps(self._json_list(json.dumps(item.get("tags") or [])),
+                                ensure_ascii=False),
+                     json.dumps(self._json_list(json.dumps(item.get("authors") or [])),
+                                ensure_ascii=False)),
+                )
+                done += 1
+        return done, skipped
+
+    def _import_history(self, items: list) -> tuple[int, int]:
+        done = skipped = 0
+        with _db(DATA_DB) as conn:
+            for item in items:
+                if not isinstance(item, dict) or not str(item.get("album_id") or "").strip() \
+                        or not str(item.get("photo_id") or "").strip():
+                    skipped += 1
+                    continue
+                try:
+                    page = max(0, int(item.get("page_index") or 0))
+                except (TypeError, ValueError):
+                    page = 0
+                try:
+                    when = float(item.get("updated_at") or time.time())
+                except (TypeError, ValueError):
+                    when = time.time()
+                conn.execute(
+                    "INSERT OR REPLACE INTO history"
+                    " (album_id, photo_id, page_index, title, cover_url, updated_at)"
+                    " VALUES (?, ?, ?, ?, ?, ?)",
+                    (str(item["album_id"]).strip(), str(item["photo_id"]).strip(), page,
+                     str(item.get("title") or ""), str(item.get("cover_url") or ""), when),
+                )
+                done += 1
+        return done, skipped
+
+    def import_data(self, kind: str = "", path: str = "") -> dict:
+        """
+        从导出的那份 JSON 里把数据并回来（收藏 / 阅读记录 / 设置 / all）。
+
+        `kind` 空着就用文件里写的那个；`path` 空着就弹"打开文件"（取消返回
+        `{ok: False, cancelled: True}`）。合并口径是**按主键覆盖**，不会清掉原有数据。
+        """
+        target = str(path or "").strip()
+        if not target:
+            picked = self.create_file_dialog(
+                "open", directory=str(APP_DIR), file_types=["JSON 文件 (*.json)"])
+            if not picked:
+                return {"ok": False, "cancelled": True, "kind": kind}
+            target = picked[0]
+        file = Path(target)
+        if not file.is_file():
+            raise RuntimeError(f"找不到这个文件：{file}")
+        try:
+            if file.stat().st_size > 64 * 1024 * 1024:
+                raise RuntimeError("这个文件太大了（超过 64 MB），不像是一份导出")
+            payload = json.loads(file.read_text(encoding="utf-8"))
+        except OSError as e:
+            raise RuntimeError(f"读不进来（{file}）：{e}") from e
+        except ValueError as e:
+            raise RuntimeError(f"这个文件不是一份 JSON：{e}") from e
+        if not isinstance(payload, dict):
+            raise RuntimeError("这份文件形状不对（应该是一个对象）")
+
+        wanted = str(kind or payload.get("kind") or "all").strip().lower()
+        if wanted not in self._EXPORT_KINDS:
+            raise RuntimeError(f"导出文件里写的类型不认识：{wanted}")
+
+        imported = skipped = 0
+        if wanted in ("favorites", "all"):
+            items = payload.get("favorites")
+            if isinstance(items, list):
+                done, miss = self._import_favorites(items)
+                imported += done
+                skipped += miss
+        if wanted in ("history", "all"):
+            items = payload.get("history")
+            if isinstance(items, list):
+                done, miss = self._import_history(items)
+                imported += done
+                skipped += miss
+        if wanted in ("settings", "all"):
+            data = payload.get("settings")
+            if isinstance(data, dict):
+                merged = settings_spec.merge(load_config(), data)
+                save_config(merged)
+                imported += 1
+                desktop.sync_autostart(merged)
+        return {"ok": True, "cancelled": False, "kind": wanted, "path": str(file),
+                "imported": imported, "skipped": skipped}
+
+    def create_file_dialog(self, mode: str = "open", filename: str = "",
+                           directory: str = "", file_types: list | None = None) -> list | None:
+        """
+        弹一个系统文件对话框（pywebview 自带的那套）。返回选中的路径列表；取消返回 None。
+
+        `mode`：open（挑一个文件）/ save（挑存到哪）/ folder（挑目录）。
+        导出 / 导入用它选位置；前端别的地方想挑文件也可以直接用。
+        """
+        import webview
+        modes = {"open": webview.FileDialog.OPEN, "save": webview.FileDialog.SAVE,
+                 "folder": webview.FileDialog.FOLDER}
+        key = str(mode or "open").strip().lower()
+        if key not in modes:
+            raise ValueError(f"对话框类型只能是 {' / '.join(modes)}")
+        windows = list(getattr(webview, "windows", None) or [])
+        if not windows:
+            raise RuntimeError("没有窗口，弹不出对话框（在浏览器里跑源码态时就是这样）")
+        try:
+            picked = windows[0].create_file_dialog(
+                modes[key],
+                directory=str(directory or APP_DIR),
+                allow_multiple=False,
+                save_filename=str(filename or ""),
+                file_types=tuple(str(t) for t in (file_types or ())),
+            )
+        except Exception as e:      # noqa: BLE001 —— 对话框本身出什么问题都只是"这次没弹出来"
+            raise RuntimeError(f"对话框打不开：{e}") from e
+        return list(picked) if picked else None

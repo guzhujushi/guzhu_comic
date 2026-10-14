@@ -1,13 +1,13 @@
 // pages/detail.ts
 import { renderAlbumList } from '../components/album-list.js'
 import { renderEmpty, renderError } from '../components/states.js'
-import { icons, morphIcon, setIcon } from '../components/icons.js'
+import { createIcon, icons, morphIcon, setIcon } from '../components/icons.js'
 import { loadSettings } from '../settings.js'
 import { warmChapterStart } from '../prefetch.js'
 import { onUnmount } from '../router.js'
 import { morphToReader } from '../motion.js'
 import type { AppSettings } from '../settings.js'
-import type { AlbumDetail, AlbumProgress, CommentItem, DownloadTask } from '../types.js'
+import type { AlbumDetail, AlbumOffline, AlbumProgress, Chapter, CommentItem, DownloadTask } from '../types.js'
 
 export function albumPage(params: Record<string, string>): HTMLElement {
   const el = document.createElement('div')
@@ -33,15 +33,20 @@ export function albumPage(params: Record<string, string>): HTMLElement {
       return
     }
     try {
-      const [data, progress, fav, cfg] = await Promise.all([
+      const [data, progress, fav, cfg, offline, cached] = await Promise.all([
         window.pywebview.api.get_album_detail(albumId),
         // 读不到进度不影响看详情，按"没读过"处理
         window.pywebview.api.get_album_progress(albumId).catch(() => null),
         // 收藏态单独查本地表（不进详情缓存，那有 24h TTL）；查不到就当没收藏
         window.pywebview.api.is_favorite(albumId).catch(() => false),
         loadSettings(),
+        // 磁盘上那点事：整本下完就能断网看，只下过几话也别瞒着。读不出来当没有，别挡着看详情
+        window.pywebview.api.is_album_offline(albumId).catch(() => null),
+        window.pywebview.api.list_cached_chapters(albumId, 500)
+          .then((list) => list.map((item) => item.photo_id))
+          .catch(() => [] as string[]),
       ])
-      renderDetail(data, progress, fav, cfg.detail, el)
+      renderDetail(data, progress, fav, cfg.detail, el, offline, new Set(cached))
     } catch (err) {
       renderError(el, String(err), () => {
         renderSkeleton(el)
@@ -56,7 +61,7 @@ export function albumPage(params: Record<string, string>): HTMLElement {
 }
 
 /** 下载按钮：整本下到本机（离线副本在 config.yaml 的 download.dir 里），标签跟任务状态走 */
-function paintDownloadArea(container: HTMLElement, data: AlbumDetail): void {
+function paintDownloadArea(container: HTMLElement, data: AlbumDetail, onTick: (task: DownloadTask | null) => void): void {
   // 图源一话都没给的时候这一排压根不渲染，所以先认这一排在不在
   const actions = container.querySelector('.detail-actions')
   if (!actions) return
@@ -102,6 +107,7 @@ function paintDownloadArea(container: HTMLElement, data: AlbumDetail): void {
     try {
       const task = await api.get_download(data.id)
       paint(task)
+      onTick(task)   // 章节行那些"已在机上"的标记跟着一起校正
       // 还在下就盯着；下完了停表 —— 别让详情页一直问后端
       if (task?.running) timer = window.setInterval(() => void poll(), 2000)
     } catch {
@@ -157,6 +163,8 @@ function renderDetail(
   fav: boolean,
   cfg: AppSettings['detail'],
   container: HTMLElement,
+  offline: AlbumOffline | null,
+  cached: Set<string>,
 ): void {
   // 上次读到的那一话还在的话就接着读；列表里找不到（比如图源改了章节）就从第一话开始
   const resumeChapter = progress ? data.chapters.find((c) => c.photo_id === progress.photo_id) : undefined
@@ -168,6 +176,12 @@ function renderDetail(
   // 封面地址同时喂给虚化层，引号先转义掉，免得把 CSS 里的 url() 拆坏
   const cover = (data.cover_url ?? '').replace(/"/g, '%22')
   const dates = dateLine(data)
+
+  // 磁盘上那点事：整本下完 = 断网也能看；只下了几话也照实说，别让人以为能离线了
+  const offlineLine = !offline || offline.chapters === 0 ? ''
+    : offline.offline ? `📥 整本已离线（${offline.chapters} 话 · ${humanBytes(offline.bytes)}）`
+      : offline.done > 0 ? `📥 已离线 ${offline.done}/${offline.chapters} 话`
+        : ''
 
   const collapseAfter = Math.max(0, cfg.chapters_collapse)   // 0 = 不折叠
   const commentPreview = Math.max(0, cfg.comment_preview)    // 0 = 不显示评论区
@@ -187,6 +201,7 @@ function renderDetail(
           <p class="detail-meta">作者：${data.author ? `<a class="meta-link" href="${searchHref('author', data.author)}">${escapeHtml(data.author)}</a>` : ''}</p>
           <p class="detail-meta">👀 ${escapeHtml(data.views)}　❤️ ${escapeHtml(data.likes)}　💬 ${escapeHtml(data.comment_count)}</p>
           ${dates ? `<p class="detail-meta">${escapeHtml(dates)}</p>` : ''}
+          ${offlineLine ? `<p class="detail-meta offline-line">${offlineLine}</p>` : ''}
           <div class="tags">${data.tags.map((t) => `<a class="tag" href="${searchHref('tag', t)}">${escapeHtml(t)}</a>`).join('')}</div>
         </div>
         ${startChapter ? `
@@ -224,7 +239,9 @@ function renderDetail(
     morphToReader(coverEl, `#/read?photo_id=${startChapter.photo_id}&album_id=${data.id}`)
   })
 
-  paintDownloadArea(container, data)
+  // 下载轮询每跳一次会喊一声：章节行那些"已在机上"的标记靠它校正（单话下载完当场翻过来）
+  let onDownloadTick: (task: DownloadTask | null) => void = () => undefined
+  paintDownloadArea(container, data, (task) => onDownloadTick(task))
 
   // 相关作品：卡片组件和列表页共用一个，点进去还是走 #/album 这条路由
   const relatedEl = container.querySelector<HTMLElement>('.related-list')
@@ -240,7 +257,7 @@ function renderDetail(
     )
   }
 
-  paintChapters(container, data, resumeChapter, collapseAfter)
+  onDownloadTick = paintChapters(container, data, resumeChapter, collapseAfter, cached)
 
   const sideEl = container.querySelector<HTMLElement>('.detail-side')
   if (sideEl) void paintComments(sideEl, data.id, commentPreview)
@@ -296,13 +313,15 @@ function paintFavorite(container: HTMLElement, data: AlbumDetail, fav: boolean):
   })
 }
 
-/** 章节列表：超过 collapseAfter 话就先只铺这些，剩下靠按钮摊开 */
+/** 章节列表：超过 collapseAfter 话就先只铺这些，剩下靠按钮摊开。
+ *  返回值是"下载进度翻篇了"的回调，挂在详情页那份下载轮询上（章节行的「已在机上」标记靠它校正）。 */
 function paintChapters(
   container: HTMLElement,
   data: AlbumDetail,
   resumeChapter: AlbumDetail['chapters'][number] | undefined,
   collapseAfter: number,
-): void {
+  cached: Set<string>,
+): (task: DownloadTask | null) => void {
   const listEl = container.querySelector<HTMLElement>('.chapter-list')!
   const moreBtn = container.querySelector<HTMLButtonElement>('.chapter-more')!
   const jumpBtn = container.querySelector<HTMLButtonElement>('.chapter-jump')!
@@ -310,16 +329,64 @@ function paintChapters(
   // 图源偶尔一话都没有，别留个空壳
   if (data.chapters.length === 0) {
     renderEmpty(listEl, { icon: '📄', title: '这部暂时没有章节', hint: '过一会儿再进来看看' })
-    return
+    return () => undefined
   }
 
   const foldable = collapseAfter > 0 && data.chapters.length > collapseAfter
   const lastReadIndex = resumeChapter ? data.chapters.indexOf(resumeChapter) : -1
   let expanded = !foldable
+  const dlButtons = new Map<string, HTMLButtonElement>()
+  let lastDone = -1
+
+  /** 磁盘上到底有哪几话：下载跑着的时候由轮询回调 resync() 校正 */
+  function paintCached(): void {
+    for (const [photoId, btn] of dlButtons) {
+      const on = cached.has(photoId)
+      btn.classList.toggle('on', on)
+      btn.disabled = on
+      btn.title = on ? '这一话已经在本机了（断网也能看）' : '只下这一话，不用整本下'
+      morphIcon(btn.querySelector('morph-icon')!, on ? icons.downloadDone : icons.download)
+    }
+  }
+
+  async function resync(): Promise<void> {
+    const current = window.pywebview?.api
+    if (!current?.list_cached_chapters) return
+    try {
+      const list = await current.list_cached_chapters(data.id, 500)
+      cached.clear()
+      for (const item of list) cached.add(item.photo_id)
+      paintCached()
+    } catch {
+      /* 读不出来就保持现状：这只是个标记，不值得报错 */
+    }
+  }
+
+  /** 只下这一话：走的是整本下载那套状态机，所以「我的下载」里也看得见 */
+  async function downloadOne(ch: Chapter, btn: HTMLButtonElement): Promise<void> {
+    const current = window.pywebview?.api
+    if (!current?.download_chapter) return
+    const hintEl = container.querySelector<HTMLElement>('.fav-hint')
+    if (hintEl) hintEl.textContent = ''
+    btn.disabled = true
+    btn.title = '已经排进下载队列，下完这儿会打个勾'
+    try {
+      await current.download_chapter(
+        data.id, ch.photo_id, ch.index, ch.title, data.title, data.cover_url ?? '')
+    } catch (err) {
+      btn.disabled = false
+      btn.title = '只下这一话，不用整本下'
+      if (hintEl) hintEl.textContent = `这一话下载没排上：${String(err).replace(/^Error:\s*/, '')}`
+    }
+  }
 
   const paint = (): void => {
     listEl.innerHTML = ''
+    dlButtons.clear()
     for (const ch of expanded ? data.chapters : data.chapters.slice(0, collapseAfter)) {
+      const row = document.createElement('div')
+      row.className = 'chapter-row'
+
       const btn = document.createElement('button')
       btn.className = 'chapter-item'
       btn.type = 'button'
@@ -328,8 +395,18 @@ function paintChapters(
       btn.addEventListener('click', () => {
         morphToReader(container.querySelector<HTMLElement>('.detail-cover'), `#/read?photo_id=${ch.photo_id}&album_id=${data.id}`)
       })
-      listEl.appendChild(btn)
+
+      const dl = document.createElement('button')
+      dl.type = 'button'
+      dl.className = 'chapter-dl'
+      dl.append(createIcon(icons.download, { size: 14 }))
+      dl.addEventListener('click', () => void downloadOne(ch, dl))
+
+      row.append(btn, dl)
+      listEl.appendChild(row)
+      dlButtons.set(ch.photo_id, dl)
     }
+    paintCached()
 
     moreBtn.hidden = !foldable
     moreBtn.textContent = expanded ? '收起' : `展开全部 ${data.chapters.length} 话`
@@ -353,6 +430,13 @@ function paintChapters(
   })
 
   paint()
+
+  return (task: DownloadTask | null): void => {
+    // 只有"下完的话数"翻篇了才去扫磁盘：轮询两秒一跳，别每次都扫一遍
+    if (!task || task.done === lastDone) return
+    lastDone = task.done
+    void resync()
+  }
 }
 
 /** 右侧评论区：只读预览，先铺 comment_preview 条，点「看更多」再往下加 */
@@ -465,6 +549,15 @@ function hint(text: string): HTMLElement {
   el.className = 'comment-hint'
   el.textContent = text
   return el
+}
+
+/** 离线占多少：只写人要看的量级，别摆一串数字 */
+function humanBytes(bytes: number): string {
+  if (!bytes || bytes < 0) return '0 B'
+  if (bytes < 1024) return `${bytes} B`
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`
+  if (bytes < 1024 * 1024 * 1024) return `${(bytes / 1024 / 1024).toFixed(1)} MB`
+  return `${(bytes / 1024 / 1024 / 1024).toFixed(2)} GB`
 }
 
 /** 发布日期 / 更新日期：图源没给时是空串或 "0"，这种就别往页面上放 */

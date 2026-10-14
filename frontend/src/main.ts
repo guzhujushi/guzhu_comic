@@ -153,6 +153,9 @@ registerRoute('/about', aboutPage)
 try {
   const api = await waitForBridge()
   console.log('pywebview 已就绪')
+  // 向后端报到：热更新那份前端"起没起来"就靠这一声（30 秒没报到 = 下次开窗自动撤掉它并退回
+  // 上一版，见 backend/updater.py）。别删 —— 删了以后更新出问题就得手动去删 ~/.jmreader/web。
+  void api.notify_booted?.().catch(() => undefined)
   // 闪屏还在放：趁这会儿把首页那批元数据先拉起来（hero + 各分类 + 推荐段），
   // 等路由铺首页时那些请求就全是缓存命中（实测毫秒级）。榜单条件要跟 board 自己那份一致，
   // 所以问它要 —— 自己再读一遍 localStorage 早晚会读岔，预热的是另一把 cache key 就白拉了。
@@ -177,3 +180,65 @@ document.documentElement.dataset.glass = boot.window.glass === 'none' ? 'off' : 
 splashConfigure(boot.splash)   // 配置到手才作数：关了就当场撤，时长按配置重排
 
 startRouter()
+// 开窗自动查一次更新（config.yaml 的 update.auto）：有新版只在右下角提一句，装不装由用户点。
+// 排在闪屏之后：启动那几秒的每一帧都留给首屏，别跟它抢。
+if (boot.update.enabled && boot.update.auto) {
+  window.setTimeout(() => void hintUpdate(), 2600)
+}
+
+/** 查一次更新，有新版就挂个提示条；查不成（离线 / 还没发布）安静地不出现 */
+async function hintUpdate(): Promise<void> {
+  const api = window.pywebview?.api
+  if (!api?.check_update || !api.apply_update) return
+  try {
+    const info = await api.check_update()
+    // known_bad = 上一版装上去没能开起来（已自动退回），别再劝人装一遍；
+    // too_new = 那版要更高的安装包，页面上劝不动，只能去下新安装包
+    if (info.error || !info.available || info.too_new || info.known_bad) return
+    showUpdateHint(info)
+  } catch {
+    /* 查更新从来不该影响开窗 */
+  }
+}
+
+/** 右下角那条「有新版前端」：更新说明挂在悬停标题上，摘要在右下角放不下 */
+function showUpdateHint(info: UpdateInfo): void {
+  const box = document.createElement('div')
+  box.className = 'update-hint'
+
+  const text = document.createElement('span')
+  text.className = 'update-hint-text'
+  text.textContent = `有新版前端 ${info.version}`
+  if (info.notes) text.title = info.notes
+
+  const go = document.createElement('button')
+  go.type = 'button'
+  go.className = 'update-hint-go'
+  go.textContent = '更新'
+
+  const close = document.createElement('button')
+  close.type = 'button'
+  close.className = 'update-hint-x'
+  close.setAttribute('aria-label', '这次先不更新')
+  close.append(createIcon(icons.close, { size: 13 }))
+
+  go.addEventListener('click', () => {
+    void (async () => {
+      go.disabled = true
+      text.textContent = '正在下载…'
+      try {
+        const res = await window.pywebview!.api.apply_update()
+        // 静态服务每请求重挑根，所以装完只要刷新页面就是新的那份
+        text.textContent = res.changed ? '装好了，正在刷新页面…' : '本来就没有新版'
+        if (res.changed) window.setTimeout(() => window.location.reload(), 600)
+      } catch (err) {
+        go.disabled = false
+        text.textContent = `更新失败：${String(err).replace(/^Error:\s*/, '')}`
+      }
+    })()
+  })
+  close.addEventListener('click', () => box.remove())
+
+  box.append(text, go, close)
+  document.body.appendChild(box)
+}

@@ -1,9 +1,10 @@
 import logging
 import sys
+import threading
 
 import webview
 
-from backend import glass, logging_setup, paths, single_instance, webview2
+from backend import desktop, glass, logging_setup, paths, single_instance, updater, webview2
 from backend.api import API
 from backend.config import load_config, save_config
 from backend.server import DEFAULT_PORT, start_static_server
@@ -66,7 +67,8 @@ def _pick_url(config: dict) -> tuple[str, str | None]:
         return str(dev_cfg["url"]), None
 
     dist = paths.dist_dir()
-    if not (dist / "index.html").exists():
+    overlay = paths.WEB_DIR          # 前端热更新下来的那份（有就用它，见 backend/updater.py）
+    if not (dist / "index.html").exists() and not (overlay / "index.html").exists():
         raise RuntimeError(f"前端产物不在：{dist}"
                            "（源码态先跑 npm run build；包被拆过的话 dist 要跟 exe 一起在 _internal 里）")
     base = start_static_server(
@@ -76,6 +78,7 @@ def _pick_url(config: dict) -> tuple[str, str | None]:
             "/downloads": paths.resolve_download_dir(config["download"]["dir"]),
         },
         _port(config),
+        overlay=overlay,
     )
     return base + "/", base
 
@@ -118,6 +121,8 @@ def _banner(config: dict, url: str, base: str | None, log_path) -> None:
     log.info("孤竹漫画启动：frozen=%s python=%s", paths.is_frozen(), sys.version.split()[0])
     log.info("配置：%s", paths.config_path())
     log.info("加载地址：%s（图片 base=%s）", url, base or "由 API 自己起一个服务")
+    log.info("前端来源：%s（热更新覆盖层%s）", paths.web_dist_dir(),
+             "在用" if paths.WEB_DIR.is_dir() else "还没有")
     log.info("窗口：%sx%s 毛玻璃=%s 调试=%s 日志=%s",
              config["window"]["width"], config["window"]["height"],
              config["window"]["glass"], config["dev"]["debug"], log_path or "装不上（磁盘 / 权限）")
@@ -132,17 +137,28 @@ def main() -> None:
     dev_cfg = config["dev"]
     if not _gate(config):
         return
+    # 上一次开窗如果没能起来（前端被换坏了 / 页面白着），这次开窗前先把它撤掉 ——
+    # 详见 backend/updater.py 的 review_boot：用户不用自己去删 ~/.jmreader/web
+    rolled = updater.review_boot()
+    if rolled["note"]:
+        _alert(rolled["note"])
+
     url, base = _pick_url(config)
     _banner(config, url, base, log_path)
+    desktop.sync_autostart(config)     # 开机自启：配置与注册表对一遍账
 
     api = API(base_url=base)
 
+    # 窗口位置与大小：开着"记住"就用上次的（摆到屏幕外了只沿用大小，见 desktop.geometry_kwargs）
+    geometry = desktop.geometry_kwargs(config)
     window = webview.create_window(
         title=window_cfg["title"],
         url=url,
         js_api=api,
-        width=window_cfg["width"],
-        height=window_cfg["height"],
+        width=geometry["width"],
+        height=geometry["height"],
+        x=geometry.get("x"),
+        y=geometry.get("y"),
         min_size=tuple(window_cfg["min_size"]),
         # 闪屏底色：WebView 把页面画出来之前先垫这个色。不传的话默认是白，开窗那一下会闪白 ——
         # 而"闪白"发生在我们的 HTML 之前，内联闪屏救不了它。注意毛玻璃开着（transparent）时
@@ -151,13 +167,19 @@ def main() -> None:
         transparent=glass.enabled(window_cfg),   # 页面自带透明度，底交给 DWM 的亚克力
     )
 
+    desktop.watch_geometry(window, config)       # 关窗那一刻记下位置与大小
+    # 用的是热更新那份前端吗？是就记一笔"等它报到"，前端起来后会调 notify_booted()；
+    # 30 秒还没报到 = 这份前端是坏的，下次开窗自动撤掉（review_boot）
+    if updater.mark_boot():
+        threading.Thread(target=updater.boot_watchdog, daemon=True, name="boot-watch").start()
+
     webview.start(
         debug=dev_cfg["debug"],
         # 默认 private_mode=True 会把 WebView2 的 user data 丢进临时目录 → localStorage
         # （主题、榜单 / 搜索偏好）每次开窗都是新的。固定到用户目录才留得住。
         private_mode=False,
         storage_path=str(paths.WEBVIEW_DIR),
-        func=lambda: glass.apply(window, window_cfg),
+        func=lambda: (glass.apply(window, window_cfg), desktop.setup(window, config)),
     )
 
 

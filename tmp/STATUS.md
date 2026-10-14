@@ -59,6 +59,45 @@
   ①「返回就到原处」—— 全站滚动位置 + 分类页 / 论坛页码写进地址；②详情页作者 / 标签可点，一下按它重搜；
   ③阅读器工具条按指针位置分上下唤出（第四项“下载页总占用 / 按话下载 / 导出”按用户要求**先砍掉**）
 
+## A / B 组后端补齐（2026-10-14 用户定：**只做 A、B；C 组不做，以后也不做**）
+
+> 目标：**往后只更新前端**（exe 不重发）。所以一次性把"前端可能会用到的后端能力"补齐，
+> 以后往前端加功能尽量不用再碰后端，也不用重打包 exe。
+> C 组（多图源 / 换 HTML 客户端「只看汉化」/ 登录类：收藏夹同步、签到、发评论、里番）**不做**。
+> 上一轮定的**更新方案**（见 `tmp/交接文档.md` §9）：只热更前端 dist（`~/.jmreader/web/` 覆盖层，
+> 每请求解析静态根，更新完 `location.reload()` 即可生效）——**不碰 exe、不自替换**。
+
+- [x] A1 更新通道：`get_version` / `check_update` / `apply_update` / `rollback_update` / `notify_booted` / `open_url`（+ `open_folder`）
+      + `scripts/publish_frontend.ps1`（2026-10-14；`backend/version.py`、`backend/updater.py` 新建，见 `tmp/交接文档.md` §9）
+- [x] A2 `save_settings` 改**声明式**：表驱动校验（`backend/settings_spec.py` 12 段）+ `get_settings_spec`，前端设置页表单也由它生成
+      （加配置项 = 改一处；设置同步从 5 处降到 4 处，见 §2.2）（2026-10-14）
+- [x] A3 `get_disk_usage()`：缓存 / 离线下载 / 用户数据各占多少 + 磁盘剩余空间（设置页磁盘块 + 下载页顶部一行）（2026-10-14）
+- [x] A4 `get_log_tail(n)`：日志尾部（设置页「看日志尾巴」）（2026-10-14）
+- [x] B1 `download_chapter`：按话下载（复用整本下载那套话单与状态机：一话也是一个任务，「我的下载」里看得见）（2026-10-14）
+- [x] B2 `list_cached_chapters` / `is_album_offline`：磁盘上到底有哪些章节、占多少（详情页章节行的"已在机上"勾 + 设置页磁盘明细）（2026-10-14）
+- [x] B3 `remove_history` / `clear_history`：最近阅读删单条 / 清空（2026-10-14）
+- [x] B4 `export_*` / `import_*` + `create_file_dialog`：收藏 / 阅读记录 / 设置 导出与导入（设置页「数据」块，只导用户数据不导图片）（2026-10-14）
+- [x] B5 下载速度 / 剩余时间（`_dl_bytes` / `_note_bytes` / `_dl_speed` 按 album 分桶 30 秒滑窗，`get_downloads` 里现算，不加新接口）（2026-10-14）
+- [x] B6 桌面集成（`backend/desktop.py` 新建，零新依赖）：窗口几何记忆 / 系统通知 / 托盘 / 开机自启 / 全局快捷键（2026-10-14）
+- [x] 前端接线：`pywebview.d.ts` 契约（19 个新方法）+ 设置页（检查更新 / 磁盘明细 / 数据 / 日志 / 桌面状态）+ 最近阅读（删 / 清空）
+      + 下载页（速度 / 剩余 / 总量）+ 关于页（版本）+ 开窗自动查更新（右下角提示条）（2026-10-14）
+- [x] 回归脚本 + `tsc --noEmit` + `npm run build` + `tmp/_probe_bridge.py --dist` + 文档同步（2026-10-14）
+
+### A / B 组收尾（2026-10-14，本轮）
+
+- **详情页接线**（`pages/detail.ts`）：hero 多一行磁盘状态 —— `📥 整本已离线（N 话 · X MB）` / `📥 已离线 n/m 话`（`is_album_offline`）；
+  章节行改成"左边点开读 + 右边只下这一话"（`download_chapter`，平常藏着、鼠标进这一行才露出来），
+  已在磁盘上的那一话打绿勾（`list_cached_chapters`），勾跟着下载轮询的进度翻篇校正（只有"下完的话数"变了才去扫磁盘）。
+- **设置页接线**：磁盘块加可摊开的「磁盘上有哪几话」明细（懒加载，摊开才扫）；新增「桌面集成」块显示**实际**状态
+  （托盘起没起 / 快捷键注册上没有 / 自启写没写，`get_desktop_state`）。
+- **开窗自动查更新**（`main.ts`）：`update.enabled && update.auto` 时 2.6 秒后查一次，有新版在右下角挂一条提示条
+  （只提示；点「更新」才 `apply_update()` + 刷新页面）。`too_new` / `known_bad` / `error` 都不弹。
+- **清理**：`tmp/_edit.py` / `_step*.py` / `_probe_new.py` / `_runall.py` / `_recon.py` 与发布脚本试跑产物 `web_dist_out/` 已删，
+  `web_dist_out/` 进了 `.gitignore`（改前端要跑的全部回归命令写进 `tmp/交接文档.md` §1）。
+- **回归**：新增 `tmp/_check_detail_offline.py`（8 项，详情页离线 / 按话下载接线）与 `tmp/_check_settings_page.py`（15 项，设置页冒烟）；
+  全量 24 个 `_check_*.py`（跳过 exe 那三个：包是旧的）**全 PASS**，`tsc --noEmit` exit 0、`npm run build` exit 0、真窗口 `_probe_bridge.py --dist` 全绿。
+- **文档**：`tmp/交接文档.md` §1 / §2.1（19 个新接口全表）/ §2.2（设置同步改成 4 处）/ §5.26（这轮踩的坑）/ §7 / **§9 前端热更新通道**（发布流程 + manifest 字段 + 自动回滚）。
+
 ## 体验三项（返回还原 / 作者标签可点 / 工具条分上下唤）改动清单（2026-10-14）
 
 用户从「还有什么可以优化体验的地方」那份清单里挑了**前三项**做；第四项（下载页总占用 / 剩余空间、按话下载、导出成文件包）

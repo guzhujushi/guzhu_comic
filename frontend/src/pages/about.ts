@@ -7,8 +7,8 @@
  * 用得上的三件事：能干什么、怎么用、数据在哪。所以两边内容允许重复，但别把
  * README 整段搬过来 —— 这一页的定位就是"精简版"。
  *
- * 不要往这里加外部链接（README 那种 GitHub 地址）：这个壳没做 target=_blank /
- * webbrowser 的处理，点出去会直接把当前页顶掉，回不来。
+ * 外部链接走 `open_url`（交给系统浏览器），**不要**直接写 <a href>：这个壳里点 <a> 会把
+ * 当前页顶掉、回不来（README 那种 GitHub 地址也一样，用按钮调 open_url 打开）。
  */
 export function aboutPage(): HTMLElement {
   const el = document.createElement('div')
@@ -67,15 +67,93 @@ export function aboutPage(): HTMLElement {
     <section class="about-section">
       <h2 class="about-h">数据都在本机</h2>
       <ul class="about-paths">
-        <li><code>~/.jmreader/data</code><span>阅读记录、收藏、搜索记录 —— 别删</span></li>
+        <li><code>~/.jmreader/data</code><span>阅读记录、收藏、搜索记录 —— 别删（能导出成 JSON 备份）</span></li>
         <li><code>~/.jmreader/downloads</code><span>整本下载的离线副本 —— 别删，删了得重下</span></li>
         <li><code>~/.jmreader/cache</code><span>章节图与接口缓存 —— 删了只是重新下，不丢记录</span></li>
+        <li><code>~/.jmreader/web</code><span>热更新下来的前端（有这个目录就说明装过更新）</span></li>
+        <li><code>~/.jmreader/logs</code><span>运行日志（按天切、留 7 天）—— 出问题发这个</span></li>
       </ul>
       <p class="about-text">
-        窗口、阅读器、下载、推荐这些常用项在<b>设置</b>页里改，保存后写回项目根目录的 <code>config.yaml</code>，
-        标了「重启生效」的要重开窗口才用得上。
+        窗口、阅读器、下载、推荐这些常用项在<b>设置</b>页里改，保存后写回 <code>config.yaml</code>，
+        标了「重启生效」的要重开窗口才用得上。收藏、阅读记录、设置都能在设置页导出成 JSON。
       </p>
     </section>
+
+    <section class="about-section">
+      <h2 class="about-h">版本</h2>
+      <p class="about-text version-line">读取中…</p>
+      <div class="page-actions">
+        <button type="button" class="mini-btn check-update-btn">检查更新</button>
+        <button type="button" class="mini-btn open-channel-btn">更新通道</button>
+        <button type="button" class="mini-btn open-logs-btn">打开日志目录</button>
+      </div>
+      <p class="about-text update-status"></p>
+    </section>
   `
+
+  const versionEl = el.querySelector<HTMLElement>('.version-line')!
+  const statusEl = el.querySelector<HTMLElement>('.update-status')!
+  const api = () => window.pywebview?.api
+
+  async function loadVersion(): Promise<void> {
+    const current = api()
+    if (!current?.get_version) {
+      versionEl.textContent = '（读不到版本：pywebview api 未就绪）'
+      return
+    }
+    try {
+      const info = await current.get_version()
+      versionEl.textContent = `安装包 ${info.app} · 前端 ${info.web || '出厂那份'}`
+        + `（${info.frozen ? '打包版' : '源码态'}）· 更新通道${info.update.enabled ? '开着' : '关着'}`
+    } catch (err) {
+      versionEl.textContent = '版本读取失败：' + String(err).replace(/^Error:\s*/, '')
+    }
+  }
+
+  el.querySelector('.check-update-btn')!.addEventListener('click', () => {
+    void (async () => {
+      const current = api()
+      if (!current?.check_update) return
+      statusEl.textContent = '正在检查…'
+      try {
+        const info = await current.check_update()
+        if (info.error) statusEl.textContent = `没查成：${info.error}`
+        else if (info.too_new) statusEl.textContent = `有新版前端 ${info.version}，但要先换新版安装包`
+        else if (info.available) statusEl.textContent = `有新版前端 ${info.version}：去「设置」页点「立即更新」`
+        else statusEl.textContent = '已经是最新的'
+      } catch (err) {
+        statusEl.textContent = '检查失败：' + String(err).replace(/^Error:\s*/, '')
+      }
+    })()
+  })
+
+  el.querySelector('.open-channel-btn')!.addEventListener('click', () => {
+    void (async () => {
+      const current = api()
+      if (!current?.get_version) return
+      try {
+        const info = await current.get_version()
+        // 交给系统浏览器打开：这个壳里点 <a href> 会把当前页顶掉
+        await current.open_url(info.update.url)
+      } catch (err) {
+        statusEl.textContent = '打不开：' + String(err).replace(/^Error:\s*/, '')
+      }
+    })()
+  })
+
+  el.querySelector('.open-logs-btn')!.addEventListener('click', () => {
+    void (async () => {
+      const current = api()
+      if (!current?.open_folder) return
+      try {
+        const res = await current.open_folder('logs')
+        if (!res.opened) statusEl.textContent = res.reason ?? `打不开：${res.path}`
+      } catch (err) {
+        statusEl.textContent = '打不开：' + String(err).replace(/^Error:\s*/, '')
+      }
+    })()
+  })
+
+  void loadVersion()
   return el
 }

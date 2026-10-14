@@ -5,9 +5,11 @@ window:
   min_size: [800, 600]
   glass: acrylic
   glass_opacity: 0.92
+  remember_geometry: true
+  last_geometry: [152, 152, 1200, 800]
 dev:
   url: http://localhost:5173
-  use_dev_server: true    # 开发机走 vite 热更新；打包后的包用 DEFAULT_CONFIG（false → 本地静态服务）
+  use_dev_server: true
   debug: true
 server:
   port: 47753
@@ -41,6 +43,16 @@ splash:
   enabled: true
   min_ms: 1950
   max_ms: 3000
+update:
+  enabled: true
+  url: https://code.guzhujushi.cn/guzhujushi/guzhu_comic/raw/branch/main/web
+  auto: true
+desktop:
+  notify: true
+  tray: true
+  autostart: false
+  hotkeys: false
+  hotkey_toggle: Ctrl+Alt+G
 cache:
   photo_ttl: 86400
   album_ttl: 86400

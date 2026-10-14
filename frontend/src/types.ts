@@ -142,6 +142,12 @@ export interface DownloadTask {
   running: boolean
   /** 阅读进度：跟「最近阅读」同一个口径（同一张 history 表），没读过是 null */
   read: AlbumProgress | null
+  /** 这次会话已经下下来多少字节（只算本次会话新下的） */
+  bytes_done: number
+  /** 每秒字节数；刚开跑或停了就是 0 */
+  speed_bps: number
+  /** 还要多少秒（估算）；算不出来是 null */
+  eta_s: number | null
 }
 
 /** 本地收藏的一条：封面地址是加收藏那一刻存的快照，图源换线路后可能失效 */
@@ -150,4 +156,30 @@ export interface FavoriteItem {
   title: string
   cover_url: string
   added_at: number
+}
+
+/** 磁盘上的一话：offline = 整本下载的离线副本，否则是随手补下的缓存 */
+export interface CachedChapter {
+  photo_id: string
+  album_id: string
+  album_title: string
+  index: string
+  title: string
+  state: string
+  images: number
+  total: number
+  bytes: number
+  offline: boolean
+  mtime: number
+}
+
+/** 某部在本机有没有整本离线副本（done >= chapters 才算断网也能读） */
+export interface AlbumOffline {
+  album_id: string
+  chapters: number
+  done: number
+  offline: boolean
+  images: number
+  bytes: number
+  dir: string
 }

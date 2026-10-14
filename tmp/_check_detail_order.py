@@ -1,4 +1,4 @@
-﻿# -*- coding: utf-8 -*-
+# -*- coding: utf-8 -*-
 """详情页区块顺序的回归：章节列表必须铺在「相关作品」**前面**。
 
 用户要求：章节渲染到相关作品前面。
@@ -92,7 +92,10 @@ setTimeout(function () {
         !!(desc.compareDocumentPosition(chTitle) & Node.DOCUMENT_POSITION_FOLLOWING)));
       // 折叠按钮跟章节列表待在一起，别被相关作品隔开
       var acts = main.querySelector('.chapter-actions');
-      var chLast = chList ? chList.querySelector('.chapter-item:last-of-type') : null;
+      // 章节行现在是 .chapter-row（里面是 章节按钮 + 只下这一话的按钮），
+      // 所以"最后一话"按文档顺序数，别用 :last-of-type（那个在每行里都会命中）
+      var chItems = chList ? chList.querySelectorAll('.chapter-item') : [];
+      var chLast = chItems.length ? chItems[chItems.length - 1] : null;
       note('actionsRightAfterChapters=' + (!!acts && !!chLast &&
         !!(chLast.compareDocumentPosition(acts) & Node.DOCUMENT_POSITION_FOLLOWING) &&
         !!acts.compareDocumentPosition(relList) && !!(acts.compareDocumentPosition(relList) & Node.DOCUMENT_POSITION_FOLLOWING)));
