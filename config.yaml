@@ -7,7 +7,10 @@ window:
   glass_opacity: 0.92
 dev:
   url: http://localhost:5173
+  use_dev_server: true    # 开发机走 vite 热更新；打包后的包用 DEFAULT_CONFIG（false → 本地静态服务）
   debug: true
+server:
+  port: 47753
 reader:
   restore_progress: true
   click_to_page: true

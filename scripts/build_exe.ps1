@@ -3,10 +3,10 @@
   打 Windows 免安装包（PyInstaller onedir，含 frontend/dist 静态产物）。
 
 .DESCRIPTION
-  前置（见 tmp\打包分发设计.md §4 的 P0 迁移，没做的话打出来的 exe 会去连 5173 然后白屏）：
-    1) main.py 支持"冻结态用本地静态服务挂 frontend/dist"（不再只吃 dev.url）；
-    2) backend/config.py 的配置落到用户目录（~/.jmreader/config.yaml）；
-    3) webview.start(private_mode=False, storage_path=...) 让 localStorage 活过重启。
+  前置（P0 迁移已落码，见 tmp\打包分发设计.md §4 与 backend/paths.py、backend/server.py）：
+    1) main.py 冻结态起本地静态服务挂 frontend/dist（源码态 + dev.use_dev_server 才走 vite）；
+    2) 配置落用户目录（~/.jmreader/config.yaml，首启写默认值）；3) WebView2 的 user data 固定在
+       ~/.jmreader/webview —— localStorage（主题 / 榜单偏好）才活得过重启。
 
   用法：
     powershell -ExecutionPolicy Bypass -File scripts\build_exe.ps1
@@ -98,8 +98,11 @@ VSVersionInfo(
 
 # 3) PyInstaller：onedir（**不要 --onefile**：自解压到 %TEMP% 是杀软误报的头号来源）
 Write-Host '[3/4] PyInstaller 打包 …'
+# 发布态不留控制台（黑框）；-Console 时换成 console 子系统，traceback 才看得见
+$Subsystem = if ($Console) { '--console' } else { '--windowed' }
 $pyArgs = @(
   '-m', 'PyInstaller', '--noconfirm', '--clean',
+  $Subsystem,
   '--onedir', '--name', $Name, '--noupx',                       # 不开 UPX：压缩壳会被启发式引擎盯上
   '--icon', $Ico, '--version-file', $VerFile,                   # exe 图标 + 版本信息
   '--distpath', $Out, '--workpath', $Work, '--specpath', $Work,
@@ -112,7 +115,7 @@ $pyArgs = @(
   '--hidden-import', 'clr', '--collect-all', 'jmcomic', '--collect-all', 'curl_cffi',
   'main.py'
 )
-if ($Console) { $pyArgs = $pyArgs[0..($pyArgs.Count - 2)] + @('--console', 'main.py') }
+# 子系统在 $pyArgs 里由 $Subsystem 决定（见上），这里不再拼第二遍参数
 & $Python @pyArgs
 if ($LASTEXITCODE -ne 0) { throw 'PyInstaller 失败' }
 

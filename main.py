@@ -1,20 +1,94 @@
 import webview
 
-from backend import glass
+from backend import glass, paths
 from backend.api import API
-from backend.config import load_config
+from backend.config import load_config, save_config
+from backend.server import DEFAULT_PORT, start_static_server
+
+
+def _alert(text: str) -> None:
+    """
+    出事了给一句人话。
+
+    `--windowed` 的包里没有控制台（stdout 指向 nul），只 print 等于什么都没跟用户说 ——
+    用户看到的就是"双击了没反应"。MessageBoxW 是这里唯一的零依赖出口（tkinter 已被裁掉）。
+    """
+    print(f"[fatal] {text}", flush=True)
+    try:
+        import ctypes
+        ctypes.windll.user32.MessageBoxW(None, text, "孤竹漫画", 0x10)
+    except Exception:
+        pass
+
+
+def _port(config: dict) -> int:
+    """配置里的静态服务端口；用户手改成一个非法值也不该拦住开窗"""
+    try:
+        n = int(float(config["server"]["port"]))
+    except (KeyError, TypeError, ValueError):
+        return DEFAULT_PORT
+    return n if 1024 <= n <= 65535 else DEFAULT_PORT
+
+
+def _prepare_user_dir() -> None:
+    """
+    用户目录该有的先建出来：配置、WebView2 的 user data 都落在这儿。
+
+    冻结态首启还要写一份默认 config.yaml 出去 —— 写出来了用户才知道设置存哪儿、也才能手改。
+    写不动（磁盘满 / 目录只读）只提示一句：配置读取本身有默认值兜底，不该为这个把窗口拦下。
+    """
+    try:
+        paths.APP_DIR.mkdir(parents=True, exist_ok=True)
+    except OSError as e:
+        print(f"[paths] 用户目录建不出来（不影响使用）: {e}", flush=True)
+        return
+    if paths.is_frozen() and not paths.config_path().exists():
+        try:
+            save_config(load_config())
+            print(f"[config] 首次运行，默认配置写到 {paths.config_path()}", flush=True)
+        except OSError as e:
+            print(f"[config] 默认配置写不进去（不影响使用）: {e}", flush=True)
+
+
+def _pick_url(config: dict) -> tuple[str, str | None]:
+    """
+    选这次加载哪个地址，返回 (url, base_url)。
+
+    源码态且 dev.use_dev_server 开着 → 走 vite（改前端不用重打包）；其余一律起本地静态服务喂
+    frontend/dist —— 打包后没有 Node、没有 vite，只有这一条路。base_url 回给 API，图片就挂在
+    同一个端口上（页面与图同源）。
+    """
+    dev_cfg = config["dev"]
+    if not paths.is_frozen() and bool(dev_cfg.get("use_dev_server", False)):
+        return str(dev_cfg["url"]), None
+
+    dist = paths.dist_dir()
+    if not (dist / "index.html").exists():
+        raise RuntimeError(f"前端产物不在：{dist}"
+                           "（源码态先跑 npm run build；包被拆过的话 dist 要跟 exe 一起在 _internal 里）")
+    base = start_static_server(
+        dist,
+        {
+            "/images": paths.IMG_DIR,
+            "/downloads": paths.resolve_download_dir(config["download"]["dir"]),
+        },
+        _port(config),
+    )
+    return base + "/", base
 
 
 def main() -> None:
+    _prepare_user_dir()
     config = load_config()
     window_cfg = config["window"]
     dev_cfg = config["dev"]
+    url, base = _pick_url(config)
 
-    api = API()
+    api = API(base_url=base)
 
     window = webview.create_window(
         title=window_cfg["title"],
-        url=dev_cfg["url"],
+        url=url,
         js_api=api,
         width=window_cfg["width"],
         height=window_cfg["height"],
@@ -26,8 +100,19 @@ def main() -> None:
         transparent=glass.enabled(window_cfg),   # 页面自带透明度，底交给 DWM 的亚克力
     )
 
-    webview.start(debug=dev_cfg["debug"], func=lambda: glass.apply(window, window_cfg))
+    webview.start(
+        debug=dev_cfg["debug"],
+        # 默认 private_mode=True 会把 WebView2 的 user data 丢进临时目录 → localStorage
+        # （主题、榜单 / 搜索偏好）每次开窗都是新的。固定到用户目录才留得住。
+        private_mode=False,
+        storage_path=str(paths.WEBVIEW_DIR),
+        func=lambda: glass.apply(window, window_cfg),
+    )
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except Exception as exc:      # 开窗前的任何意外，都不该只给用户留下一片安静
+        _alert(f"启动失败：{exc}")
+        raise

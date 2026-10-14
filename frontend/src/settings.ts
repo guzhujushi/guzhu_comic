@@ -10,7 +10,8 @@ export interface AppSettings {
     glass: 'none' | 'mica' | 'acrylic' | 'tabbed'
     glass_opacity: number
   }
-  dev: { url: string; debug: boolean }
+  dev: { url: string; use_dev_server: boolean; debug: boolean }
+  server: { port: number }
   splash: { enabled: boolean; min_ms: number; max_ms: number }
   reader: {
     restore_progress: boolean
@@ -60,7 +61,8 @@ export const DEFAULT_SETTINGS: AppSettings = {
     title: 'Guzhu Comic', width: 1200, height: 800, min_size: [800, 600],
     glass: 'none', glass_opacity: 0.92,   // 浏览器里没有 DWM，兜底不要玻璃
   },
-  dev: { url: 'http://localhost:5173', debug: true },
+  dev: { url: 'http://localhost:5173', use_dev_server: false, debug: false },
+  server: { port: 47753 },
   splash: { enabled: true, min_ms: 1950, max_ms: 3000 },
   reader: {
     restore_progress: true, click_to_page: true,
@@ -91,6 +93,7 @@ export async function loadSettings(force = false): Promise<AppSettings> {
       ...raw,
       window: { ...DEFAULT_SETTINGS.window, ...raw.window },
       dev: { ...DEFAULT_SETTINGS.dev, ...raw.dev },
+      server: { ...DEFAULT_SETTINGS.server, ...raw.server },
       splash: { ...DEFAULT_SETTINGS.splash, ...raw.splash },
       reader: { ...DEFAULT_SETTINGS.reader, ...raw.reader },
       detail: { ...DEFAULT_SETTINGS.detail, ...raw.detail },

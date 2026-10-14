@@ -7,8 +7,7 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 import threading
 from functools import partial
-from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
-from urllib.parse import unquote, urlparse
+from http.server import ThreadingHTTPServer
 
 
 def _cfg_int(value: Any, default: int, lo: int, hi: int) -> int:
@@ -77,62 +76,16 @@ def _db(path: Path) -> sqlite3.Connection:
     """
     return sqlite3.connect(path, timeout=DB_TIMEOUT)
 
-
-class _QuietHandler(SimpleHTTPRequestHandler):
-    """
-    去掉 http.server 的请求日志，免得刷屏。
-
-    `extra_roots` 是"前缀 -> 目录"的额外映射：离线下载的图在 cache 之外
-    （见 download.dir），不挂在同一个服务上的话阅读器就读不到它。
-    翻译路径是唯一能换根的地方，所以在这儿拦一道。
-    """
-    extra_roots: dict[str, Path] = {}
-
-    def translate_path(self, path: str) -> str:
-        clean = unquote(urlparse(path).path)
-        for prefix, root in self.extra_roots.items():
-            if clean.startswith(prefix + "/"):
-                # 只认路径片段，'..' 这类一律丢掉：别让人越出根目录
-                parts = [p for p in clean[len(prefix) + 1:].split("/") if p not in ("", ".", "..")]
-                return str(root.joinpath(*parts))
-        return super().translate_path(path)
-
-    def list_directory(self, path: str):
-        """
-        目录列表一律不给：这个服务只是给页面取图用的，列目录等于把 cache/images 和离线下载
-        目录的结构摊开给本机随便哪个程序看。
-        """
-        self.send_error(403, "Directory listing is disabled")
-        return None
-
-    def log_message(self, *args):
-        pass
-
 from jmcomic import JmMagicConstants, JmOption, JmcomicText
 
 from backend.config import load_config, save_config
+from backend.paths import (APP_DIR, CACHE_DIR, CACHE_DB, DATA_DB, DATA_DIR, IMG_DIR,
+                           resolve_download_dir)
+# 本地静态服务的基类：图服务与打包后的前端页面共用（打包态是同一个端口）
+from backend.server import _QuietHandler   # noqa: F401
 
-APP_DIR = Path.home() / ".jmreader"
-# data/ 放再生不出来的用户数据，cache/ 放随时可删的缓存（受 cache.max_size_mb 约束）
-DATA_DIR = APP_DIR / "data"
-DATA_DB = DATA_DIR / "app.db"
-CACHE_DIR = APP_DIR / "cache"
-CACHE_DB = CACHE_DIR / "cache.db"
-IMG_DIR = CACHE_DIR / "images"
-
-
-def _resolve_download_dir(raw: Any) -> Path:
-    """
-    配置里的 download.dir 解析成绝对路径。
-
-    支持 ~（cwd 不是家目录，只有 expanduser 认它）与相对路径（相对 ~/.jmreader）。
-    空值回落 downloads/ —— 但配置项本身一直有默认值，正常情况下不会走到这儿。
-    """
-    text = str(raw or "").strip() or "downloads"
-    path = Path(text).expanduser()
-    if not path.is_absolute():
-        path = APP_DIR / path
-    return path
+# 用户目录（~/.jmreader）与只读资源目录都从 backend.paths 来 —— 那里是源码态 / 冻结态的
+# 唯一分叉点。import 进来保持旧名字，api.py 里的用法一行不用改。
 
 # 前端传 "day"/"week"/"month"，这里映射到 jmcomic 常量
 _TIME_MAP = {
@@ -170,7 +123,11 @@ _ORDER_BY_MAP = {
 }
 
 class API:
-    def __init__(self):
+    def __init__(self, base_url: str | None = None):
+        """
+        base_url 给了就用它当图片的 base（打包态：main.py 起的静态服务跟页面同一个端口）；
+        不给就自己起一个（源码态，端口由系统随机分配）。
+        """
         # 缓存时长 / 下载并发数都来自 config.yaml（设置页可改，重启窗口后生效）
         cfg = load_config()
         self._dl_workers = _cfg_int(cfg["download"]["workers"], 8, 1, 32)
@@ -195,7 +152,7 @@ class API:
         self._dl_auto_resume = bool(cfg["download"]["auto_resume"])
         # 名字带下划线是有意的：pywebview 会把 js_api 的公开属性递归展开成 JS 方法
         # （Path 能展开出 300 多个），见下面 `_jm` 那段注释
-        self._download_dir = _resolve_download_dir(cfg["download"]["dir"])
+        self._download_dir = resolve_download_dir(cfg["download"]["dir"])
 
         # jmcomic 建客户端时要连图源（更新域名、拉 setting），图源抖一下这一步就能卡十几秒。
         # 所以挪到"第一次真要数据"的时候再做（见下面的 `_jm`），窗口立刻就能起来，
@@ -203,7 +160,7 @@ class API:
         self._client_lock = threading.Lock()
         self._client = None
         self._init_db()
-        self.img_base = self._start_img_server()
+        self.img_base = base_url or self._start_img_server()
         self._last_photo_id = ""   # 最近打开的章节，清理缓存时留着别删
         # 一个章节同时只允许一个下载批次：两批一起下会抢同一个 .part 文件
         # （这个锁只保护下面那个登记表，不串行化下载本身）
@@ -1928,6 +1885,12 @@ class API:
                 cfg["dev"]["url"] = url
             if "debug" in dev:
                 cfg["dev"]["debug"] = bool(dev["debug"])
+            if "use_dev_server" in dev:
+                cfg["dev"]["use_dev_server"] = bool(dev["use_dev_server"])
+
+            srv = _setting_section(settings, "server", "本地服务")
+            if "port" in srv:
+                cfg["server"]["port"] = _setting_int(srv["port"], 1024, 65535, "本地服务端口")
 
             reader = _setting_section(settings, "reader", "阅读器")
             for key in ("restore_progress", "click_to_page"):

@@ -1,11 +1,13 @@
 """config.yaml 的读写；缺失的键用 DEFAULT_CONFIG 补齐。"""
 import copy
-from pathlib import Path
 from typing import Any
 
 import yaml
 
-CONFIG_PATH = Path(__file__).resolve().parent.parent / "config.yaml"
+from backend import paths
+
+# 冻结态落 ~/.jmreader/config.yaml（包可能被放在只读目录），开发态还是仓库根那份
+CONFIG_PATH = paths.config_path()
 
 DEFAULT_CONFIG: dict[str, Any] = {
     "window": {
@@ -18,7 +20,11 @@ DEFAULT_CONFIG: dict[str, Any] = {
     },
     "dev": {
         "url": "http://localhost:5173",
-        "debug": True,
+        "use_dev_server": False,   # True = 走 vite 开发服务器（源码态）；打包态没有 vite，只有本地静态服务这条路
+        "debug": False,            # 发布默认关；开发机那份 config.yaml 里显式开着
+    },
+    "server": {
+        "port": 47753,             # 前端静态服务端口（页面与图同源）：被占就 47754…47760 依次退让
     },
     "reader": {
         "restore_progress": True,
@@ -115,6 +121,7 @@ def load_config() -> dict[str, Any]:
 
 
 def save_config(config: dict[str, Any]) -> None:
-    """整份写回 config.yaml"""
+    """整份写回 config.yaml：父目录可能还不存在（冻结态首启就是），先建出来"""
+    CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
     with CONFIG_PATH.open("w", encoding="utf-8", newline="\r\n") as f:
         yaml.dump(config, f, Dumper=_ConfigDumper, allow_unicode=True, sort_keys=False, default_flow_style=False)

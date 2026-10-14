@@ -38,8 +38,73 @@
 - [x] 导航栏「设置」移到底部左下角 + 新增「关于」页（`#/about`：能干什么 / 怎么用 / 数据在哪，README 的用户视角精简版）（2026-10-14）
 - [x] 健壮性审计（用户："不加功能了，看看代码有没有漏洞，补齐漏洞和可能崩溃的地方，最后检验"）：全库只读审查 →
   补 13 处"会整窗空白 / 会静默丢数据 / 会以 TypeError 直穿 JS 桥 / 会信息暴露"的点 + 新增 3 个回归脚本（2026-10-14）
-- [ ] 打包 P0 落码（待办）：`backend/paths.py` + `backend/server.py` + `main.py` 起静态服务 + `config.yaml` 的 `dev.use_dev_server` / `server.port` + `private_mode=False, storage_path=~/.jmreader/webview`
+- [x] 打包 P0 落码（2026-10-14 完成，见下面「打包落地」一节）：`backend/paths.py` + `backend/server.py`（静态服务，页面与图同源）+ `main.py` 起服务 + `dev.use_dev_server` / `server.port` + `private_mode=False, storage_path=~/.jmreader/webview`；已出包并过验收（onedir 39 MB / zip 19.9 MB）
 - [ ] 打包 P1（待办）：256×256 的 `.ico` 源图、单实例检测、WebView2 Runtime 缺失提示、日志落盘 `~/.jmreader/logs/`
+
+## 打包落地（P0 迁移）+ 杀软检测（2026-10-14）
+
+用户要求：**先别加功能了，开始打包，再测测有哪个杀毒软件会报错**。
+
+**落地的 P0 迁移**（设计见 `tmp/打包分发设计.md` §4）：
+- 新增 `backend/paths.py`：`APP_DIR` / `DATA_DB` / `CACHE_DIR` / `IMG_DIR` / `WEBVIEW_DIR` + `is_frozen()` /
+  `bundle_dir()` / `config_path()` / `dist_dir()` / `resolve_download_dir()` —— 源码态与冻结态的**唯一**分叉点，
+  也是将来上 mac / Android 只改一处的地方（业务代码里没有 `sys.platform` / `sys.frozen`）。
+- 新增 `backend/server.py`：`_QuietHandler` 从 `api.py` 搬过来（`api.py` 仍 re-export，老脚本 import 不破），
+  加 `start_static_server(dist, extra_roots, port)` —— 一个端口同时喂 dist 与图片（页面与图**同源**），
+  端口 47753 → 47760 依次退让、最后退回系统随机（换端口会打一行日志：origin 变了等于换一份 localStorage）。
+- `backend/api.py`：`API(base_url=None)` —— 打包态复用 main 起的那个端口，源码态照旧自己起（端口 0 随机）。
+- `backend/config.py`：`CONFIG_PATH = paths.config_path()`（冻结态 `~/.jmreader/config.yaml`）；`DEFAULT_CONFIG`
+  补 `dev.use_dev_server: false` / `server.port: 47753`，并把 `dev.debug` 默认关掉（仓库那份 `config.yaml` 显式
+  `use_dev_server: true` / `debug: true`，开发手感不变）；`save_config` 写前先建父目录。
+- `main.py`：按 `dev.use_dev_server`（且非冻结）选 vite，否则起本地静态服务；`private_mode=False` +
+  `storage_path=~/.jmreader/webview` 让 localStorage 活过重启；开窗前的任何异常弹 MessageBox（`--windowed`
+  没有控制台，只 print 等于没提示）。
+- `frontend/src/settings.ts` + `pages/settings.ts`：设置页补「用 vite 开发服务器」「本地服务端口」两项。
+- `scripts/build_exe.ps1`：默认 `--windowed`（原来只有 `-Console` 分支，等于一直在打 console 子系统）。
+- `backend/server.py` 顺手堵一个升级坑：`index.html` 加 `Cache-Control: no-store`（带 hash 的 js/css 照旧缓存）。
+
+**踩到的坑**：探针副本与正式包**同源**（`http://127.0.0.1:47753`）+ **同一个 WebView2 用户目录** → 正式包首启时
+页面从 HTTP 缓存拿到了上一轮探针注入的 `index.html`，把探针字串写进了刚写的 `config.yaml`。这不是产品 bug
+（用户机器上这个 origin 只会有一条来源），但暴露了「`index.html` 被缓存 = 升级后老页面配新包 = 白屏」的真隐患，
+已加 `no-store` 堵掉。验收脚本因此改成"跑前清 config.yaml + webview 目录"的真首启。
+
+**产物**（`scripts/build_exe.ps1`，onedir 39 MB / zip 19.9 MB，约 26 秒）：
+- `build_out/GuzhuComic/GuzhuComic.exe`（SHA256 `390E7BC67E201A092E430F77E74E3C419B2DBBF6E5909675B3AF4308E534C114`）
+- `build_out/GuzhuComic-0.1.0-win64.zip`（SHA256 `FA9E4D90C37BC65313E0CB81A0A432A2254A0E120966BB7E6B7300D5813B2E55`）
+
+**验收**：
+- `tmp/_check_exe_package.py`（真 exe 的**副本**，往 `index.html` 注入探针，走产品自己的桥回报）→ 全绿：窗口标题
+  `Guzhu Comic`、`:47753/index.html` 就是包内 dist、`/images` 同源取图 200（164 KB）、`~/.jmreader/webview`
+  403 个文件、页面回报 `kids=1|rec=shown|cards=10|resume=shown|rows=30`。
+- `tmp/_check_exe_real.py`（**未改动**的正式包，真首启）→ 全绿：进程活着、窗口标题 `Guzhu Comic`、`:47753` 正常、
+  首启写出 `~/.jmreader/config.yaml`（`title: Guzhu Comic` / `use_dev_server: false` / `debug: false` / `port: 47753`）。
+- 老回归重跑：`_check_imgserver` / `_check_hardening` / `_check_api_smoke` 全绿；`tsc` / `npm run build` exit 0。
+
+**杀软检测（只做了本机能做的）**：
+- 本机**只装了 Windows Defender**（`root/SecurityCenter2` 只有它一项；引擎 4.18.26090.9 / 特征库 1.461.18.0）。
+- `MpCmdRun -Scan -ScanType 3` 分别扫 **onedir 目录 / exe / zip** → 三处 **found no threats**；`Get-MpThreatDetection` 无历史告警。
+- exe **未签名**（`Get-AuthenticodeSignature` → NotSigned）→ SmartScreen 会出「未知发布者」，这是误报画像里最重的一条，
+  根治只能买代码签名证书（设计文档 §8-1）。
+- **第三方引擎（360 / 火绒 / 腾讯）本机没有，VirusTotal 没有 API key —— 都没测**。要测：给一个 VirusTotal free API key
+  （我脚本化上传 + 拉 70+ 引擎报告），或手动把 zip 传上去（**样本会共享给杀软厂商**，得用户点头）。
+
+### 直连可用性实测：**不需要科学上网**（2026-10-14）
+
+用户问："这个 exe 没有科学上网环境能用吗？需要从 GitHub 下载东西吗？" —— 实测结论：
+
+- **包本身完全自足**：Python 运行时 / jmcomic / curl_cffi / Pillow / pycryptodome / WebView2 的 .NET DLL / 前端 dist
+  全在 `_internal` 里。运行时**不连 GitHub、不连 pypi、不下载任何东西**（jmcomic 那个 `get_html_domain_all_via_github`
+  已废弃，源码里写着 "the GitHub repository no longer provides JMComic domains"，现在转发到站点自己那套）。
+- **唯一的外部运行时是 WebView2 Runtime**（Win11、Win10 1803+ 基本自带），**不随包分发、也不自动下载**。
+  真缺了只能用户手动装一次（微软官网）。除此之外零依赖：不需要 Node / Python / Vite。
+- **抓图的网络请求，本机直连实测全通**（清空 `HTTP(S)_PROXY` + `NO_PROXY=*`，用应用自己的客户端 curl_cffi 模拟 Chrome）：
+  `https://www.cdnhjk.net/setting` → 200；`/album?id=422866` → 成功；`/chapter?id=209828` → 成功、207 张（2.1s）；
+  图片 `https://cdn-msp.jmapiproxy1.cc/media/photos/.../00001.webp` → 200 `image/webp` 172 KB（约 1s/张）。
+  结论：**没有代理也能正常看**。
+- **注意两点**：① 应用用的是 curl_cffi（Chrome 指纹），普通 urllib 直连会 TLS reset / 超时 —— 不是应用的问题；
+  ② 站点域名与图床 CDN 会轮换，偶尔挑到不通的那个会重试或换域名（`api.update_domain.success` 那行日志就是它在换），
+  已经缓存 / 下载到本地的那一话完全不受影响。
+- 脚本：`tmp/_net_direct_test.py`（纯 TCP/TLS 探测）、`tmp/_net_jm_test.py direct|proxy`（A/B）、`tmp/_net_img_test.py`（真取图）。
 
 ## 健壮性审计（漏洞 / 崩溃点）改动清单（2026-10-14）
 
@@ -643,5 +708,5 @@
 5. ~~**推荐段健壮性**~~ —— **2026-10-14 已修，并查到了真正的根因**（闸门另按方法引用判重注入、`quietMs=800`，见上面那份改动清单）：pywebview 启动会注两遍桥，第二次 `_createApi()` 重建在飞回调表 → 那些 promise 永不 settle → `await loadSettings()` 挂死、整窗空白。根因在后端 `API.client` / `API.download_dir` 是公开属性（被递归展开成 447 条、现场建客户端 0.855s，把两步窗口拉到秒级），已改私有名；前端配 `waitForBridge` 静默窗 + `bridgeCall` 重试。回归：`tmp/_check_coldstart.py`（假桥晚挂方法）、`tmp/_check_bridge_wipe.py`（模拟注两遍）。还想要的（可选）：候选池真空时兜底用榜单数据铺热度。
 6. ~~开场动画~~ —— **2026-10-14 已完成**（设计 `tmp/开场动画设计.md`，调研 `tmp/开场动画调研.md`）。真机验收两件事：① 现在的落位是「字标取代 `孤竹漫画` 整行，下面 `Guzhu Comic` 不动」，若要的是只换掉「孤竹」留下「漫画」（`GuZhu漫画`），改一处文案即可；② 毛玻璃开着时开场那一下的底色（设计稿 §3.4）。
 
-7. **打包 P0 落码**（见 `tmp/打包分发设计.md` §4 / §11）：`backend/paths.py`（配置 + dist 路径统一入口）+ `backend/server.py`（本地静态服务，端口 47753 + 回退）+ `main.py` 按 `dev.use_dev_server` 选 URL + `API(base_url=...)` + `webview.start(private_mode=False, storage_path=...)`。验收：`scripts/build_exe.ps1` 出包 → 双击 → 走一遍首页 / 搜索 / 详情 / 阅读 / 最近阅读 / 设置 → 重开确认主题与偏好还在。
+7. ~~**打包 P0 落码**~~ —— **2026-10-14 已完成**（见上面「打包落地」一节）：出包 + 真 exe 验收通过（见 `tmp/打包分发设计.md` §4 / §11 的原方案）：`backend/paths.py`（配置 + dist 路径统一入口）+ `backend/server.py`（本地静态服务，端口 47753 + 回退）+ `main.py` 按 `dev.use_dev_server` 选 URL + `API(base_url=...)` + `webview.start(private_mode=False, storage_path=...)`。验收：`scripts/build_exe.ps1` 出包 → 双击 → 走一遍首页 / 搜索 / 详情 / 阅读 / 最近阅读 / 设置 → 重开确认主题与偏好还在。
 8. 打包 P1：补 256×256 图标源图、单实例检测、WebView2 缺失提示、日志落盘。别做自动更新（无签名 + 自动下 exe = 误报与安全双重坑）。

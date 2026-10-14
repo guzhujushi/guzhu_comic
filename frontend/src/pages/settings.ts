@@ -29,8 +29,10 @@ const GROUPS: { title: string; fields: FieldDef[] }[] = [
   {
     title: '启动',
     fields: [
-      { path: 'dev.url', label: '启动地址', type: 'text', hint: 'Vite 开发服务器地址，或打包后的 dist/index.html', restart: true },
+      { path: 'dev.use_dev_server', label: '用 vite 开发服务器', type: 'bool', hint: '开发用：连着 vite（5173）改前端不用重打包。打包后的包没有 vite，关着就行 —— 关了是加载包内 dist', restart: true },
+      { path: 'dev.url', label: '启动地址', type: 'text', hint: '只在上面那项打开时才会去连它；打包后的包不走这里', restart: true },
       { path: 'dev.debug', label: '调试模式', type: 'bool', hint: '打开后可以用 F12 / 右键检查', restart: true },
+      { path: 'server.port', label: '本地服务端口', type: 'number', min: 1024, max: 65535, hint: '页面与图片走同一个端口（同源）：被占就顺着往下退 7 个，还不行就用系统随机端口；但换了端口，主题 / 偏好那一份 localStorage 也跟着换（等于重置）', restart: true },
       { path: 'splash.enabled', label: '开场动画', type: 'bool', hint: '开窗先播「GuZhu」描字动画，放完飞进左上角；动画期间后台把首页那批数据先拉起来，所以揭幕时首页已经铺好了', restart: true },
       { path: 'splash.min_ms', label: '开场动画最短时长（毫秒）', type: 'number', min: 0, max: 10000, hint: '从页面开始加载算起；描字本身 1000ms + 停留 300ms，填得比 1300 小也一样等它写完', restart: true },
       { path: 'splash.max_ms', label: '开场动画最长时长（毫秒）', type: 'number', min: 0, max: 10000, hint: '硬上限：数据再慢也到点就揭幕，露出的骨架后面自己补上', restart: true },
