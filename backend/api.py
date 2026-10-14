@@ -158,10 +158,12 @@ class API:
         # 整本离线下载（见 config.yaml 的 download 组）：目录、重试、开窗续传
         self._dl_retries = _cfg_int(cfg["download"]["retries"], 3, 0, 10)
         self._dl_auto_resume = bool(cfg["download"]["auto_resume"])
-        self.download_dir = _resolve_download_dir(cfg["download"]["dir"])
+        # 名字带下划线是有意的：pywebview 会把 js_api 的公开属性递归展开成 JS 方法
+        # （Path 能展开出 300 多个），见下面 `_jm` 那段注释
+        self._download_dir = _resolve_download_dir(cfg["download"]["dir"])
 
         # jmcomic 建客户端时要连图源（更新域名、拉 setting），图源抖一下这一步就能卡十几秒。
-        # 所以挪到"第一次真要数据"的时候再做（见下面 client 属性），窗口立刻就能起来，
+        # 所以挪到"第一次真要数据"的时候再做（见下面的 `_jm`），窗口立刻就能起来，
         # 页面上先看骨架，别让人对着一个还没出现的窗口发呆。
         self._client_lock = threading.Lock()
         self._client = None
@@ -195,8 +197,15 @@ class API:
             threading.Thread(target=self._resume_downloads_loop, daemon=True).start()
 
     @property
-    def client(self):
-        """jmcomic 客户端：第一次用到时才建（连图源那一步别挡着开窗）"""
+    def _jm(self):
+        """jmcomic 客户端：第一次用到时才建（连图源那一步别挡着开窗）。
+
+        **名字必须带下划线**：pywebview 注入 JS 桥时会 `dir(js_api)` + `getattr` 把每个属性
+        递归展开成 `window.pywebview.api.*`（`webview/util.py` 的 `get_functions`，它只跳过
+        下划线开头的名字）。这个属性一旦叫 `client`，就会 ① 在注入线程里当场把客户端建出来
+        （连图源 0.8s 起步，两步注入的窗口从毫秒被拉宽到秒级）、② 把 jmcomic 客户端那 400 多个
+        内部方法整套暴露给页面。名字带下划线，两条一起没了。
+        """
         with self._client_lock:
             if self._client is None:
                 self._client = JmOption.default().new_jm_client()
@@ -205,7 +214,7 @@ class API:
     def _warm_client(self) -> None:
         """后台预热图源连接；连不上就算了，等页面自己重试"""
         try:
-            self.client
+            self._jm
         except Exception as e:
             print(f"[warmup] 图源没连上，交给页面重试: {e}", flush=True)
 
@@ -300,7 +309,7 @@ class API:
         self._move_legacy_cache()
         # 下载目录也先建出来。建不出来只报一声：别让一个路径问题把开窗挡住
         try:
-            self.download_dir.mkdir(parents=True, exist_ok=True)
+            self._download_dir.mkdir(parents=True, exist_ok=True)
         except OSError as e:
             print(f"[download] 下载目录建不出来: {e}", flush=True)
 
@@ -373,7 +382,7 @@ class API:
         if cached is not None:
             return self._with_favorited(cached)
         try:
-            result_page = getattr(self.client, _SCOPE_MAP[scope])(
+            result_page = getattr(self._jm, _SCOPE_MAP[scope])(
                 search_query=keyword,
                 page=page,
                 order_by=_ORDER_BY_MAP[order_by],
@@ -416,7 +425,7 @@ class API:
                 return self._with_favorited(cached)
         try:
             try:
-                result_page = self.client.categories_filter(
+                result_page = self._jm.categories_filter(
                     page=page,
                     time=_TIME_MAP[time_range],
                     category=_CATEGORY_MAP[category],
@@ -570,7 +579,7 @@ class API:
         data = self._cache_get(key, self._album_ttl)
         if data is None:
             try:
-                album = self.client.get_album_detail(album_id)
+                album = self._jm.get_album_detail(album_id)
             except Exception as e:
                 raise RuntimeError(f"详情获取失败: {e}") from e
             data = {
@@ -629,7 +638,7 @@ class API:
         if cached is not None:
             return cached
         try:
-            comment_page = self.client.album_pagination(album_id, page=page)
+            comment_page = self._jm.album_pagination(album_id, page=page)
         except Exception as e:
             raise RuntimeError(f"评论获取失败: {e}") from e
         items = [
@@ -669,7 +678,7 @@ class API:
         if cached is not None:
             return self._forum_out(cached)
         try:
-            comment_page = self.client.forum_pagination(page=page)
+            comment_page = self._jm.forum_pagination(page=page)
         except Exception as e:
             raise RuntimeError(f"论坛获取失败: {e}") from e
         items = []
@@ -872,7 +881,7 @@ class API:
         下载目录是开窗时从配置读的，所以在这儿交给 handler —— 改了 download.dir 要重开窗口。
         """
         class _Handler(_QuietHandler):
-            extra_roots = {"/downloads": self.download_dir}
+            extra_roots = {"/downloads": self._download_dir}
 
         handler = partial(_Handler, directory=str(CACHE_DIR))
         server = ThreadingHTTPServer(("127.0.0.1", 0), handler)  # 端口 0 = 系统自动分配
@@ -898,7 +907,7 @@ class API:
 
         if files is None:
             try:
-                photo = self.client.get_photo_detail(photo_id)
+                photo = self._jm.get_photo_detail(photo_id)
             except Exception as e:
                 raise RuntimeError(f"章节获取失败: {e}") from e
             files = [img.filename for img in photo]
@@ -955,7 +964,7 @@ class API:
             if jobs is None:
                 img_dir = IMG_DIR / photo_id
                 try:
-                    photo = self.client.get_photo_detail(photo_id)
+                    photo = self._jm.get_photo_detail(photo_id)
                 except Exception:
                     return  # 网络不通就留着下次进章节再补
                 # 顺手把文件名列表也缓存了（get_chapter 也这么写）：预加载靠它判断
@@ -1016,7 +1025,7 @@ class API:
         # 临时名要保留真实后缀：jmcomic 按输出后缀定编码，用 .part 当后缀会直接抛错
         tmp = path.with_name(f"{path.stem}.part{path.suffix}")
         try:
-            self.client.download_by_image_detail(img, str(tmp))
+            self._jm.download_by_image_detail(img, str(tmp))
             tmp.rename(path)
             return True
         except Exception:
@@ -1135,7 +1144,7 @@ class API:
             conn.execute("DELETE FROM download_chapter WHERE album_id = ?", (aid,))
             conn.execute("DELETE FROM download_album WHERE album_id = ?", (aid,))
         if delete_files:
-            folder = self.download_dir / aid
+            folder = self._download_dir / aid
             if folder.is_dir():
                 files = self._count_files(folder, True)
                 shutil.rmtree(folder, ignore_errors=True)
@@ -1209,7 +1218,7 @@ class API:
             if state != 'done':
                 pending.append(pid)
             elif int(total or 0) > 0 and \
-                    self._count_files(self.download_dir / album_id / pid) < int(total):
+                    self._count_files(self._download_dir / album_id / pid) < int(total):
                 pending.append(pid)
         return pending
 
@@ -1300,12 +1309,12 @@ class API:
         文件名列表先看缓存（`photo:<id>` 只存文件名）：续传时那些下过的话连一次
         网络请求都不用发 —— 这才是"按进度重新下载"最省的那条路。
         """
-        folder = self.download_dir / album_id / photo_id
+        folder = self._download_dir / album_id / photo_id
         names = self._cache_get(f"photo:{photo_id}", self._photo_ttl)
         if names and all((folder / name).exists() for name in names):
             return True, len(names), len(names)
         try:
-            photo = self.client.get_photo_detail(photo_id)
+            photo = self._jm.get_photo_detail(photo_id)
         except Exception:
             return False, self._count_files(folder), len(names or [])
         files = [img.filename for img in photo]
@@ -1334,7 +1343,7 @@ class API:
             ).fetchone()
         if row is None:
             return None
-        folder = self.download_dir / str(row[0]) / str(photo_id)
+        folder = self._download_dir / str(row[0]) / str(photo_id)
         return (str(row[0]), folder) if folder.is_dir() else None
 
     def _resume_downloads_loop(self) -> None:

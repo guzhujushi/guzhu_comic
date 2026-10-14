@@ -2,7 +2,7 @@ import './style.css'
 import { registerRoute, startRouter } from './router.js'
 import { popularPage } from './pages/popular.js'
 import { searchPage } from './pages/search.js'
-import { waitForPywebview } from './webstatus.js'
+import { waitForBridge } from './webstatus.js'
 import { loadSettings } from './settings.js'
 import { bootSplash, splashConfigure } from './splash.js'
 import { homePrefs } from './pages/board.js'
@@ -142,9 +142,13 @@ registerRoute('/forum', forumPage)
 registerRoute('/settings', settingsPage)
 registerRoute('/about', aboutPage)
 
-// 先等 pywebview 把 JS 桥注入好再开路由：否则首页会先闪一下"pywebview api 未就绪"
+// 先等 pywebview 把 JS 桥**挂好方法**再开路由（两步注入，见 webstatus.ts）：
+// 光等"api 对象在"就开路由的话，首页第一次铺的时候方法还没挂上 —— 页面自己会重试所以看着
+// 没事，但「推荐段」这张一次性的卡会以为自己不该出现，永久藏掉，只能切页回来才看得见。
+// 而且启动那一下它会注**两遍**（第二遍把正在飞的调用的回调清掉 → promise 永不 settle），
+// 所以 waitForBridge() 还要等最后一次注入安静下来才放行 —— 不然卡在这句上的就是整个启动。
 try {
-  const api = await waitForPywebview()
+  const api = await waitForBridge()
   console.log('pywebview 已就绪')
   // 闪屏还在放：趁这会儿把首页那批元数据先拉起来（hero + 各分类 + 推荐段），
   // 等路由铺首页时那些请求就全是缓存命中（实测毫秒级）。榜单条件要跟 board 自己那份一致，

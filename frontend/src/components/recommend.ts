@@ -5,6 +5,7 @@ import { renderAlbumList } from './album-list.js'
 import { createIcon, icons } from './icons.js'
 import { renderAlbumSkeleton } from './states.js'
 import { warmAlbumList } from '../prefetch.js'
+import { bridgeCall } from '../webstatus.js'
 import type { AlbumSummary, RecommendPage, Recommendation } from '../types.js'
 
 export interface RecommendSection {
@@ -42,6 +43,30 @@ export function createRecommendSection(kind: 'home' | 'search'): RecommendSectio
   let busy = false
   let painted = 0
   let exhausted = false           // 候选被「换一批」翻完了
+  let retries = 0
+  let retryTimer = 0
+
+  /**
+   * **没铺出东西**时自动再来几次（最多 3 次，退避 0.9 / 1.8 / 2.7 秒）。
+   *
+   * 三种"其实还来得及"的情况：① 桥是两步注入的，方法可能还没挂上（见 webstatus.ts）；
+   * ② 后端推荐只读本地的榜单缓存、**自己不额外发请求**，首页刚开时榜单可能还没落缓存
+   * （候选池空 = 这一次给不出东西）；③ 后端抖一下。
+   * 这三种以前都是一次判死、`hidden` 到用户切页为止 —— "第一次进首页没有推荐段"就是这么来的。
+   * 重试期间骨架留在原地（那本来就是"马上就来"的意思），三次都空才把整段藏掉。
+   */
+  function retryLater(): void {
+    if (retries >= 3) {
+      if (painted === 0) el.hidden = true
+      return
+    }
+    retries++
+    window.clearTimeout(retryTimer)
+    retryTimer = window.setTimeout(() => {
+      retryTimer = 0
+      if (document.contains(el)) void fill()   // 页面已经切走了就别再打桥
+    }, 900 * retries)
+  }
 
   function toCard(item: Recommendation): AlbumSummary {
     return {
@@ -54,11 +79,6 @@ export function createRecommendSection(kind: 'home' | 'search'): RecommendSectio
   }
 
   async function fill(): Promise<void> {
-    const bridge = window.pywebview?.api
-    if (!bridge?.get_recommendations) {     // 桥还没就绪 / 老后端：这一段不出现
-      el.hidden = true
-      return
-    }
     if (busy) return
     busy = true
     btn.disabled = true
@@ -68,10 +88,10 @@ export function createRecommendSection(kind: 'home' | 'search'): RecommendSectio
       renderAlbumSkeleton(row, kind === 'home' ? 5 : 6)
     }
     try {
-      const page: RecommendPage = await bridge.get_recommendations(kind, undefined, shown)
+      const page: RecommendPage = await bridgeCall('get_recommendations', [kind, undefined, shown])
       const items = page?.items ?? []
       if (items.length === 0) {
-        if (painted === 0) el.hidden = true   // 一次都没铺出来：整段别出现
+        if (painted === 0) retryLater()       // 候选池还冷：留着骨架再试，三次都空才藏
         else exhausted = true                 // 候选翻完了：按钮留着但点不动
         return
       }
@@ -83,8 +103,8 @@ export function createRecommendSection(kind: 'home' | 'search'): RecommendSectio
       // 封面 + 标题已经铺上，详情缓存丢后台慢慢预热（推荐打分要的就是详情里的 tag）
       warmAlbumList(items.map((item) => item.id))
     } catch {
-      // 推荐挂了不报错、不连累页面：没铺出来就整段不出现
-      if (painted === 0) el.hidden = true
+      // 推荐挂了不报错、不连累页面：没铺出来就整段不出现（先自己重试几次再说）
+      if (painted === 0) retryLater()
     } finally {
       busy = false
       btn.disabled = exhausted

@@ -1,5 +1,6 @@
 // resume.ts
 import { createIcon, icons } from './components/icons.js'
+import { bridgeCall } from './webstatus.js'
 import type { HistoryItem } from './types.js'
 
 /** 封面取不到时的兜底（跟空状态、闪屏用的是同一张头像图） */
@@ -48,6 +49,26 @@ export function createResume(): { el: HTMLElement; refresh: () => Promise<void> 
   // （`http://…/#/read?…`），拿去当 hash 会变成 `ttp://…` 那种垃圾
   let target = '#/popular'
   let loading = false
+  // 一次都没跟后端对上话之前，自己再来几次：桥是「两步注入」的（见 webstatus.ts），
+  // 方法有可能还没挂上，那时候静默返回 = 这张卡这一趟永远不出现。
+  let settled = false
+  let retries = 0
+  let retryTimer = 0
+  const RETRY_LIMIT = 6
+
+  /**
+   * 还没跟后端对上话就过 1.5 秒再来一次（最多 6 次，约 9 秒）。
+   * 一旦拿到过一次结果（有历史铺出卡 / 确实没历史）就不再自疗 —— 它是常驻导航上的一块，
+   * 在那儿反复空转没意义。
+   */
+  function retryLater(): void {
+    if (settled || retryTimer !== 0 || retries >= RETRY_LIMIT) return
+    retries += 1
+    retryTimer = window.setTimeout(() => {
+      retryTimer = 0
+      void refresh()
+    }, 1500)
+  }
 
   function paint(item: HistoryItem | null): void {
     current = item
@@ -73,16 +94,23 @@ export function createResume(): { el: HTMLElement; refresh: () => Promise<void> 
    * 拉一次「最近阅读」的第一条。导航里不报错：拿不到就当没有（这块是锦上添花，
    * 不能因为一次 sqlite 抖动让左下角挂个红字）。同时只跑一次 —— hashchange 会在
    * 连着翻页时排成一队，没必要都发出去。
+   *
+   * 拿不到（桥重注入把回调清掉 / 桥还没挂上 / 后端抖一下）就交给 retryLater 自己再试几次：
+   * 这张卡是「一次判死」的重灾区 —— 首趟没铺上，后面就再没人叫它了，用户只看到左下角空着。
+   * 走 bridgeCall 还有个好处：被清掉的调用会**当场**抛出来（不是永远挂着），loading 不会卡死。
    */
   async function refresh(): Promise<void> {
-    const api = window.pywebview?.api
-    if (!api?.get_history || loading) return
+    if (loading) return
     loading = true
     try {
-      const rows = await api.get_history(1)
+      const rows = await bridgeCall('get_history', [1], 2)
       paint(rows?.[0] ?? null)
+      settled = true
+      window.clearTimeout(retryTimer)
+      retryTimer = 0
     } catch {
-      // 读不到就先留着上一次的（比突然消失好），首次失败则保持隐藏
+      // 读不到就先留着上一次的（比突然消失好）；一次都没成功过的话过会儿再试
+      retryLater()
     } finally {
       loading = false
     }

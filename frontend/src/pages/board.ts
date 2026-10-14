@@ -11,7 +11,7 @@ import type { HeroHandle } from '../components/hero.js'
 import { onUnmount } from '../router.js'
 import { warmAlbumList } from '../prefetch.js'
 import { splashReady } from '../splash.js'
-import { waitForApi } from '../webstatus.js'
+import { bridgeCall, waitForApi } from '../webstatus.js'
 import { loadState, pickKey, saveState } from '../store.js'
 import type { AlbumSummary } from '../types.js'
 
@@ -381,10 +381,8 @@ export function boardPage(category: ComicCategory): HTMLElement {
 
   /** 一个分类的请求：首页各拉各的，谁先回来谁先铺，不互相等 */
   async function fillRow(row: CatRow, my: number): Promise<void> {
-    const api = window.pywebview?.api
-    if (!api) return
     try {
-      const items = await api.get_ranking(current.range, row.key, 1, current.sort)
+      const items = await bridgeCall('get_ranking', [current.range, row.key, 1, current.sort])
       if (my !== token) return
       row.items = items
     } catch (err) {
@@ -415,13 +413,11 @@ export function boardPage(category: ComicCategory): HTMLElement {
   /** 分类页往后翻页；图源不给总数，就用"这一页空了"当到底 */
   async function loadMore(): Promise<void> {
     if (busy || done || home) return
-    const api = window.pywebview?.api
-    if (!api) return
     const my = token
     busy = true
     paintGrid()
     try {
-      const next = await api.get_ranking(current.range, category, page + 1, current.sort)
+      const next = await bridgeCall('get_ranking', [current.range, category, page + 1, current.sort])
       if (my !== token) return
       page++
       if (next.length === 0) done = true
@@ -520,7 +516,7 @@ export function boardPage(category: ComicCategory): HTMLElement {
 
     try {
       // hero 永远是"当前这一页的分类"最火的三部
-      const top = await window.pywebview.api.get_ranking(range, category, 1, sort)
+      const top = await bridgeCall('get_ranking', [range, category, 1, sort])
       if (my !== token) return
       retries = 0
       hero = top.length === 0 ? null : renderHero(heroEl, top.slice(0, 3), (id) => {

@@ -16,6 +16,8 @@
 - [x] B4 本地收藏 + 「我的收藏」页（**不登录**：本地 sqlite 表 + 详情页心形 + `#/favorites`）（2026-10-13）
 - [x] 热门榜单改版：按分类分区（每类一行 / 右侧「更多」进分类页 / 卡片虚化入场 / 分类标签条与面板接成一块）（2026-10-13）
 - [x] 卡片悬浮手感：鼠标悬停再放大一点 + 加阴影（2026-10-13）
+- [x] 首进首页空白**真根因**修复：`API.client` / `API.download_dir` 是**公开**属性 → pywebview 注入桥时 `dir()`+`getattr()` 把它们递归展开（447 条，还现场把 jmcomic 客户端建出来 0.855s）→ 两步注入窗口被拉到秒级、WebView2 又注两遍 → 第二遍重建在飞回调表 → promise 永不 settle → `await loadSettings()` 挂死、**整窗空白**。改名 `_jm` / `_download_dir`（35 条 / 0.000s，桥就绪 ~100ms）；前端补 `waitForBridge` 静默窗 + `bridgeCall`（2026-10-14）
+- [x] 首进首页缺失修复：「为你推荐 / 热门推荐」段与左下角「继续阅读」卡**冷启动自愈** —— 启动闸门改成等桥**挂好方法**（`waitForBridge`）+ 这两块各自失败重试；闸门的「安静窗」改为按**方法引用变化**判重注入（只听 `pywebviewready` 会漏），`quietMs` 400→800（2026-10-14）
 - [x] 首屏 / 论坛「加载不出来」修复：客户端懒加载 + 后台预热、虚化入场兜底、失败自动重试、窗口回前台自愈（2026-10-14）
 - [x] B5 「论坛」页（= 全站评论流 `forum_pagination`，只读、不登录）：左侧导航「论坛」+ `#/forum`，评论下面挂进本子的封面条（2026-10-13）
 - [x] 搜索记录（最近搜索 12 条：搜索页 chips 点一下重搜 + 单条删除 / 清空）（2026-10-14）
@@ -35,6 +37,23 @@
 - [x] 导航栏「设置」移到底部左下角 + 新增「关于」页（`#/about`：能干什么 / 怎么用 / 数据在哪，README 的用户视角精简版）（2026-10-14）
 - [ ] 打包 P0 落码（待办）：`backend/paths.py` + `backend/server.py` + `main.py` 起静态服务 + `config.yaml` 的 `dev.use_dev_server` / `server.port` + `private_mode=False, storage_path=~/.jmreader/webview`
 - [ ] 打包 P1（待办）：256×256 的 `.ico` 源图、单实例检测、WebView2 Runtime 缺失提示、日志落盘 `~/.jmreader/logs/`
+
+## 首进首页「整窗空白」：闸门按方法引用判重注入 改动清单（2026-10-14）
+
+接上一轮的根因修复（后端 `_jm` / `_download_dir` 改名 + `waitForBridge` + `bridgeCall`）。这一轮做**真窗口复测**，
+发现闸门的「安静窗」还有一个漏洞，顺手补掉。**没打包**（用户说还要加东西）。
+
+- **漏洞**：`readyStamp` 原来只由 `pywebviewready` 刷新。真机上遇到过桥比我们的脚本先挂好 ——
+  事件早派发完了、`readyStamp` 停在 0 → `Date.now() - 0` 恒大于 `quietMs` → **闸门当场放行**，
+  正好撞上第二遍注入（那一次 3 个在飞调用被清）。探针那次实测：注入 1128ms / 1250ms，而首个调用 1248ms。
+- **改法**：`webstatus.ts` 换成**按方法引用变化**判重注入（`noteMount()`）——`_createApi()` 每跑一遍都是
+  `new Function()` 现造一套函数，引用变了就是又注了一遍，不依赖事件、漏不掉。`quietMs` 400 → 800
+  （探针实测两遍注入最多差 ~400ms；多等这点不花成本，闪屏本来要等 `splashReady` 才揭幕）。
+- **验收**：`tsc --noEmit` + `npm run build` exit 0；真窗口探针 `tmp/_probe_bridge.py`（自己起真 pywebview，
+  三路仪器：注入次数与时刻 / 后端被调到的时刻 / `evaluate_js` 送返回值有没有炸）——`dev`（vite 5173）×3 +
+  `--dist`（另起静态服务喂 `frontend/dist`，打包后的样子）×2，**5/5 全绿**：`appKids=1`、`rec=shown`、
+  `recCards=10`、`resume=shown`、`returnValueFAIL=[]`。其中一次刚好抓到「注两遍」（间隔 59ms）：**零失败**。
+  无头回归 `tmp/_check_coldstart.py` / `tmp/_check_bridge_wipe.py` / `tmp/_check_nav.py` 全 PASS。
 
 ## 阅读器浮层：点外面就关 改动清单（2026-10-14）
 
@@ -489,6 +508,8 @@
 - **2026-10-14**：详情页标题 / 作者 / 观看收藏数 / 标签的实色底**写死颜色**，不用 `--bg` 变量：毛玻璃开着时
   那套变量是半透明的，拿它垫等于没垫。
 
+- **2026-10-14**：判断 pywebview「又注入了一遍」**别只听 `pywebviewready`**，看**方法引用变没变**（`_createApi()` 每次都 `new Function()`）：事件有可能在我们的监听挂上之前就派发完了（桥比脚本先就绪），那种情况下"最近一次注入"无从得知，闸门会当场放行。`waitForBridge` 的 `quietMs` 取 **800ms**（实测两遍最多差 ~400ms）；等它的代价是 0 —— 闪屏要等首页铺完（`splashReady`）才揭幕。
+- **2026-10-14**：真窗口验证**用真的 pywebview**（`tmp/_probe_bridge.py`，三路仪器打时间线），别只信无头 Chrome 里的假桥 —— 这个 bug 恰恰只在真桥「注两遍」的时序里现形。
 - **2026-10-14**：开场动画**写死在 `index.html` 里**（内联 HTML + CSS + SVG），不放 `main.ts`：它是唯一“早于应用 JS”的位置，dev 态模块图那几百 ms 里就已经在画了。
 - **2026-10-14**：闪屏**不阻塞路由**——首页在闪屏底下照常铺，揭幕时露出的是成品；骨架→内容那段过程用户完全看不见，也避免 hero 的虚化入场在揭幕后重演。
 - **2026-10-14**：字标用**手画单线 SVG path + `stroke-dashoffset` 描边**，不用普通字体转 path（转出来是轮廓，含孔字母会“先描外圈再描内圈”）；打字体的备选只当 `splash.style: font` 的降级开关。
@@ -509,6 +530,13 @@
 - **2026-10-14**：配置落用户目录：开发态继续读仓库根 `config.yaml`（保持手感），冻结态读 `~/.jmreader/config.yaml`（首启用默认值写一份）；统一入口放 `backend/paths.py`。
 - **2026-10-14**：`.ps1` 一律存 **UTF-8 带 BOM**（PS 5.1 把无 BOM 脚本按 ANSI 读，中文注释会直接搞坏语法解析）—— 这是 `AGENTS.md` 里「脚本 UTF-8 无 BOM」的**例外**，那条针对 sh / `.py`。
 - **2026-10-14**：发布形态用 `--windowed`（实测与 console 行为一致）；但 `evaluate_js` 在 windowed 冻结态会永久挂住，探针改用「页面自己通过真桥回报」（`tmp/_probe_exe.py`）。
+- **2026-10-14**：**启动闸门必须等「方法挂上」**，不能只判 `window.pywebview?.api` 在不在 —— pywebview 是两步注入（`js/api.js` 先建**空对象** `{api:{}}`，判真；`js/finish.js` 才挂方法、再派发 `pywebviewready`）。`waitForPywebview()` 因此换成 `waitForBridge(method='get_settings')`（等具体方法 + 每 100ms 轮询 + 监听事件兜底；2026-10-14 又加了 `quietMs=800` 的静默窗与「按方法引用变化判重注入」，见上面那份改动清单）；`waitForApi()` 保留给页面内「桥迟到自己接上」用。
+- **2026-10-14**：**启动期「一次判死」的代码都要能自愈** ——「推荐段」和「继续阅读」卡在桥没好时会把自己**永久藏起来**（不报错、不重来，用户只看到少两块）。现在推荐段最多补 3 次（退避 0.9/1.8/2.7s，期间留骨架）、继续阅读卡最多补 6 次 ×1.5s（拿到过一次结果就停）。回归检查 `tmp/_check_coldstart.py`：假桥故意延迟 2s 才挂方法，旧包 FAIL、现包 PASS。
+
+- **2026-10-14**：**别在 `js_api` 上挂公开的非方法属性** —— pywebview 的 `get_functions` 拿 `dir()`+`getattr()` 递归展开，公开属性一律变成 JS 方法（`client` 412 条 / `download_dir` 300 多条），而且 `getattr` 会在注入线程里现场求值（jmcomic 客户端 0.855s）。实测：改私有名之后 funcList **447 → 35 条、0.855s → 0.000s**，桥就绪 **1.3~4.8s → ~100ms**，首页首屏 ~900ms。
+- **2026-10-14**：前端两条纪律 —— ① 启动闸门 `waitForBridge()` 要等**最后一次注入安静下来**（`quietMs=400`）再放行；② 启动路径上的**读**调用走 `bridgeCall()`（被清掉的调用当场判死、自动重发；写接口不幂等，别用）。原因见下一条。
+- **2026-10-14**：**桥会注两遍，第二遍会清掉在飞调用的回调**（WebView2 给 about:blank 和真页面各报一次 NavigationCompleted；先到那次的 finish.js 落在我们的文档里，对着后建的对象又跑一遍 `_createApi()`）。症状：`window.pywebview._returnValuesCallbacks.<fn>.<id> is not a function` + 那个 promise 永不 settle。回归检查 `tmp/_check_bridge_wipe.py`（真 api.js/finish.js + 假 Python 端）：修复前的包两种场景都整窗空白，现包照铺。
+
 ## 下一步
 
 1. 用户真窗口验收（真图源、5173 + `main.py`）：
@@ -524,7 +552,7 @@
    导出成文件包。
 
 
-5. **推荐段健壮性**（2026-10-14 已诊断、**未拍板改**）：`frontend/src/components/recommend.ts` 的 `load()` 一次性、失败不重试 → 桥没就绪 / 抛异常 / 候选池空就永久隐身（hero 与分类横条都有重试）。建议：失败自动补 1~2 次重试 + 兜底用榜单数据铺热度。另：`waitForPywebview()` 判定偏松（理论坑，真机探针没抓到）。见 `tmp/交接文档.md` §3.1 / §5.15 / §7 第 10、11 条。
+5. ~~**推荐段健壮性**~~ —— **2026-10-14 已修，并查到了真正的根因**（闸门另按方法引用判重注入、`quietMs=800`，见上面那份改动清单）：pywebview 启动会注两遍桥，第二次 `_createApi()` 重建在飞回调表 → 那些 promise 永不 settle → `await loadSettings()` 挂死、整窗空白。根因在后端 `API.client` / `API.download_dir` 是公开属性（被递归展开成 447 条、现场建客户端 0.855s，把两步窗口拉到秒级），已改私有名；前端配 `waitForBridge` 静默窗 + `bridgeCall` 重试。回归：`tmp/_check_coldstart.py`（假桥晚挂方法）、`tmp/_check_bridge_wipe.py`（模拟注两遍）。还想要的（可选）：候选池真空时兜底用榜单数据铺热度。
 6. ~~开场动画~~ —— **2026-10-14 已完成**（设计 `tmp/开场动画设计.md`，调研 `tmp/开场动画调研.md`）。真机验收两件事：① 现在的落位是「字标取代 `孤竹漫画` 整行，下面 `Guzhu Comic` 不动」，若要的是只换掉「孤竹」留下「漫画」（`GuZhu漫画`），改一处文案即可；② 毛玻璃开着时开场那一下的底色（设计稿 §3.4）。
 
 7. **打包 P0 落码**（见 `tmp/打包分发设计.md` §4 / §11）：`backend/paths.py`（配置 + dist 路径统一入口）+ `backend/server.py`（本地静态服务，端口 47753 + 回退）+ `main.py` 按 `dev.use_dev_server` 选 URL + `API(base_url=...)` + `webview.start(private_mode=False, storage_path=...)`。验收：`scripts/build_exe.ps1` 出包 → 双击 → 走一遍首页 / 搜索 / 详情 / 阅读 / 最近阅读 / 设置 → 重开确认主题与偏好还在。

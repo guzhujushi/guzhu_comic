@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" href="/apple-touch-icon.png" type="image/png" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>frontend</title>
+    <!-- 主题必须在第一帧之前定下来，不然浅色用户会先闪一下暗色。
+         读的就是 store.ts 的格式（guzhu: 前缀 + JSON），两边必须对得上。 -->
+    <script>
+      try {
+        if (JSON.parse(localStorage.getItem('guzhu:theme')) === 'light') {
+          document.documentElement.dataset.theme = 'light'
+        }
+      } catch (e) {}
+    </script>
+    <style>html{background:#07080a}html[data-theme=light]{background:#eef0f3}#splash{z-index:100;place-items:center;display:grid;position:fixed;inset:0}#splash-bg{-webkit-backdrop-filter:blur(24px)saturate(150%);backdrop-filter:blur(24px)saturate(150%);background:radial-gradient(120% 80% at 50% 42%,#ffffff12,#0000 60%),radial-gradient(90% 70% at 50% 118%,#6084ff29,#0000 62%),#08090ca8;transition:opacity .12s linear;position:absolute;inset:0}#splash[data-out] #splash-bg{opacity:0}#splash-mark{shape-rendering:geometricprecision;filter:drop-shadow(0 0 #0000);width:min(56vw,620px);height:auto;animation:.7s ease-out 1.05s forwards splash-glow;display:block;position:relative;overflow:visible}#splash-mark path{fill:none;stroke:url(#splash-ink);stroke-width:25px;stroke-linecap:round;stroke-linejoin:round;stroke-dasharray:1;stroke-dashoffset:1px;animation:.12s linear forwards splash-write}@keyframes splash-write{to{stroke-dashoffset:0}}@keyframes splash-glow{to{filter:drop-shadow(0 10px 38px #92aaff57)}}#splash-bar{gap:7px;transition:opacity .16s linear;display:flex;position:absolute;top:calc(50% + min(10vw,118px));left:50%;transform:translate(-50%)}#splash-bar i{opacity:.16;width:8px;height:8px;animation:1.8s linear infinite splash-dot;animation-delay:calc(var(--i) * .11s);background:#a8ccff;border-radius:50%}@keyframes splash-dot{0%{opacity:.16}22%{opacity:1}44%,to{opacity:.16}}#splash[data-out] #splash-bar{opacity:0}html[data-theme=light] #splash-bar i{background:#2f6fbe}html[data-theme=light] #splash-bg{background:radial-gradient(120% 80% at 50% 42%,#ffffffeb,#0000 62%),radial-gradient(90% 70% at 50% 118%,#7896ff24,#0000 62%),#f0f2f6b8}html[data-theme=light] #splash-mark path{stroke:#17191d}@keyframes splash-glow-light{to{filter:drop-shadow(0 10px 34px #3a58aa42)}}html[data-theme=light] #splash-mark{animation-name:splash-glow-light}@media (prefers-reduced-motion:reduce){#splash-mark{filter:drop-shadow(0 10px 38px #92aaff57);animation:none}html[data-theme=light] #splash-mark{filter:drop-shadow(0 10px 34px #3a58aa42)}#splash-mark path{stroke-dashoffset:0;animation:none}#splash-bar i{opacity:.7;animation:none}}</style>
+    <script type="module" crossorigin src="/assets/index-DQdReEBP.js"></script>
+    <link rel="stylesheet" crossorigin href="/assets/index-DqSvrVZl.css">
+  </head>
+  <body>
+    <div class="paper-grain" aria-hidden="true"></div>
+    <div id="splash" aria-hidden="true">
+      <div id="splash-bg"></div>
+      <div id="splash-bar" aria-hidden="true">
+        <i style="--i:0"></i><i style="--i:1"></i><i style="--i:2"></i><i style="--i:3"></i><i style="--i:4"></i><i style="--i:5"></i><i style="--i:6"></i><i style="--i:7"></i><i style="--i:8"></i><i style="--i:9"></i><i style="--i:10"></i><i style="--i:11"></i><i style="--i:12"></i><i style="--i:13"></i>
+      </div>
+      <!-- 一笔一条 path：时长按各笔长度分（合起来 1500ms，所以笔速一致），顺序就是下笔顺序。
+           几何：笔画 25；大写顶中心 62 / x 高顶中心 100 / 基线中心 189；绕基线斜切 14°（斜体）。
+           圆弧全都换成了三次贝塞尔 —— 斜切对贝塞尔是精确的，对 A 弧不是（会变成椭圆弧）。
+           h 的肩膀终点落在竖线中心线上 —— 偏一点左边就探出个小疙瘩（所以别乱改）。
+           splash.ts 落位时只从这里克隆一份进左侧导航 —— 路径数据全项目就这一处。 -->
+      <svg id="splash-mark" viewBox="37 45 645 161" role="img" aria-label="GuZhu">
+        <defs>
+          <linearGradient id="splash-ink" gradientUnits="userSpaceOnUse" x1="60" y1="60" x2="640" y2="200">
+            <stop offset="0" stop-color="#ffffff" />
+            <stop offset="42%" stop-color="#f2f5fb" />
+            <stop offset="100%" stop-color="#aab4c6" />
+          </linearGradient>
+        </defs>
+        <path pathLength="1" style="animation-duration:367ms;animation-delay:0ms" d="M 168.7 73.5 C 146.9 55 109.8 59.2 82.4 83.3 C 55 107.4 46 143.6 61.4 167.7 C 76.8 191.8 111.8 196 142.8 177.5 L 153.7 133.5 L 117.3 133.5" />
+        <path pathLength="1" style="animation-duration:220ms;animation-delay:367ms" d="M 218.2 100 L 203.2 160 C 193.6 198.7 251.6 198.7 261.2 160 L 276.2 100" />
+        <path pathLength="1" style="animation-duration:403ms;animation-delay:587ms" d="M 341.7 62 L 446.7 62 L 310 189 L 415 189" />
+        <path pathLength="1" style="animation-duration:133ms;animation-delay:990ms" d="M 502.7 62 L 471 189" />
+        <path pathLength="1" style="animation-duration:157ms;animation-delay:1123ms" d="M 529 189 L 544 129 C 548 113 538.2 100 522.2 100 C 506.2 100 490 113 486 129" />
+        <path pathLength="1" style="animation-duration:220ms;animation-delay:1280ms" d="M 607.2 100 L 592.2 160 C 582.6 198.7 640.6 198.7 650.2 160 L 665.2 100" />
+      </svg>
+    </div>
+    <div id="nav"></div>
+    <div id="app"></div>
+  </body>
+</html>

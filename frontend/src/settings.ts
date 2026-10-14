@@ -1,3 +1,5 @@
+import { bridgeCall } from './webstatus.js'
+
 /** 应用设置：读的是后端 config.yaml，进程内缓存一份（保存后用 loadSettings(true) 重新拉） */
 export interface AppSettings {
   window: {
@@ -79,10 +81,11 @@ let cached: AppSettings | null = null
 /** 读配置；默认走缓存，force=true 时重新问后端要 */
 export async function loadSettings(force = false): Promise<AppSettings> {
   if (cached && !force) return cached
-  const api = window.pywebview?.api
-  if (!api?.get_settings) return DEFAULT_SETTINGS
+  if (!window.pywebview?.api) return DEFAULT_SETTINGS
   try {
-    const raw = (await api.get_settings()) as Partial<AppSettings>
+    // 走 bridgeCall：启动那一下 pywebview 会重注入一遍，正在飞的调用回调会被清掉、
+    // promise 永不 settle —— 直接 await 的话整个启动就挂死在这儿（见 webstatus.ts）
+    const raw = (await bridgeCall('get_settings', [])) as Partial<AppSettings>
     cached = {
       ...DEFAULT_SETTINGS,
       ...raw,
