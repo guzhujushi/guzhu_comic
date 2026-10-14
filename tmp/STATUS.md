@@ -29,12 +29,22 @@
       空状态漫画气泡、阅读纸纹（feTurbulence 噪点层）、暗/浅双主题 + `clip-path: circle()` 圆形揭示、封面 → 阅读器共享元素转场（2026-10-14）
 - [x] 不做：一切账号体系（登录 / 网页端收藏 / 签到 / 发评论）—— 会落地账号凭据，有隐私风险（2026-10-13 定）
 - [x] 打包分发评估（`tmp/打包分发设计.md`）：onedir 方案 / 端口 47753 / 本地静态服务挂 `frontend/dist` / 误报清单 / 跨平台边界；配套 `scripts/build_exe.ps1` + `tmp/_probe_exe.py`（2026-10-14，冻结态实测通过：开窗、桥往返、30 张卡、localStorage 可写、38.9 MB）
+- [x] 阅读器：点目录 / 设置浮层外面就收起它（那一下不再顺手翻页 / 收工具条），面板开着时滚轮让给面板（2026-10-14）
 - [x] 左下角「继续阅读」：一张卡（最近读过的那本 + 封面 + 读到第几页）+ 一个按钮，点了直接进阅读器落回上次那页；没读过就整块藏起来（2026-10-14）
 - [x] README 页首加「亮点」段（数据不出本地 / 能反复读 / 接着上次看 / 推荐真算 / 无广告 / 现代桌面壳…）（2026-10-14）
 - [x] 导航栏「设置」移到底部左下角 + 新增「关于」页（`#/about`：能干什么 / 怎么用 / 数据在哪，README 的用户视角精简版）（2026-10-14）
 - [ ] 打包 P0 落码（待办）：`backend/paths.py` + `backend/server.py` + `main.py` 起静态服务 + `config.yaml` 的 `dev.use_dev_server` / `server.port` + `private_mode=False, storage_path=~/.jmreader/webview`
 - [ ] 打包 P1（待办）：256×256 的 `.ico` 源图、单实例检测、WebView2 Runtime 缺失提示、日志落盘 `~/.jmreader/logs/`
 
+## 阅读器浮层：点外面就关 改动清单（2026-10-14）
+
+用户报：阅读页开着的设置 / 章节目录，点面板外面的地方应该只是把它关掉。
+
+- `frontend/src/pages/reader.ts`：
+  - 图片区的 `click` handler 开头加 `if (sheetOpen()) { openSheet(null); return }` —— 这一下只用来收面板，不再顺手翻页 / 收工具条；
+  - 新增 `onOutsideClick`（挂 `document`，冒泡期，`onUnmount` 解绑）：面板开着且点击目标不在 `.reader-sheet` / `.chapters-btn` / `.settings-btn` 里 → `openSheet(null)`。两个开关按钮必须放过，否则「目录 → 设置」会先切成设置、再被判成"点了外面"立刻关掉；
+  - `onWheelFlip` 加 `sheetOpen()` 短路：单页模式下滚设置面板 / 目录，底下那页会跟着翻。
+- 验收：`tsc --noEmit` + `npm run build` exit 0；`tmp/_check_reader_sheet.py`（无头 Chrome + 假桥，10 步点击序列 **ALL PASS**：开→点图片区关→切面板不被误关→点留白关）；截图 `tmp/_ui/v9-reader-{chapters,settings}.png`。
 ## 左下角「继续阅读」+ README 亮点 改动清单（2026-10-14）
 
 用户要两件事：**左下角加一个「继续阅读」按钮**（显示最近阅读里时间最近的那本，上面渲染卡片）+ **把项目亮点写到 README 最显眼的位置**。

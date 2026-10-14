@@ -660,6 +660,9 @@ export function readerPage(params: Record<string, string>): HTMLElement {
 
   // 点左右 30% 翻页，中间点一下收 / 放工具条（左右翻页设置里可以关）
   imgsEl.addEventListener('click', (e) => {
+    // 面板开着时，这一下只用来收面板：否则点左右两侧会顺手翻页、点中间会顺手收掉工具条，
+    // 而人本来只是想把手伸到面板外面点一下
+    if (sheetOpen()) { openSheet(null); return }
     const x = e.clientX / window.innerWidth
     if (clickToPage && x < 0.3) { goTo(currentIndex - 1); return }
     if (clickToPage && x > 0.7) { goTo(currentIndex + 1); return }
@@ -667,9 +670,21 @@ export function readerPage(params: Record<string, string>): HTMLElement {
     else showToolbar()
   })
 
+  // 点面板外面就收面板。**工具条上那两个开关要放过**：它们自己会切 / 关，
+  // 让这里再插一手的话「目录 → 设置」会先切成设置、紧接着又被判成"点了外面"给关掉。
+  // 走冒泡、挂在 document 上：图片区那一层漏掉的地方（四周留白）也要算数。
+  const onOutsideClick = (event: MouseEvent): void => {
+    if (!sheetOpen()) return
+    const target = event.target
+    if (target instanceof Element && target.closest('.reader-sheet, .chapters-btn, .settings-btn')) return
+    openSheet(null)
+  }
+  document.addEventListener('click', onOutsideClick)
+
   // 单页模式下滚轮就是翻页；连续滚动交给浏览器自己滚
   const onWheelFlip = (e: WheelEvent) => {
-    if (mode !== 'single' || Math.abs(e.deltaY) < 6) return
+    // 面板开着就把滚轮让给面板自己滚：单页模式下滚设置面板 / 目录，底下那页会跟着翻
+    if (sheetOpen() || mode !== 'single' || Math.abs(e.deltaY) < 6) return
     const now = performance.now()
     if (now - lastFlipAt < 140) return
     lastFlipAt = now
@@ -711,6 +726,7 @@ export function readerPage(params: Record<string, string>): HTMLElement {
     window.removeEventListener('wheel', onWheelFlip)
     window.removeEventListener('scroll', onScroll)
     window.removeEventListener('keydown', onKey)
+    document.removeEventListener('click', onOutsideClick)
     window.removeEventListener('pagehide', onHide)
     window.removeEventListener('wheel', noteUserInput)
     window.removeEventListener('touchmove', noteUserInput)
