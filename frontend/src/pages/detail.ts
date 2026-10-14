@@ -187,13 +187,13 @@ function renderDetail(
           <button class="download-btn" type="button"><morph-icon size="16" stroke-width="1.8"></morph-icon><span class="download-label">下载</span></button>
         </div>` : ''}
         <p class="desc">${escapeHtml(data.description)}</p>
-        ${data.related.length ? '<h2 class="section-title">相关作品</h2><div class="album-list related-list"></div>' : ''}
         <h2 class="section-title">章节（${data.chapters.length}）</h2>
         <div class="chapter-list"></div>
         <div class="chapter-actions">
           <button type="button" class="chapter-more" hidden></button>
           <button type="button" class="chapter-jump" hidden></button>
         </div>
+        ${data.related.length ? '<h2 class="section-title">相关作品</h2><div class="album-list related-list"></div>' : ''}
       </div>
       ${withSide ? '<aside class="detail-side"></aside>' : ''}
     </div>

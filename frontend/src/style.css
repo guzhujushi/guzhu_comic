@@ -1207,15 +1207,15 @@ body.reading { padding-left: 0; }
 .reader-ruler { position: fixed; top: 0; left: 0; right: 0; height: 2px; z-index: 62; pointer-events: none; }
 .reader-ruler span { display: block; height: 100%; width: 0; background: var(--primary); box-shadow: 0 0 8px rgba(87, 193, 255, .7); }
 
+/* 阅读器的浮层一律不做毛玻璃：backdrop-filter 会把底下的漫画图糊掉 —— 漫画是内容，不该被模糊。
+   去掉模糊就把底色填实一点（半透明黑直接压在白纸页上，字会糊在一起）。 */
 /* 顶部信息条：返回 + 标题 / 页码 + 自动滚屏 / 设置 */
 .reader-top {
   position: fixed; top: 0; left: 0; right: 0; z-index: 60;
   display: flex; align-items: center; gap: 10px;
   padding: 10px 14px;
-  background: rgba(10, 11, 13, .55);
+  background: rgba(10, 11, 13, .88);
   border-bottom: 1px solid rgba(255, 255, 255, .08);
-  backdrop-filter: blur(18px) saturate(1.6);
-  -webkit-backdrop-filter: blur(18px) saturate(1.6);
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, .08);
   transition: transform .18s ease, opacity .18s ease;
 }
@@ -1230,10 +1230,8 @@ body.reading { padding-left: 0; }
   position: fixed; left: 50%; bottom: 22px; z-index: 60;
   display: flex; align-items: center; gap: 8px;
   padding: 8px; border-radius: 999px;
-  background: rgba(16, 17, 20, .62);
+  background: rgba(16, 17, 20, .9);
   border: 1px solid rgba(255, 255, 255, .12);
-  backdrop-filter: blur(20px) saturate(1.6);
-  -webkit-backdrop-filter: blur(20px) saturate(1.6);
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, .12), 0 18px 40px -22px rgba(0, 0, 0, .85);
   transform: translateX(-50%);
   transition: transform .18s ease, opacity .18s ease;
@@ -1256,10 +1254,8 @@ body.reading { padding-left: 0; }
   display: flex; flex-direction: column;
   width: min(560px, calc(100vw - 32px)); max-height: min(62vh, 540px);
   transform: translateX(-50%);
-  background: rgba(16, 17, 20, .68);
+  background: rgba(16, 17, 20, .92);
   border: 1px solid rgba(255, 255, 255, .12); border-radius: var(--radius-lg);
-  backdrop-filter: blur(24px) saturate(1.6);
-  -webkit-backdrop-filter: blur(24px) saturate(1.6);
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, .12), 0 18px 40px -22px rgba(0, 0, 0, .85);
   overflow: hidden;
 }
@@ -1308,10 +1304,8 @@ body.reading { padding-left: 0; }
   position: fixed; left: 50%; bottom: 96px; z-index: 58; transform: translateX(-50%);
   width: min(420px, calc(100vw - 32px)); gap: 10px;
   padding: 20px 18px; margin: 0;
-  background: rgba(16, 17, 20, .7); border: 1px solid rgba(255, 255, 255, .12);
+  background: rgba(16, 17, 20, .92); border: 1px solid rgba(255, 255, 255, .12);
   border-radius: var(--radius-lg); box-shadow: inset 0 1px 0 rgba(255, 255, 255, .12), 0 18px 40px -22px rgba(0, 0, 0, .85);
-  backdrop-filter: blur(24px) saturate(1.6);
-  -webkit-backdrop-filter: blur(24px) saturate(1.6);
 }
 .reader[data-mode="single"] .reader-end[hidden] { display: none; }
 
@@ -1319,10 +1313,8 @@ body.reading { padding-left: 0; }
 .reader-toast {
   position: fixed; top: 16px; left: 50%; z-index: 63;
   margin: 0; padding: 7px 16px; border-radius: 999px;
-  background: rgba(12, 13, 15, .9); border: 1px solid var(--border-strong);
+  background: rgba(12, 13, 15, .94); border: 1px solid var(--border-strong);
   color: var(--text-soft); font-size: 12.5px;
-  backdrop-filter: blur(14px);
-  -webkit-backdrop-filter: blur(14px);
   opacity: 0; transform: translate(-50%, -10px); pointer-events: none;
   transition: opacity .22s ease, transform .22s ease;
 }
