@@ -65,6 +65,20 @@
 - [x] 体验三项（2026-10-14，用户从“还能优化什么”里挑的**前三项**）：
   ①「返回就到原处」—— 全站滚动位置 + 分类页 / 论坛页码写进地址；②详情页作者 / 标签可点，一下按它重搜；
   ③阅读器工具条按指针位置分上下唤出（第四项“下载页总占用 / 按话下载 / 导出”按用户要求**先砍掉**）
+- [x] 安卓版可行性评估（`tmp/安卓版可行性评估.md`，2026-10-14）：结论 = **能上，但不是一个"重新打包"的活**；
+  真正的死穴早不是网络层 —— **`curl_cffi` 0.16.3 已发 `android_24_arm64_v8a` 官方 wheel（cp313/cp314）**，Chaquopy 17.x 吃的正是这个 tag（Python 3.10~3.15、minSdk 24、pip 只装 wheel），
+  所以"Python 端上跑"在 2026-10 从死路变成可做（**待实测**：§6-T1 装不上就退 R1）；
+  卡点三件：**Android 生命周期**（全项目建立在"窗口在 = 进程活"上）/ **桥**（js_api 54 个方法在安卓 WebView 上要换通道）/ **触屏 UI**（hover 显形 + 键盘 + 208px 固定左栏）；
+  非技术风险最高：**Play 上不了架 + 国内 APP 备案**；
+  建议第一步 P0（1~2 人天、**不用安卓机器**）：把 js_api 换成本地 **HTTP JSON-RPC + token** —— 桌面一起切，手机浏览器当场就能试这套 UI
+- [x] 安卓端**技术栈调研**（`tmp/安卓端技术栈调研.md`，2026-10-14）：定案 = **Chaquopy 17.1.0（CPython 3.14，MIT）+ AndroidX WebView + 本地 HTTP JSON-RPC**；
+  minSdk 26 / compileSdk 36 / targetSdk 36 / 只出 arm64-v8a；后台下载走**前台服务 `dataSync`**；壳用 Kotlin；构建 AGP 8.13.x + `buildPython` 指向仓库 `.venv`（3.14.6）；
+  **本机解包实测**：curl_cffi 安卓轮子里的 `_wrapper.abi3.so` 22.9 MB（libcurl-impersonate 静态链进去）、PT_LOAD 按 **16 KB 对齐**（Android 15+ 能加载）、要的 `libpython3.14.so` 由 Chaquopy 运行时提供（已从 Maven Central 下载核对）；
+  **新发现的硬约束**：Android 15 起 `dataSync` 前台服务 **24 小时内累计上限 6 小时**，超时回调 `onTimeout()` → 整本下载必须优雅收尾 + 靠断点续传接着下（现有设计正好扛得住）
+ - [ ] 安卓**真机与 USB 连接现状**（2026-10-15 实测，见 `tmp/安卓真机连接与调试操作手册.md`）：本机现在插着的是 **HUAWEI Mate 80 Pro（`SGT-AL50`）**，Host 侧只报 `HDC Device`（华为 `hdc`、不是 ADB），注册表里它的 USB 历史只有 MTP + Mass Storage、**从没出现过 ADB 接口**；
+  **Mate 80 全系（2025-11-25 上市）是 HarmonyOS 6**，鸿蒙 5 / NEXT 起不兼容 Android 应用 → **这台装不了我们的 APK，不能当测试机**（旁证：MTP 根目录只有 `HO_DATA_EXT_MISC` / `图库` 那套，没有 `Android/`）；
+  PC 历史里唯一枚举成 `ADB Device` 的是 **iFlytek EBook R2**（Rockchip，arm64，墨水屏，2026-07-22）→ 只够验 T1 总闸。
+  **卡在用户这一句**：另一台手机是什么型号 / 系统、能不能装 APK —— 这是 P1 开工前的硬前置条件。
 
 ## A / B 组后端补齐（2026-10-14 用户定：**只做 A、B；C 组不做，以后也不做**）
 
@@ -1074,7 +1088,35 @@ A / B 组后端补齐 + 前端热更新通道（§「A / B 组后端补齐」「
 - **剩下的都是可选 / 等条件**（代码签名、VirusTotal 补扫 0.1.1、第一次真有内容变化的热更、0.1.0 老用户换包、
   阅读器双页 / 跨页、推荐二期、开场毛玻璃底色真机验收）—— 明细见 `tmp/交接文档.md` §0.5 与 §7 末尾「还剩的」。
 
+## 安卓版（2026-10-14 评估 + 技术栈定案；**只调研、未动手**）
+
+两份文档（分工别搞混）：
+
+- `tmp/安卓版可行性评估.md` —— **难点 D1~D10**、按文件的改动清单、**待实测 T1~T8 的唯一编号**（T1 是总闸）、建议路线 P0~P5 与工作量（合计 3~5 周）。
+- `tmp/安卓端技术栈调研.md` —— 逐层选型与理由、**已核实证据**（§3）、**环境三层与设备要求**（§5）、待实测的技术栈视角（§4）。
+- 配套脚本：`tmp/_check_android_so_align.py`（拆安卓 wheel，检查 .so 是否按 16 KB 对齐 —— Android 15+ 的 16 KB 页设备上，没对齐 = 加载直接失败）。
+
+要点：
+
+- **能上，但不是"重新打包"**：pywebview / PyInstaller / WebView2 / DWM / 注册表 / 托盘在安卓上全废，`main.py` 要重写；**业务层（`api.py` 2441 行 + 前端 31 个 .ts）基本可原样复用**。
+- **路线**：R1 瘦客户端（后端留 PC，最省力）/ **R2 Chaquopy 端上跑（选定）** / R3 p4a+Kivy+pywebview-android（不建议，白背一套 UI 栈）/ R4 Kotlin 重写（不建议，TLS 指纹要自己拼 BoringSSL）。
+- **选型（已定）**：**Chaquopy 17.1.0**（MIT、CPython 3.14）+ **AndroidX WebView** + **本地 HTTP JSON-RPC**；壳用 Kotlin；minSdk 26 / compileSdk·targetSdk 36 / 只出 arm64-v8a；后台下载走前台服务 **`dataSync`**（Android 15 起 24h 内累计 6 小时上限，超时回调 `onTimeout()` → 必须优雅收尾 + 续传）。
+- **关键依赖事实（已核实）**：`curl_cffi` PyPI 有 `android_24_arm64_v8a` 轮子（0.16.3，8.21 MB，内含 22.9 MB 静态链好 libcurl-impersonate 的 `.so`，**16 KB 对齐**）；它要的 `libpython3.14.so` 由 Chaquopy 运行时提供；Chaquopy 17.1 = Python 3.10~3.15 / minSdk 24 / AGP 7.3~9.4 / 17.0 起 **pip 只装 wheel**；Pillow、pycryptodome 在 Chaquopy 官方仓库里有；jmcomic / commonx 是纯 Python。
+- **环境三层（别混）**：① 构建环境**全在 PC 上**（Android Studio + SDK 36 + Build-Tools/Platform-Tools，Gradle JDK 用 AS 自带的 JBR 21，别用系统那个 JDK 26），手机不参与；② 调试通道走 **`adb`（USB 或 Android 11+ 系统自带的"无线调试"）—— 不需要 sshd、不需要 root、手机侧只要开 USB 调试**；③ 运行**必须一台 arm64 真机**（模拟器顶不上：`curl_cffi` 只有 arm64 轮子，x86_64 镜像在 pip 阶段就装不上，arm64 镜像在 x86 PC 上慢到不能调 UI）。**2026-10-15 补**：本机 USB 现状实测——插着的那台华为 Mate 80 Pro 是 HarmonyOS 6、只报 `HDC Device`、无 ADB 端点，**装不了 APK，当不了测试机**；测试机仍待定（见 `tmp/安卓端技术栈调研.md` §5.7、`tmp/安卓真机连接与调试操作手册.md`）。
+- **设备用法**：留一台固定当测试机（插线常驻、反复装卸、跑整本下载），**优先用较弱/较旧那台做验收** —— 长图渲染、一话 200 张图的内存、后台被杀只有弱机才暴露；主力机留到"日常用着顺不顺手"那一次。
+- **要改的部分**：后端 `main.py` 重写 + `server.py` 挂 `/api`（+ 随机 token）+ `paths.py` 注入 app 私有目录 + `desktop.py` 拆平台门面（安卓侧用 Chaquopy 的 `java` 模块）+ `settings_spec` 加平台属性；前端加桥垫片（51 处 `window.pywebview` 引用可不动）+ `style.css` 触屏布局 + `reader.ts` 懒加载。
+- **没想清楚就不能开工的一条**：内容合规（Play 上不了架 + 国内 APP 备案）。
+
 ## 决策记录
+- **2026-10-15**：**现在插在 PC 上的那台华为 Mate 80 Pro 不能当安卓测试机** —— 它是 `HarmonyOS 6`（Mate 80 全系，2025-11-25 上市），而鸿蒙 5 / NEXT 起去掉 Linux 内核、只支持鸿蒙原生应用、**不能原生跑 APK**；Host 侧只报 `HDC Device`（华为 `hdc`，不是 ADB），注册表里这台机器的 USB 历史只有 MTP + Mass Storage，**从没枚举过 ADB 接口**。→ 结论：**「开 USB 调试 → `adb devices`」那套只在能装 APK 的 Android / HarmonyOS 4 机器上成立**；华为鸿蒙 5+ 这条路（`hdc` + 装不了 APK）与我们的需求根本不接。
+- **2026-10-15**：**测试机选型待定**（唯一的阻塞项）：等用户确认第二台手机型号与系统；备选是 **iFlytek EBook R2**（Rockchip arm64 + 历史上开过 ADB）—— 它只要还能装 APK，够验 T1 那道总闸，但墨水屏刷新慢、性能弱，T3~T7（长图 / 内存 / 后台下载 / 手势）在它身上验不出有效结论。操作口径落成独立文档 `tmp/安卓真机连接与调试操作手册.md`（PC 侧装什么 / 手机侧开什么 / 核验命令 / 装包两条路 / 排障表）。
+- **2026-10-15**：再次确认**不需要 sshd、不需要 root、手机上不装任何东西** —— 构建全在 PC，连接只靠 `adb`（USB 或 Android 11+ 自带的无线调试）。
+- **2026-10-14**：「安卓环境」按**三层**拆开记（`tmp/安卓端技术栈调研.md` §5）：① 构建环境（JDK/Gradle/SDK/Chaquopy）**全在 PC 上、手机不参与**；② 连接调试走 **`adb`（USB 或 Android 11+ 自带的无线调试）—— 不需要 sshd、不需要 root、手机上不装任何东西**，手机侧唯一要做的是打开「开发者选项 → USB 调试」；③ 运行设备**必须是一台 arm64 真机**（`curl_cffi` 只有 `android_24_arm64_v8a` 轮子，x86_64 模拟器在 pip 阶段就装不上，arm64 镜像在 x86 PC 上慢到不能用 → 模拟器验不了 T1 那道总闸）。
+- **2026-10-14**：构建机的 JDK 用 **Android Studio 自带的 JBR 21**（Gradle JDK 选 Embedded JDK），不动系统里那个 Oracle JDK 26 —— 绕开 JDK 26 与 AGP/Gradle 的版本兼容问题。
+- **2026-10-14**：**安卓版在同一仓库里开子文件夹 `android/`**，不另建仓库 —— 复用同一份 `backend/` + `frontend/`，一份 `tmp/` 文档、一条 git 线；Gradle 工程自成一体，用 Android Studio 单独打开 `android/`。可逆性也在这边（同仓想拆很容易，分仓再合很痛苦）。
+- **2026-10-14**：安卓端技术栈定案（见 `tmp/安卓端技术栈调研.md`）：运行时 **Chaquopy 17.1.0**（MIT / Python 3.10~3.15 / minSdk 24 / AGP 7.3~9.4 / 17.0 起 pip 只装 wheel）；UI 壳 **AndroidX WebView**；桥 **本地 HTTP JSON-RPC + token**（复用 `server.py`，前端加垫片，51 处 `window.pywebview` 引用不动）；Python↔Android 走 Chaquopy 的 `java` 模块（`jclass`）。
+- **2026-10-14**：安卓版本线 **minSdk 26 / compileSdk 36 / targetSdk 36 / 只出 arm64-v8a**（API 26 覆盖 96.1%，24 只多 0.5%；Play 2026-08-31 起要求 targetSdk ≥ 36）。
+- **2026-10-14**：**不走** p4a+Kivy（白背一套 UI 栈、只在 Linux 构建）、BeeWare/Briefcase（Toga 原生控件 = 前端重写）、Capacitor/Cordova（不带 Python）、GeckoView（50 MB+）、Kotlin 原生重写（TLS 指纹得自己拼 BoringSSL —— GitHub 上 curl-impersonate-android 只有一个 0 star 的仓）。
 
 - **2026-10-13**：文档按用户要求放 `tmp/`，不建 `docs/` 与根 `STATUS.md`。
 - **2026-10-13**：一切需要登录 / 落盘账号凭据的能力都不做（隐私风险）；收藏改做本地版（B4）。
@@ -1181,6 +1223,10 @@ A / B 组后端补齐 + 前端热更新通道（§「A / B 组后端补齐」「
 - **2026-10-14**：**页面自己改地址一律走 `replaceHash()`**，不要裸 `replaceState` —— 前者会把该历史记录的序号章带过去；
   裸 replace 会把章冲掉，“从详情返回这一条”就认不出来（页码能对上，滚动位置会丢）。
 - **2026-10-14**：用户从体验候选里挑了前三项，**下载页那项（总占用 / 剩余空间 / 按话下载 / 导出）先砍掉**，不在本轮范围里。
+
+- **2026-10-14**：安卓版**只做评估、不排期**（`tmp/安卓版可行性评估.md`）。三条判断口径：① 复用业务层、重写壳；
+  ② **先做 P0（把 js_api 换成本地 HTTP JSON-RPC + token，桌面一起切）** —— 不用安卓机器就有收益，也顺手补上"安卓上同机任意 app 都能读 127.0.0.1:47753"这个洞；
+  ③ **依赖 spike（Chaquopy 装 curl_cffi + 直连图源）没过之前，不投入 R2 的工作量**；分发合规（Play / 备案）想不清楚就不开工。
 
 ## 下一步
 

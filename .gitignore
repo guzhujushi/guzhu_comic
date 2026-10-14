@@ -36,3 +36,16 @@ tmp/_exe_fp/
 tmp/_exe_hu/
 # 前端热更产物（scripts/publish_frontend.ps1 的输出：整包 + manifest，往更新地址上传）
 web_dist_out/
+
+# 安卓侧（tmp/安卓端技术栈调研.md）：调研时下载的 wheel / 运行时 zip 等大文件
+tmp/_dl/
+android/.gradle/
+android/build/
+android/app/build/
+android/local.properties
+android/.idea/
+android/app/src/main/python/backend/
+*.apk
+*.aab
+*.jks
+*.keystore
