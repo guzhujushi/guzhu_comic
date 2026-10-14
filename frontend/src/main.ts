@@ -14,6 +14,7 @@ import { downloadsPage } from './pages/downloads.js'
 import { categoryPage } from './pages/category.js'
 import { forumPage } from './pages/forum.js'
 import { settingsPage } from './pages/settings.js'
+import { aboutPage } from './pages/about.js'
 import { createIcon, icons } from './components/icons.js'
 import { morphIcon } from './components/icons.js'
 import { currentTheme, setTheme } from './theme.js'
@@ -23,13 +24,21 @@ registerRoute('/popular', popularPage)
 registerRoute('/search', searchPage)
 
 // 左侧导航栏：品牌 + 链接；当前页的图标会变个形
-const NAV_ITEMS = [
+type NavItem = { path: string; label: string; icon: typeof icons.popular; activeIcon: typeof icons.popular }
+
+const NAV_ITEMS: NavItem[] = [
   { path: '/popular', label: '热门', icon: icons.popular, activeIcon: icons.popularOn },
   { path: '/search', label: '搜索', icon: icons.search, activeIcon: icons.searchDone },
   { path: '/forum', label: '论坛', icon: icons.forum, activeIcon: icons.forumOn },
   { path: '/history', label: '最近阅读', icon: icons.history, activeIcon: icons.historyOn },
   { path: '/favorites', label: '收藏', icon: icons.heart, activeIcon: icons.heartOn },
   { path: '/downloads', label: '我的下载', icon: icons.download, activeIcon: icons.downloadOn },
+]
+
+// 贴左下角那两个：关于与设置并排，主题开关在它们下面。
+// 它们不是"逛内容"的入口，跟上面那排分开——上面那排是内容导航，这排是应用级的。
+const NAV_FOOT_ITEMS: NavItem[] = [
+  { path: '/about', label: '关于', icon: icons.about, activeIcon: icons.aboutOn },
   { path: '/settings', label: '设置', icon: icons.settings, activeIcon: icons.settingsOn },
 ]
 
@@ -43,15 +52,20 @@ nav.innerHTML = `
     </div>
   </div>
   <nav class="nav-links"></nav>
+  <div class="nav-foot">
+    <div class="nav-foot-row"></div>
+  </div>
 `
 // 开场闪屏（写死在 index.html 里那块）交给它接管，顺手把导航里的字标落点放好。
 // 得等导航铺完再调 —— 落点先存在，字标才知道往哪飞。
 bootSplash()
 
 const navInner = nav.querySelector<HTMLElement>('.nav-links')!
+const navFootRow = nav.querySelector<HTMLElement>('.nav-foot-row')!
 const navIcons = new Map<string, HTMLElement>()
+const navLinks = new Map<string, HTMLAnchorElement>()
 
-for (const item of NAV_ITEMS) {
+function addNavLink(item: NavItem, parent: HTMLElement): void {
   const a = document.createElement('a')
   a.href = `#${item.path}`
   a.dataset.path = item.path
@@ -60,8 +74,12 @@ for (const item of NAV_ITEMS) {
   text.textContent = item.label
   a.append(ico, text)
   navIcons.set(item.path, ico)
-  navInner.appendChild(a)
+  navLinks.set(item.path, a)
+  parent.appendChild(a)
 }
+
+for (const item of NAV_ITEMS) addNavLink(item, navInner)
+for (const item of NAV_FOOT_ITEMS) addNavLink(item, navFootRow)
 
 // 主题开关：贴在导航栏底部。换的那一下走 View Transitions —— 从点击处摊开一个圆，
 // 把新配色揭出来（motion.ts）。桌面上阅读器里没有导航，所以阅读器设置面板里也有一份。
@@ -71,12 +89,14 @@ themeBtn.className = 'nav-theme'
 const themeIcon = createIcon(icons.themeDark, { size: 16 })
 const themeLabel = document.createElement('span')
 themeBtn.append(themeIcon, themeLabel)
-nav.appendChild(themeBtn)
+nav.querySelector<HTMLElement>('.nav-foot')!.appendChild(themeBtn)
 
 function paintThemeButton(): void {
   const dark = currentTheme() === 'dark'
   morphIcon(themeIcon, dark ? icons.themeDark : icons.themeLight)
   themeLabel.textContent = dark ? '深色' : '浅色'
+  // 导航栏窄成 64px 时这个标签会被 CSS 藏掉，只剩图标 —— 悬停提示得自己带上
+  themeBtn.title = dark ? '切到浅色' : '切到深色'
 }
 themeBtn.addEventListener('click', (event) => {
   void setTheme(event, currentTheme() === 'dark' ? 'light' : 'dark').then(paintThemeButton)
@@ -86,9 +106,9 @@ paintThemeButton()
 // 详情页 / 阅读器不从导航进来，就不标高亮，免得跟来路对不上
 function syncNav(): void {
   const path = (window.location.hash.slice(1) || '/popular').split('?')[0]
-  for (const item of NAV_ITEMS) {
-    const a = navInner.querySelector<HTMLAnchorElement>(`a[data-path="${item.path}"]`)!
-    const on = a.dataset.path === path
+  for (const item of [...NAV_ITEMS, ...NAV_FOOT_ITEMS]) {
+    const a = navLinks.get(item.path)!
+    const on = item.path === path
     a.classList.toggle('active', on)
     morphIcon(navIcons.get(item.path)!, on ? item.activeIcon : item.icon)
   }
@@ -104,6 +124,7 @@ registerRoute('/downloads', downloadsPage)
 registerRoute('/category', categoryPage)
 registerRoute('/forum', forumPage)
 registerRoute('/settings', settingsPage)
+registerRoute('/about', aboutPage)
 
 // 先等 pywebview 把 JS 桥注入好再开路由：否则首页会先闪一下"pywebview api 未就绪"
 try {

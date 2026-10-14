@@ -173,12 +173,25 @@ body { margin: 0; min-height: 100vh; padding-left: var(--rail); }
 
 #nav a:hover { background: var(--surface); color: var(--text); }
 
-/* 主题开关：贴在导航栏底部，长相跟上面那排链接一致（margin-top: auto 顶到底） */
+/* 导航栏底部那一块：关于 + 设置并排，主题开关压在它们下面。
+   这一对不是「逛内容」的入口，所以跟上面那排分开；margin-top: auto 把它们顶到底 */
+.nav-foot {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: auto;
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
+}
+.nav-foot-row { display: flex; gap: 4px; }
+/* 两个入口平分一行：rail 窄了先一起收缩，不会一个撑破、另一个被挤下去 */
+.nav-foot-row a { flex: 1 1 0; min-width: 0; }
+
+/* 主题开关：长相跟上面那排链接一致，压在底部那对下面 */
 .nav-theme {
   display: flex;
   align-items: center;
   gap: 10px;
-  margin-top: auto;
   padding: 9px 10px;
   border: 0;
   border-radius: var(--radius);
@@ -1337,6 +1350,56 @@ kbd, .keycap {
 .about-title { margin: 0; font-size: 14px; font-weight: 600; }
 .about-sub { margin: 4px 0 0; color: var(--muted); font-size: 12.5px; line-height: 1.5; }
 
+/* ============ 关于页（#/about）============ */
+/* 卡片就在页头下面，别再顶一层空 */
+.about-page .about-card { margin-top: 0; }
+
+.about-section { margin-top: 30px; }
+.about-h { margin: 0 0 12px; font-size: 15px; font-weight: 600; letter-spacing: .5px; }
+
+.about-text { margin: 12px 0; color: var(--muted); font-size: 13px; line-height: 1.85; }
+.about-text b { color: var(--text); font-weight: 500; }
+
+.about-list { margin: 0; padding: 0; list-style: none; }
+.about-list li {
+  position: relative;
+  padding: 7px 0 7px 16px;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.75;
+}
+/* 圆点自己画：list-style 的圆点颜色跟着文字走，配不上这条色阶 */
+.about-list li::before {
+  content: '';
+  position: absolute;
+  left: 2px;
+  top: 15px;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--border-strong);
+}
+.about-list b { color: var(--text); font-weight: 600; }
+.about-list kbd { margin: 0 2px; }
+
+/* 快捷键一行一个：键帽是全局那套样式，这里只管排版 */
+.about-keys { display: flex; flex-wrap: wrap; gap: 8px 18px; margin: 14px 0; }
+.about-keys > span { display: inline-flex; align-items: center; gap: 4px; color: var(--muted); font-size: 12.5px; }
+
+.about-paths { margin: 0; padding: 0; list-style: none; }
+.about-paths li {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  padding: 9px 12px;
+  margin-bottom: 6px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+.about-paths code { flex: none; color: var(--text-soft); font-size: 12.5px; }
+.about-paths span { min-width: 0; color: var(--muted); font-size: 12.5px; }
+
 pre { background: var(--surface-2); padding: 16px; border-radius: var(--radius); overflow: auto; white-space: pre-wrap; }
 
 /* 窗口窄了导航只留图标，别把内容挤没了 */
@@ -1347,6 +1410,12 @@ pre { background: var(--surface-2); padding: 16px; border-radius: var(--radius);
   .brand-text { display: none; }
   #nav a { justify-content: center; padding: 10px 0; }
   #nav a span { display: none; }
+  /* 64px 宽横着排塞不下两个入口：底部那对也竖着排 */
+  .nav-foot-row { flex-direction: column; }
+  .nav-foot-row a { flex: none; }
+  /* 主题开关也要跟着只留图标：它的文字是 <span>，不像上面那排 <a> 那样已经被盖住了。
+     不盖的话「深浅」两个字会在 64px 里竖着折行，把导航栏顶破（所以按钮上有 title 兜底） */
+  .nav-theme span { display: none; }
 }
 
 /* ============ 动效与材质（2026-10-14） ============

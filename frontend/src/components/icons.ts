@@ -2,8 +2,8 @@
 import { defineMorphIcon } from 'morphicons/element'
 import type { IconInput } from 'morphicons/element'
 import {
-  ArrowLeft, BookOpen, Check, ChevronDown, ChevronLeft, ChevronRight, ChevronUp, CircleCheck, Clock,
-  Database, Download, Eraser, Flame, HardDriveDownload, Heart, HeartPulse, List, Loader,
+  ArrowLeft, BadgeInfo, BookOpen, Check, ChevronDown, ChevronLeft, ChevronRight, ChevronUp, CircleCheck,
+  Clock, Database, Download, Eraser, Flame, HardDriveDownload, Heart, HeartPulse, Info, List, Loader,
   MessageSquareText, MessagesSquare, Moon, Pause, Play, RefreshCw, Save, Search, SearchCheck, Settings,
   SlidersHorizontal, Sun, Trash2, TrendingUp, Watch, X,
 } from 'lucide'
@@ -24,6 +24,8 @@ export const icons = {
   pause: Pause,
   settings: Settings,
   settingsOn: SlidersHorizontal,
+  about: Info,
+  aboutOn: BadgeInfo,
   save: Save,
   saved: Check,
   reload: RefreshCw,

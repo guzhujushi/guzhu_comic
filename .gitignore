@@ -26,3 +26,8 @@ Thumbs.db
 # 编辑器
 .vscode/
 .idea/
+
+# 打包产物与 PyInstaller 工作目录（scripts/build_exe.ps1）
+build_out/
+build_work/
+tmp/_exe/
