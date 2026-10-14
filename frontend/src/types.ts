@@ -121,6 +121,29 @@ export interface ForumPage {
   items: ForumComment[]
 }
 
+/**
+ * 一次整本下载任务：进度来自 data/app.db 的 download_album / download_chapter，
+ * 图在 config.yaml 的 download.dir 里（用户数据，清缓存不动它）。
+ */
+export interface DownloadTask {
+  album_id: string
+  title: string
+  cover_url: string
+  /** queued / running / paused / done / error */
+  state: string
+  error: string
+  total: number
+  done: number
+  images_done: number
+  images_total: number
+  added_at: number
+  updated_at: number
+  /** 有没有在跑（queued / running）：下载页靠它决定要不要轮询 */
+  running: boolean
+  /** 阅读进度：跟「最近阅读」同一个口径（同一张 history 表），没读过是 null */
+  read: AlbumProgress | null
+}
+
 /** 本地收藏的一条：封面地址是加收藏那一刻存的快照，图源换线路后可能失效 */
 export interface FavoriteItem {
   album_id: string

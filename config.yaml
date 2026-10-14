@@ -31,6 +31,9 @@ recommend:
   half_life_days: 30
 download:
   workers: 8
+  dir: ~/.jmreader/downloads
+  retries: 3
+  auto_resume: true
 cache:
   photo_ttl: 86400
   album_ttl: 86400

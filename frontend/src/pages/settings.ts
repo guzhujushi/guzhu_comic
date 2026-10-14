@@ -74,6 +74,9 @@ const GROUPS: { title: string; fields: FieldDef[] }[] = [
     title: '下载与缓存',
     fields: [
       { path: 'download.workers', label: '图片下载并发数', type: 'number', min: 1, max: 32, hint: '太大容易被图源限速', restart: true },
+      { path: 'download.dir', label: '下载目录', type: 'text', hint: '整本下载的离线副本放这儿（用户数据，清缓存不会删）；支持 ~ 与相对路径（相对 ~/.jmreader）', restart: true },
+      { path: 'download.retries', label: '单张图重试次数', type: 'number', min: 0, max: 10, hint: '一张图下失败重试几次；还是失败就跳过它，点「继续下载」时再补', restart: true },
+      { path: 'download.auto_resume', label: '开窗自动接着下', type: 'bool', hint: '上次没下完的（关窗 / 断电中断的都算），开窗几秒后自动续传，只补缺的部分', restart: true },
       { path: 'cache.photo_ttl', label: '章节图列表缓存（秒）', type: 'number', min: 0, max: 2592000, restart: true },
       { path: 'cache.album_ttl', label: '漫画详情缓存（秒）', type: 'number', min: 0, max: 2592000, restart: true },
       { path: 'cache.search_ttl', label: '搜索缓存（秒）', type: 'number', min: 0, max: 2592000, restart: true },

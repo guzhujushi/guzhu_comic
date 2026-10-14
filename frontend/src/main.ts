@@ -8,6 +8,7 @@ import { albumPage } from './pages/detail.js'
 import { readerPage } from './pages/reader.js'
 import { historyPage } from './pages/history.js'
 import { favoritesPage } from './pages/favorites.js'
+import { downloadsPage } from './pages/downloads.js'
 import { categoryPage } from './pages/category.js'
 import { forumPage } from './pages/forum.js'
 import { settingsPage } from './pages/settings.js'
@@ -25,6 +26,7 @@ const NAV_ITEMS = [
   { path: '/forum', label: '论坛', icon: icons.forum, activeIcon: icons.forumOn },
   { path: '/history', label: '最近阅读', icon: icons.history, activeIcon: icons.historyOn },
   { path: '/favorites', label: '收藏', icon: icons.heart, activeIcon: icons.heartOn },
+  { path: '/downloads', label: '我的下载', icon: icons.download, activeIcon: icons.downloadOn },
   { path: '/settings', label: '设置', icon: icons.settings, activeIcon: icons.settingsOn },
 ]
 
@@ -71,6 +73,7 @@ registerRoute('/album', albumPage)
 registerRoute('/read', readerPage)
 registerRoute('/history', historyPage)
 registerRoute('/favorites', favoritesPage)
+registerRoute('/downloads', downloadsPage)
 registerRoute('/category', categoryPage)
 registerRoute('/forum', forumPage)
 registerRoute('/settings', settingsPage)

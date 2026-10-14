@@ -4,8 +4,9 @@ import { renderEmpty, renderError } from '../components/states.js'
 import { icons, morphIcon, setIcon } from '../components/icons.js'
 import { loadSettings } from '../settings.js'
 import { warmChapterStart } from '../prefetch.js'
+import { onUnmount } from '../router.js'
 import type { AppSettings } from '../settings.js'
-import type { AlbumDetail, AlbumProgress, CommentItem } from '../types.js'
+import type { AlbumDetail, AlbumProgress, CommentItem, DownloadTask } from '../types.js'
 
 export function albumPage(params: Record<string, string>): HTMLElement {
   const el = document.createElement('div')
@@ -51,6 +52,82 @@ export function albumPage(params: Record<string, string>): HTMLElement {
   void load()
 
   return el
+}
+
+/** 下载按钮：整本下到本机（离线副本在 config.yaml 的 download.dir 里），标签跟任务状态走 */
+function paintDownloadArea(container: HTMLElement, data: AlbumDetail): void {
+  // 图源一话都没给的时候这一排压根不渲染，所以先认这一排在不在
+  const actions = container.querySelector('.detail-actions')
+  if (!actions) return
+  const btn = actions.querySelector<HTMLButtonElement>('.download-btn')!
+  const label = actions.querySelector<HTMLElement>('.download-label')!
+
+  const iconEl = setIcon(actions, '.download-btn morph-icon', icons.download)
+  const hintEl = container.querySelector<HTMLElement>('.fav-hint')!
+  let iconKey = 'idle'
+  let timer = 0
+
+  // 路由切走就停表：详情页会被反复打开，定时器不能留着
+  onUnmount(() => {
+    if (timer) window.clearInterval(timer)
+    timer = 0
+  })
+
+  function paint(task: DownloadTask | null): void {
+    const state = task?.state
+    const key = state === 'done' ? 'done' : task?.running ? 'busy' : 'idle'
+    if (key !== iconKey) {
+      iconKey = key   // 只在状态翻档时才变形，不然每两秒抖一次
+      morphIcon(iconEl, key === 'done' ? icons.downloadDone
+        : key === 'busy' ? icons.downloadBusy : icons.download)
+    }
+    label.textContent = key === 'done' ? '已下载'
+      : key === 'busy' ? (task!.total ? `下载中 ${task!.done}/${task!.total} 话` : '下载中…')
+        : task ? '继续下载' : '下载'
+    btn.classList.toggle('on', key === 'done')
+    btn.title = key === 'done' ? '已经下过整本；点一下重新校验缺的部分'
+      : key === 'busy' ? '后台在下，关窗也留着，下次开窗接着下'
+        : task ? (task.error || '接着下没下完的部分') : '整本下到本机，断网也能看'
+    btn.disabled = false
+  }
+
+  async function poll(): Promise<void> {
+    const api = window.pywebview?.api
+    if (!api?.get_download) return
+    if (timer) {
+      window.clearInterval(timer)
+      timer = 0
+    }
+    try {
+      const task = await api.get_download(data.id)
+      paint(task)
+      // 还在下就盯着；下完了停表 —— 别让详情页一直问后端
+      if (task?.running) timer = window.setInterval(() => void poll(), 2000)
+    } catch {
+      /* 下载态读不出来不影响看详情 */
+    }
+  }
+
+  btn.addEventListener('click', () => {
+    void (async () => {
+      const api = window.pywebview?.api
+      if (!api?.start_download) return
+      btn.disabled = true
+      try {
+        // 话单直接从详情里拿：省一次"再问一遍图源"的往返
+        const task = await api.start_download(data.id, data.title, data.cover_url ?? '',
+          data.chapters.map((ch) => ({ photo_id: ch.photo_id, index: ch.index, title: ch.title })))
+        paint(task)
+        hintEl.textContent = ''
+      } catch (err) {
+        btn.disabled = false
+        hintEl.textContent = `下载失败：${String(err).replace(/^Error:\s*/, '')}`
+      }
+      void poll()
+    })()
+  })
+
+  void poll()
 }
 
 /** 详情骨架：封面块 + 几行文字，等详情接口回来再换成真内容 */
@@ -103,7 +180,11 @@ function renderDetail(
           ${dates ? `<p class="detail-meta">${escapeHtml(dates)}</p>` : ''}
           <div class="tags">${data.tags.map((t) => `<span class="tag">${escapeHtml(t)}</span>`).join('')}</div>
         </div>
-        ${startChapter ? `<button class="read-btn"><morph-icon size="18" stroke-width="1.8"></morph-icon><span>${readLabel}</span></button>` : ''}
+        ${startChapter ? `
+        <div class="detail-actions">
+          <button class="read-btn"><morph-icon size="18" stroke-width="1.8"></morph-icon><span>${readLabel}</span></button>
+          <button class="download-btn" type="button"><morph-icon size="16" stroke-width="1.8"></morph-icon><span class="download-label">下载</span></button>
+        </div>` : ''}
         <p class="desc">${escapeHtml(data.description)}</p>
         ${data.related.length ? '<h2 class="section-title">相关作品</h2><div class="album-list related-list"></div>' : ''}
         <h2 class="section-title">章节（${data.chapters.length}）</h2>
@@ -131,6 +212,8 @@ function renderDetail(
   container.querySelector('.read-btn')?.addEventListener('click', () => {
     window.location.hash = `#/read?photo_id=${startChapter.photo_id}&album_id=${data.id}`
   })
+
+  paintDownloadArea(container, data)
 
   // 相关作品：卡片组件和列表页共用一个，点进去还是走 #/album 这条路由
   const relatedEl = container.querySelector<HTMLElement>('.related-list')

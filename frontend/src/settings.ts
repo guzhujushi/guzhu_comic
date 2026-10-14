@@ -34,7 +34,12 @@ export interface AppSettings {
     author_boost: number
     half_life_days: number
   }
-  download: { workers: number }
+  download: {
+    workers: number
+    dir: string
+    retries: number
+    auto_resume: boolean
+  }
   cache: {
     photo_ttl: number
     album_ttl: number
@@ -60,7 +65,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   detail: { chapters_collapse: 20, comment_preview: 5 },
   prefetch: { albums: 12, chapter_images: 3, next_at: 0.9 },
   recommend: { limit: 10, candidates: 40, hot_weight: 0.3, author_boost: 1.5, half_life_days: 30 },
-  download: { workers: 8 },
+  download: { workers: 8, dir: '~/.jmreader/downloads', retries: 3, auto_resume: true },
   cache: {
     photo_ttl: 86400, album_ttl: 86400, search_ttl: 3600, ranking_ttl: 3600, comment_ttl: 600,
     max_size_mb: 2048, cleanup_interval: 600,

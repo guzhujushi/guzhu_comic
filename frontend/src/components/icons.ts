@@ -2,10 +2,10 @@
 import { defineMorphIcon } from 'morphicons/element'
 import type { IconInput } from 'morphicons/element'
 import {
-  ArrowLeft, BookOpen, Check, ChevronDown, ChevronLeft, ChevronRight, ChevronUp, Clock,
-  Database, Eraser, Flame, Heart, HeartPulse, List, Loader, MessageSquareText, MessagesSquare,
-  Pause, Play, RefreshCw, Save, Search, SearchCheck, Settings, SlidersHorizontal, Trash2, TrendingUp,
-  Watch, X,
+  ArrowLeft, BookOpen, Check, ChevronDown, ChevronLeft, ChevronRight, ChevronUp, CircleCheck, Clock,
+  Database, Download, Eraser, Flame, HardDriveDownload, Heart, HeartPulse, List, Loader,
+  MessageSquareText, MessagesSquare, Pause, Play, RefreshCw, Save, Search, SearchCheck, Settings,
+  SlidersHorizontal, Trash2, TrendingUp, Watch, X,
 } from 'lucide'
 
 defineMorphIcon()
@@ -36,6 +36,10 @@ export const icons = {
   popularOn: TrendingUp,
   history: Watch,
   historyOn: Clock,
+  download: Download,
+  downloadOn: HardDriveDownload,
+  downloadDone: CircleCheck,
+  downloadBusy: Loader,
   heart: Heart,
   heartOn: HeartPulse,
   trash: Trash2,

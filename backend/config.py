@@ -46,7 +46,10 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "half_life_days": 30,   # 收藏 / 搜索权重的时间半衰期
     },
     "download": {
-        "workers": 8,
+        "workers": 8,                     # 一话里的并发张数（整本下载与缓存补图共用）
+        "dir": "~/.jmreader/downloads",   # 离线副本放哪（用户数据，清缓存不动它）；支持 ~ 与相对路径
+        "retries": 3,                     # 单张图失败重试几次（配上下次开窗的续传 = 断线重连）
+        "auto_resume": True,              # 开窗几秒后自动接着下没下完的（关窗 / 断电中断的都算）
     },
     "cache": {
         "photo_ttl": 86400,

@@ -37,6 +37,28 @@ interface AlbumProgress {
   title: string
 }
 
+/** 一次整本下载任务（data/app.db 的 download_album + download_chapter） */
+interface DownloadTask {
+  album_id: string
+  title: string
+  cover_url: string
+  /** queued / running / paused / done / error */
+  state: string
+  error: string
+  /** 总话数 / 已下完的话数 */
+  total: number
+  done: number
+  /** 已下 / 待下 的张数（话单里的图，总量随话推进才知道） */
+  images_done: number
+  images_total: number
+  added_at: number
+  updated_at: number
+  /** 有没有在跑（queued / running）：下载页靠它决定要不要轮询 */
+  running: boolean
+  /** 阅读进度：跟「最近阅读」同一个口径（同一张 history 表），没读过是 null */
+  read: AlbumProgress | null
+}
+
 interface FavoriteItem {
   album_id: string
   title: string
@@ -78,6 +100,12 @@ interface PyApi {
   toggle_favorite(album_id: string, title?: string, cover_url?: string, tags?: string[], authors?: string[]): Promise<boolean>
   remove_favorite(album_id: string): Promise<void>
   get_favorites(limit?: number, offset?: number): Promise<FavoriteItem[]>
+  start_download(album_id: string, title?: string, cover_url?: string, chapters?: { photo_id: string; index: string; title: string }[]): Promise<DownloadTask | null>
+  get_downloads(): Promise<DownloadTask[]>
+  get_download(album_id: string): Promise<DownloadTask | null>
+  pause_download(album_id: string): Promise<DownloadTask | null>
+  resume_download(album_id: string): Promise<DownloadTask | null>
+  remove_download(album_id: string, delete_files?: boolean): Promise<{ removed: boolean; files: number }>
   save_progress(album_id: string, photo_id: string, page_index: number, title?: string, cover_url?: string): Promise<void>
   get_progress(album_id: string, photo_id: string): Promise<number>
   get_history(limit?: number): Promise<HistoryItem[]>

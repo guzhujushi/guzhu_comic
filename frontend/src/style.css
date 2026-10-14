@@ -603,6 +603,40 @@ album-card .album-fav {
 .fav-cell .fav-del:disabled { opacity: .45; }
 .fav-error { margin: 0 0 14px; font-size: 13px; color: #ff8080; }
 
+/* ============ 我的下载：进度角标 + 卡片下面的暂停 / 删除 ============ */
+/* 按钮不压在封面上：卡片只有 148px 宽，角上放两个按钮会跟进度角标挤在一起 */
+.dl-cell { display: flex; flex-direction: column; gap: 8px; }
+.dl-actions { display: flex; justify-content: center; gap: 6px; }
+.dl-btn {
+  flex: 1 1 auto;
+  padding: 5px 8px;
+  gap: 4px;
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 400;
+}
+.dl-btn:hover { background: rgba(0, 0, 0, .78); border-color: var(--border-strong); color: var(--text); }
+.dl-del:hover { color: #ff8080; border-color: #ff8080; }
+/* 进度角标：位置跟「已收藏」一样，但下载页的卡片不带收藏态，不会撞 */
+album-card .dl-badge {
+  position: absolute;
+  top: 14px;
+  right: 14px;
+  padding: 3px 8px;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, .62);
+  border: 1px solid var(--primary-line);
+  color: var(--primary);
+  font-size: 11px;
+  line-height: 1;
+  pointer-events: none;
+}
+album-card .dl-badge[hidden] { display: none; }
+.dl-error { margin: 0 0 14px; font-size: 13px; color: #ff8080; }
+
 /* ============ 热门榜单：hero + 分类标签条 + 面板 ============ */
 /* 分类标签条是"标签"，下面的面板是"标签的内容"：当前那个标签和面板同底色、
    底边压住面板的上边线，看着就是贴在一起的一整块（#/popular 与 #/category 共用） */
@@ -762,6 +796,23 @@ album-card .album-fav {
   color: var(--muted);
 }
 
+/* 标题 / 作者 / 观看收藏评论数 / 标签：封面虚化层就在它们正底下，字会跟着一起发虚。
+   所以这几块垫一层实色底 —— 颜色写死，不走 --bg 那套变量：毛玻璃开着的时候
+   变量本身是半透明的，拿它垫等于没垫。 */
+.detail-hero .detail-title,
+.detail-hero .detail-meta {
+  display: inline-block;
+  padding: 3px 12px;
+  border-radius: var(--radius-sm);
+  background: #07080a;
+}
+.detail-hero .detail-meta { margin-top: 6px; padding: 2px 10px; }
+.detail-hero .tag {
+  background: #141516;
+  border-color: #2b2e30;
+  color: #cfcfd1;
+}
+
 .desc {
   color: var(--text-soft);
   font-size: 14px;
@@ -812,6 +863,23 @@ album-card .album-fav {
   font-size: 15px;
   border-radius: var(--radius);
 }
+
+/* 阅读 / 下载 同一排：阅读占大头（主操作），下载是键帽量级的次级按钮 */
+.detail-actions { display: flex; align-items: stretch; gap: 10px; margin: 20px 0 0; }
+.detail-actions .read-btn { flex: 1 1 auto; min-width: 0; margin: 0; }
+.download-btn {
+  flex: none;
+  padding: 12px 18px;
+  gap: 7px;
+  font-size: 14px;
+  border-radius: var(--radius);
+  background: var(--surface-3);
+  border-color: var(--border);
+  color: var(--text-soft);
+}
+.download-btn:hover { background: var(--surface-hover); border-color: var(--border-strong); color: var(--text); }
+.download-btn.on { background: rgba(89, 212, 153, .12); border-color: rgba(89, 212, 153, .45); color: var(--ok); }
+.download-btn:disabled { opacity: .7; cursor: default; }
 
 .album-detail .chapter-list {
   display: grid;

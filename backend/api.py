@@ -8,6 +8,7 @@ from pathlib import Path
 import threading
 from functools import partial
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
+from urllib.parse import unquote, urlparse
 
 
 def _cfg_int(value: Any, default: int, lo: int, hi: int) -> int:
@@ -51,7 +52,24 @@ def _setting_float(value: Any, lo: float, hi: float, name: str) -> float:
 
 
 class _QuietHandler(SimpleHTTPRequestHandler):
-    """去掉 http.server 的请求日志，免得刷屏"""
+    """
+    去掉 http.server 的请求日志，免得刷屏。
+
+    `extra_roots` 是"前缀 -> 目录"的额外映射：离线下载的图在 cache 之外
+    （见 download.dir），不挂在同一个服务上的话阅读器就读不到它。
+    翻译路径是唯一能换根的地方，所以在这儿拦一道。
+    """
+    extra_roots: dict[str, Path] = {}
+
+    def translate_path(self, path: str) -> str:
+        clean = unquote(urlparse(path).path)
+        for prefix, root in self.extra_roots.items():
+            if clean.startswith(prefix + "/"):
+                # 只认路径片段，'..' 这类一律丢掉：别让人越出根目录
+                parts = [p for p in clean[len(prefix) + 1:].split("/") if p not in ("", ".", "..")]
+                return str(root.joinpath(*parts))
+        return super().translate_path(path)
+
     def log_message(self, *args):
         pass
 
@@ -66,6 +84,20 @@ DATA_DB = DATA_DIR / "app.db"
 CACHE_DIR = APP_DIR / "cache"
 CACHE_DB = CACHE_DIR / "cache.db"
 IMG_DIR = CACHE_DIR / "images"
+
+
+def _resolve_download_dir(raw: Any) -> Path:
+    """
+    配置里的 download.dir 解析成绝对路径。
+
+    支持 ~（cwd 不是家目录，只有 expanduser 认它）与相对路径（相对 ~/.jmreader）。
+    空值回落 downloads/ —— 但配置项本身一直有默认值，正常情况下不会走到这儿。
+    """
+    text = str(raw or "").strip() or "downloads"
+    path = Path(text).expanduser()
+    if not path.is_absolute():
+        path = APP_DIR / path
+    return path
 
 # 前端传 "day"/"week"/"month"，这里映射到 jmcomic 常量
 _TIME_MAP = {
@@ -123,6 +155,10 @@ class API:
         self._rc_hot = _cfg_float(cfg["recommend"]["hot_weight"], 0.3, 0.0, 1.0)
         self._rc_author_boost = _cfg_float(cfg["recommend"]["author_boost"], 1.5, 0.0, 5.0)
         self._rc_half_life = _cfg_int(cfg["recommend"]["half_life_days"], 30, 1, 365)
+        # 整本离线下载（见 config.yaml 的 download 组）：目录、重试、开窗续传
+        self._dl_retries = _cfg_int(cfg["download"]["retries"], 3, 0, 10)
+        self._dl_auto_resume = bool(cfg["download"]["auto_resume"])
+        self.download_dir = _resolve_download_dir(cfg["download"]["dir"])
 
         # jmcomic 建客户端时要连图源（更新域名、拉 setting），图源抖一下这一步就能卡十几秒。
         # 所以挪到"第一次真要数据"的时候再做（见下面 client 属性），窗口立刻就能起来，
@@ -140,10 +176,18 @@ class API:
         self._dl_pending: set[str] = set()
         # 这次开窗期间已经预热过详情的本子（重复调用直接跳过，别白读一次库）
         self._prefetch_done: set[str] = set()
+        # 整本下载：一本一个线程，逐话串行。断点续传不靠内存里的计数 ——
+        # 磁盘上落地的文件就是进度，续传时把缺的挑出来补。
+        self._album_dl_lock = threading.Lock()
+        self._album_dl_threads: dict[str, threading.Thread] = {}
+        self._album_dl_pause: dict[str, threading.Event] = {}   # set = 暂停
+        self._album_dl_stop: dict[str, threading.Event] = {}    # set = 任务已删，别再写库
         # 开窗的同时后台先把图源连上（更新域名、拉 setting 那一步可能要十几秒），
         # 这样窗口立刻就能出来，首页第一次要数据时也不用干等
         threading.Thread(target=self._warm_client, daemon=True).start()
         threading.Thread(target=self._cache_loop, daemon=True).start()
+        if self._dl_auto_resume:
+            threading.Thread(target=self._resume_downloads_loop, daemon=True).start()
 
     @property
     def client(self):
@@ -205,6 +249,37 @@ class API:
                 "hits INTEGER NOT NULL DEFAULT 1, "
                 "at REAL NOT NULL)"
             )
+            # 整本离线下载：话单 + 每话状态。这两张表也是 photo_id -> album_id 的映射，
+            # 阅读器靠它知道"这一话有离线副本"（cache 之外的目录，清缓存不动它）。
+            conn.execute(
+                "CREATE TABLE IF NOT EXISTS download_album ("
+                "album_id TEXT PRIMARY KEY, "
+                "title TEXT NOT NULL DEFAULT '', "
+                "cover_url TEXT NOT NULL DEFAULT '', "
+                "total INTEGER NOT NULL DEFAULT 0, "
+                "done INTEGER NOT NULL DEFAULT 0, "
+                "state TEXT NOT NULL DEFAULT 'queued', "
+                "error TEXT NOT NULL DEFAULT '', "
+                "added_at REAL NOT NULL, "
+                "updated_at REAL NOT NULL)"
+            )
+            conn.execute(
+                "CREATE TABLE IF NOT EXISTS download_chapter ("
+                "album_id TEXT NOT NULL, "
+                "photo_id TEXT NOT NULL, "
+                "index_no TEXT NOT NULL DEFAULT '', "
+                "title TEXT NOT NULL DEFAULT '', "
+                "state TEXT NOT NULL DEFAULT 'queued', "
+                "total INTEGER NOT NULL DEFAULT 0, "
+                "done INTEGER NOT NULL DEFAULT 0, "
+                "updated_at REAL NOT NULL, "
+                "PRIMARY KEY (album_id, photo_id))"
+            )
+            # 阅读器手里只有 photo_id，这张索引就是它反查"这一话属于哪个本子"的那条路
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS download_chapter_photo"
+                " ON download_chapter (photo_id)"
+            )
         # 老库升级：收藏行的 tag / 作者快照是后加的列，缺了当场补
         self._ensure_columns("favorite", {
             "tags_json": "TEXT NOT NULL DEFAULT '[]'",
@@ -218,6 +293,11 @@ class API:
                 "fetched_at REAL NOT NULL)"
             )
         self._move_legacy_cache()
+        # 下载目录也先建出来。建不出来只报一声：别让一个路径问题把开窗挡住
+        try:
+            self.download_dir.mkdir(parents=True, exist_ok=True)
+        except OSError as e:
+            print(f"[download] 下载目录建不出来: {e}", flush=True)
 
     def _ensure_columns(self, table: str, columns: dict[str, str]) -> None:
         """老库缺列就补上（新装的库由 CREATE TABLE 一次建全，这里只服务升级上来的库）"""
@@ -702,6 +782,8 @@ class API:
         photo_id = str(photo_id).strip()
         if not photo_id:
             raise ValueError("缺少章节 ID")
+        if self._downloaded_chapter_dir(photo_id) is not None:
+            return 0            # 有离线副本了，不用再往缓存里下
         img_dir = IMG_DIR / photo_id
         files = self._cache_get(f"photo:{photo_id}", self._photo_ttl)
         if files:
@@ -715,8 +797,16 @@ class API:
         return self._pf_images
 
     def _start_img_server(self) -> str:
-        """启动本地图片静态服务（只监听本机），返回 base url"""
-        handler = partial(_QuietHandler, directory=str(CACHE_DIR))
+        """
+        启动本地图片静态服务（只监听本机），返回 base url。
+
+        两个根：/images/... 走 cache（随手补下的），/downloads/... 走 download.dir（离线副本）。
+        下载目录是开窗时从配置读的，所以在这儿交给 handler —— 改了 download.dir 要重开窗口。
+        """
+        class _Handler(_QuietHandler):
+            extra_roots = {"/downloads": self.download_dir}
+
+        handler = partial(_Handler, directory=str(CACHE_DIR))
         server = ThreadingHTTPServer(("127.0.0.1", 0), handler)  # 端口 0 = 系统自动分配
         port = server.server_address[1]
         threading.Thread(target=server.serve_forever, daemon=True).start()
@@ -732,6 +822,9 @@ class API:
         img_dir = IMG_DIR / photo_id
         img_dir.mkdir(parents=True, exist_ok=True)
 
+        # 这一话有离线副本就整话走下载目录：既不往缓存里下第二遍，也不怕缓存被清
+        offline = self._downloaded_chapter_dir(photo_id)
+
         key = f"photo:{photo_id}"
         files: list[str] | None = self._cache_get(key, self._photo_ttl)
 
@@ -742,16 +835,28 @@ class API:
                 raise RuntimeError(f"章节获取失败: {e}") from e
             files = [img.filename for img in photo]
             self._cache_set(key, files)
-            missing = [
-                (img, img_dir / img.filename)
-                for img in photo
-                if not (img_dir / img.filename).exists()
-            ]
-            if missing:
-                self._spawn_download(photo_id, missing)
-        elif any(not (img_dir / name).exists() for name in files):
+            if offline is None:
+                missing = [
+                    (img, img_dir / img.filename)
+                    for img in photo
+                    if not (img_dir / img.filename).exists()
+                ]
+                if missing:
+                    self._spawn_download(photo_id, missing)
+        elif offline is None and any(not (img_dir / name).exists() for name in files):
             # 列表命中缓存、图还没下全：把取详情那次网络请求也挪到后台，别拖慢这次返回
             self._spawn_download(photo_id, None)
+
+        if offline is not None:
+            album_id, folder = offline
+            if all((folder / name).exists() for name in files):
+                return {
+                    "photo_id": photo_id,
+                    "images": [
+                        f"{self.img_base}/downloads/{album_id}/{photo_id}/{name}"
+                        for name in files
+                    ],
+                }
 
         return {
             "photo_id": photo_id,
@@ -806,23 +911,382 @@ class API:
 
     def _download_images(self, jobs: list[tuple]) -> None:
         """并发下载；每张图先写 .part 再改名，中断不留坏文件"""
-        jobs = [(img, path) for img, path in jobs if not path.exists()]
-        if not jobs:
-            return
-        with ThreadPoolExecutor(max_workers=self._dl_workers) as pool:
-            list(pool.map(self._download_one, jobs))
+        self._download_images_batched(jobs)
 
-    def _download_one(self, job: tuple) -> None:
+    def _download_images_batched(self, jobs: list[tuple],
+                                pause: threading.Event | None = None) -> None:
+        """
+        并发下这些图，每批 workers 张。
+
+        分批是为了"暂停"能很快生效：`with ThreadPoolExecutor` 会等已提交的任务跑完，
+        一次全提交的话暂停得等整话下完（几十张）。批间检查一下，最多多下一批。
+        """
+        jobs = [(img, path) for img, path in jobs if not path.exists()]
+        size = max(1, self._dl_workers)
+        while jobs:
+            if pause is not None and pause.is_set():
+                return
+            batch, jobs = jobs[:size], jobs[size:]
+            with ThreadPoolExecutor(max_workers=size) as pool:
+                list(pool.map(self._download_one_retry, batch))
+
+    def _download_one_retry(self, job: tuple) -> bool:
+        """单张图带重试；返回最终有没有拿到文件（退避一下，别按着刚抖的图源猛敲）"""
+        attempts = self._dl_retries + 1
+        for i in range(attempts):
+            if self._download_one(job):
+                return True
+            if i + 1 < attempts:
+                time.sleep(0.6 * (i + 1))
+        return False
+
+    def _download_one(self, job: tuple) -> bool:
+        """下一张图；失败只删这张的 .part，已经下好的图不动（下次续传只补缺的）"""
         img, path = job
         if path.exists():
-            return
+            return True
         # 临时名要保留真实后缀：jmcomic 按输出后缀定编码，用 .part 当后缀会直接抛错
         tmp = path.with_name(f"{path.stem}.part{path.suffix}")
         try:
             self.client.download_by_image_detail(img, str(tmp))
             tmp.rename(path)
+            return True
         except Exception:
             tmp.unlink(missing_ok=True)
+            return False
+
+    # ==================== 整本离线下载（data/app.db + download.dir） ====================
+    # 一句话：进度就是磁盘上那些文件。续传时不看内存里的计数，只把缺的挑出来补 ——
+    # 所以关窗、断电、图源抖，下次开窗都只下没下过的那部分。
+
+    _DOWNLOAD_SELECT = (
+        "SELECT a.album_id, a.title, a.cover_url, a.state, a.error, a.total, a.done,"
+        " a.added_at, a.updated_at,"
+        " COALESCE(s.images, 0), COALESCE(s.images_total, 0)"
+        " FROM download_album a LEFT JOIN ("
+        "   SELECT album_id, SUM(done) AS images, SUM(total) AS images_total"
+        "   FROM download_chapter GROUP BY album_id) s ON s.album_id = a.album_id"
+    )
+
+    def start_download(self, album_id: str, title: str = "", cover_url: str = "",
+                       chapters: list | None = None) -> dict:
+        """
+        开一个整本下载；已经在下的就把没见过的章节补进话单，不重头。
+
+        chapters 是详情页手里那份 [{"photo_id", "index", "title"}]：用它就不用再拉一次详情。
+        已经下完的话保持 done，不会被重下（换域名 / 补新章节都走这一条路）。
+        """
+        aid = self._need_album_id(album_id)
+        rows: list[tuple[str, str, str, str]] = []
+        for item in chapters or []:
+            if not isinstance(item, dict):
+                continue
+            pid = str(item.get("photo_id") or "").strip()
+            if not pid:
+                continue
+            rows.append((pid, aid, str(item.get("index") or ""), str(item.get("title") or "")))
+        if not rows:
+            raise ValueError("没有可下载的章节")
+
+        now = time.time()
+        with sqlite3.connect(DATA_DB) as conn:
+            old = conn.execute(
+                "SELECT added_at FROM download_album WHERE album_id = ?", (aid,)
+            ).fetchone()
+            added_at = old[0] if old else now     # 重开一次任务不改"第一次下载"的时间
+            conn.execute(
+                "INSERT OR REPLACE INTO download_album"
+                " (album_id, title, cover_url, total, done, state, error, added_at, updated_at)"
+                " VALUES (?, ?, ?, 0, 0, ?, '', ?, ?)",
+                (aid, str(title or "").strip(), str(cover_url or ""), "queued", added_at, now),
+            )
+            # 已有的话保留原状态：下过的不重下，只把没见过的话加进来
+            conn.executemany(
+                "INSERT OR IGNORE INTO download_chapter"
+                " (photo_id, album_id, index_no, title, state, total, done, updated_at)"
+                " VALUES (?, ?, ?, ?, 'queued', 0, 0, ?)",
+                [(pid, cid, idx, name, now) for pid, cid, idx, name in rows],
+            )
+        self._refresh_album_progress(aid)
+        self._spawn_album_download(aid)
+        return self.get_download(aid)
+
+    def get_downloads(self) -> list[dict]:
+        """所有下载任务，按最近更新倒序（我的下载页用）"""
+        with sqlite3.connect(DATA_DB) as conn:
+            rows = conn.execute(self._DOWNLOAD_SELECT + " ORDER BY a.updated_at DESC").fetchall()
+        return [self._download_out(row) for row in rows]
+
+    def get_download(self, album_id: str) -> dict | None:
+        """单部漫画的下载任务（详情页按钮认状态用）；没下过返回 None"""
+        aid = self._need_album_id(album_id)
+        with sqlite3.connect(DATA_DB) as conn:
+            row = conn.execute(
+                self._DOWNLOAD_SELECT + " WHERE a.album_id = ?", (aid,)
+            ).fetchone()
+        return self._download_out(row) if row else None
+
+    def pause_download(self, album_id: str) -> dict | None:
+        """
+        暂停下载。worker 在下一批（workers 张）之后退出，已经下好的图全留着，
+        下次「继续下载」只补缺的。
+        """
+        aid = self._need_album_id(album_id)
+        with self._album_dl_lock:
+            pause = self._album_dl_pause.get(aid)
+        if pause is not None:
+            pause.set()
+        self._refresh_album_progress(aid, state="paused")
+        return self.get_download(aid)
+
+    def resume_download(self, album_id: str) -> dict | None:
+        """接着下（只补缺的那几话 / 那几张）；没下完的、报错的、暂停的都走它"""
+        aid = self._need_album_id(album_id)
+        self._spawn_album_download(aid)
+        return self.get_download(aid)
+
+    def remove_download(self, album_id: str, delete_files: bool = False) -> dict:
+        """
+        删掉一个下载任务；delete_files=True 时连离线副本一起删。
+
+        正在下的先叫停：worker 最多再下一个批次就退出，这儿最多等 5 秒；
+        等不到也照删（文件用 ignore_errors 硬删 —— Windows 上正被写的那张删不掉，
+        留给下次清理，但任务记录一定会消失）。
+        """
+        aid = self._need_album_id(album_id)
+        files = 0
+        with self._album_dl_lock:
+            self._album_dl_stop.setdefault(aid, threading.Event()).set()
+            pause = self._album_dl_pause.get(aid)
+            thread = self._album_dl_threads.get(aid)
+        if pause is not None:
+            pause.set()
+        if thread is not None and thread.is_alive():
+            thread.join(timeout=5)
+        with sqlite3.connect(DATA_DB) as conn:
+            conn.execute("DELETE FROM download_chapter WHERE album_id = ?", (aid,))
+            conn.execute("DELETE FROM download_album WHERE album_id = ?", (aid,))
+        if delete_files:
+            folder = self.download_dir / aid
+            if folder.is_dir():
+                files = self._count_files(folder, True)
+                shutil.rmtree(folder, ignore_errors=True)
+        return {"removed": True, "files": files}
+
+    # ---------- 内部：任务调度 ----------
+
+    def _download_out(self, row: tuple) -> dict:
+        """一行任务记录 -> 前端要的形状"""
+        album_id = str(row[0])
+        state = str(row[3])
+        return {
+            "album_id": album_id,
+            "title": row[1],
+            "cover_url": row[2],
+            "state": state,
+            "error": row[4],
+            "total": int(row[5]),
+            "done": int(row[6]),
+            "images_done": int(row[9]),
+            "images_total": int(row[10]),
+            "added_at": row[7],
+            "updated_at": row[8],
+            # 阅读进度现拼：跟「最近阅读」同一个口径（同一张 history 表），不进任何缓存
+            "read": self.get_album_progress(album_id),
+            "running": state in ("queued", "running"),
+        }
+
+    def _refresh_album_progress(self, album_id: str, state: str | None = None,
+                                error: str | None = None) -> None:
+        """把 total / done 按话单重算一遍，顺带改 state / error（任务被删了就是空操作）"""
+        total, done = self._chapter_counts(album_id)
+        sets = ["total = ?", "done = ?", "updated_at = ?"]
+        args: list[Any] = [total, done, time.time()]
+        if state is not None:
+            sets.append("state = ?")
+            args.append(state)
+        if error is not None:
+            sets.append("error = ?")
+            args.append(error)
+        args.append(album_id)
+        with sqlite3.connect(DATA_DB) as conn:
+            conn.execute(f"UPDATE download_album SET {', '.join(sets)} WHERE album_id = ?", args)
+
+    def _chapter_counts(self, album_id: str) -> tuple[int, int]:
+        """(话数, 已下完的话数)"""
+        with sqlite3.connect(DATA_DB) as conn:
+            row = conn.execute(
+                "SELECT COUNT(*), SUM(CASE WHEN state = 'done' THEN 1 ELSE 0 END)"
+                " FROM download_chapter WHERE album_id = ?",
+                (album_id,),
+            ).fetchone()
+        return int(row[0] or 0), int(row[1] or 0)
+
+    def _pending_chapters(self, album_id: str) -> list[str]:
+        """
+        这轮要下哪些话，按话单顺序。
+
+        没下完的（含上次出错的那几话）都要；已经标 done 的再量一下磁盘 ——
+        续传时数据可能被清掉 / 挪走过，量一次才知道要不要补（一次目录扫描，很便宜）。
+        """
+        with sqlite3.connect(DATA_DB) as conn:
+            rows = conn.execute(
+                "SELECT photo_id, state, total FROM download_chapter"
+                " WHERE album_id = ? ORDER BY rowid",
+                (album_id,),
+            ).fetchall()
+        pending: list[str] = []
+        for photo_id, state, total in rows:
+            pid = str(photo_id)
+            if state != 'done':
+                pending.append(pid)
+            elif int(total or 0) > 0 and \
+                    self._count_files(self.download_dir / album_id / pid) < int(total):
+                pending.append(pid)
+        return pending
+
+    def _set_chapter_state(self, album_id: str, photo_id: str, state: str,
+                           done: int, total: int) -> None:
+        with sqlite3.connect(DATA_DB) as conn:
+            conn.execute(
+                "UPDATE download_chapter SET state = ?, done = ?, total = ?, updated_at = ?"
+                " WHERE album_id = ? AND photo_id = ?",
+                (state, int(done), int(total), time.time(), album_id, str(photo_id)),
+            )
+
+    def _album_stopped(self, album_id: str) -> bool:
+        """任务被删了？（worker 见到就立刻收手，别再往库里写、别再下）"""
+        with self._album_dl_lock:
+            stop = self._album_dl_stop.get(album_id)
+        return stop is not None and stop.is_set()
+
+    def _spawn_album_download(self, album_id: str) -> None:
+        """起整本下载线程；同一本只跑一个（在跑就什么都不做）"""
+        with self._album_dl_lock:
+            thread = self._album_dl_threads.get(album_id)
+            if thread is not None and thread.is_alive():
+                return
+            self._album_dl_stop.pop(album_id, None)     # 上次删过就翻篇
+            pause = self._album_dl_pause.setdefault(album_id, threading.Event())
+            pause.clear()
+            thread = threading.Thread(
+                target=self._run_album_download, args=(album_id, pause), daemon=True
+            )
+            self._album_dl_threads[album_id] = thread
+        self._refresh_album_progress(album_id, state="queued", error="")
+        thread.start()
+
+    def _run_album_download(self, album_id: str, pause: threading.Event) -> None:
+        """
+        整本下载：逐话串行，一话内部并发。
+
+        某一话彻底失败（重试完还没有）只把这话标 error，整本继续 —— 一话卡住不该
+        让后面几十话都下不了；用户点「继续下载」时再补它。
+        """
+        self._refresh_album_progress(album_id, state="running", error="")
+        attempted: set[str] = set()
+        try:
+            # 外层再转一圈是为了"下到一半又补了新话"：新话在下一圈会被捞上来。
+            # attempted 保证一话这一轮只试一次 —— 失败的留给下次「继续下载」，别在这儿死磕。
+            while not pause.is_set() and not self._album_stopped(album_id):
+                todo = [pid for pid in self._pending_chapters(album_id) if pid not in attempted]
+                if not todo:
+                    break
+                for photo_id in todo:
+                    if pause.is_set() or self._album_stopped(album_id):
+                        break
+                    attempted.add(photo_id)
+                    ok, done, total = self._download_chapter_to_dir(album_id, photo_id, pause)
+                    if self._album_stopped(album_id):
+                        break                # 任务已经被删了，别再写库
+                    self._set_chapter_state(album_id, photo_id, "done" if ok else "error", done, total)
+                    self._refresh_album_progress(album_id)
+        finally:
+            with self._album_dl_lock:
+                # 只清自己那几条：这期间用户可能又开了一个新任务
+                if self._album_dl_threads.get(album_id) is threading.current_thread():
+                    self._album_dl_threads.pop(album_id, None)
+                    self._album_dl_pause.pop(album_id, None)
+            if not self._album_stopped(album_id):
+                self._finish_album_state(album_id, pause)
+
+    def _finish_album_state(self, album_id: str, pause: threading.Event) -> None:
+        """跑完了 / 暂停了 / 还有话没下完，各自落一个终态"""
+        total, done = self._chapter_counts(album_id)
+        if total and done >= total:
+            self._refresh_album_progress(album_id, state="done", error="")
+        elif pause.is_set():
+            self._refresh_album_progress(album_id, state="paused")
+        else:
+            left = total - done
+            self._refresh_album_progress(
+                album_id, state="error",
+                error=f"{left} 话没下完，点「继续下载」接着补",
+            )
+
+    def _download_chapter_to_dir(self, album_id: str, photo_id: str,
+                                 pause: threading.Event) -> tuple[bool, int, int]:
+        """
+        把这一话下到 <download.dir>/<album_id>/<photo_id>/，返回 (是否完整, 已下, 总数)。
+
+        文件名列表先看缓存（`photo:<id>` 只存文件名）：续传时那些下过的话连一次
+        网络请求都不用发 —— 这才是"按进度重新下载"最省的那条路。
+        """
+        folder = self.download_dir / album_id / photo_id
+        names = self._cache_get(f"photo:{photo_id}", self._photo_ttl)
+        if names and all((folder / name).exists() for name in names):
+            return True, len(names), len(names)
+        try:
+            photo = self.client.get_photo_detail(photo_id)
+        except Exception:
+            return False, self._count_files(folder), len(names or [])
+        files = [img.filename for img in photo]
+        self._cache_set(f"photo:{photo_id}", files)   # 下次续传就能跳过已下完的话
+        # 目录得自己建：jmcomic 碰上不存在的目录是"静默不落盘"（请求照发、异常照吞、文件没有）
+        folder.mkdir(parents=True, exist_ok=True)
+        jobs = [(img, folder / img.filename) for img in photo if not (folder / img.filename).exists()]
+        self._download_images_batched(jobs, pause)
+        missing = [img.filename for img in photo if not (folder / img.filename).exists()]
+        return (not missing), len(files) - len(missing), len(files)
+
+    def _count_files(self, folder: Path, recursive: bool = False) -> int:
+        """目录里真正下好的图片张数（.part 不算 —— 它是写了一半的）"""
+        if not folder.is_dir():
+            return 0
+        items = folder.rglob("*") if recursive else folder.glob("*")
+        return sum(1 for f in items if f.is_file() and ".part" not in f.name)
+
+    def _downloaded_chapter_dir(self, photo_id: str) -> tuple[str, Path] | None:
+        """这一话有下完的离线副本就返回 (album_id, 目录)，否则 None"""
+        with sqlite3.connect(DATA_DB) as conn:
+            row = conn.execute(
+                "SELECT album_id FROM download_chapter"
+                " WHERE photo_id = ? AND state = 'done' LIMIT 1",
+                (str(photo_id),),
+            ).fetchone()
+        if row is None:
+            return None
+        folder = self.download_dir / str(row[0]) / str(photo_id)
+        return (str(row[0]), folder) if folder.is_dir() else None
+
+    def _resume_downloads_loop(self) -> None:
+        """
+        开窗几秒后把没下完的接着下。
+
+        `running` 也算没下完：上次是被关窗 / 断电打断的，进程一停状态就停在 running 上。
+        """
+        time.sleep(5)      # 先让首屏把要的数据拿到，别一开机就跟首页抢带宽
+        try:
+            with sqlite3.connect(DATA_DB) as conn:
+                rows = conn.execute(
+                    "SELECT album_id FROM download_album WHERE state IN ('queued', 'running')"
+                ).fetchall()
+            for (album_id,) in rows:
+                self._spawn_album_download(str(album_id))
+            if rows:
+                print(f"[download] 续传 {len(rows)} 个任务", flush=True)
+        except Exception as e:
+            print(f"[download] 续传失败: {e}", flush=True)
 
     def save_progress(self, album_id: str, photo_id: str, page_index: int,
                     title: str = "", cover_url: str = "") -> None:
@@ -1368,6 +1832,21 @@ class API:
             download = settings.get("download") or {}
             if "workers" in download:
                 cfg["download"]["workers"] = _setting_int(download["workers"], 1, 32, "下载并发数")
+            if "dir" in download:
+                text = str(download["dir"]).strip()
+                if not text:
+                    raise ValueError("下载目录不能为空")
+                path = _resolve_download_dir(text)
+                try:
+                    path.mkdir(parents=True, exist_ok=True)   # 当场建一下，路径错了立刻能说清
+                except OSError as e:
+                    raise ValueError(f"下载目录建不出来（{path}）：{e}") from None
+                cfg["download"]["dir"] = text
+            if "retries" in download:
+                cfg["download"]["retries"] = _setting_int(
+                    download["retries"], 0, 10, "下载重试次数")
+            if "auto_resume" in download:
+                cfg["download"]["auto_resume"] = bool(download["auto_resume"])
 
             cache = settings.get("cache") or {}
             for key, label, lo, hi in (
