@@ -664,6 +664,7 @@ input:focus { outline: 2px solid var(--primary-soft); outline-offset: 1px; borde
 .rank-btn {
   gap: 4px;
   padding: 5px 8px;
+  white-space: nowrap;      /* 挤的时候宁可溢出，也别把「周榜」折成竖排两个字 */
   background: transparent;
   border-color: transparent;
   color: var(--muted);
@@ -829,11 +830,34 @@ album-card .dl-badge[hidden] { display: none; }
 /* 分类标签条是"标签"，下面的面板是"标签的内容"：当前那个标签和面板同底色、
    底边压住面板的上边线，看着就是贴在一起的一整块（#/popular 与 #/category 共用） */
 .board { margin: 20px 0 0; }
-.board-head { display: flex; align-items: flex-end; justify-content: space-between; gap: 12px; padding: 0 10px; }
-.board-tabs { display: flex; flex-wrap: wrap; gap: 4px; }
+/* 标签条与两个下拉挤在同一行（2026-10-15 手机版）：能被压缩的只有标签条这一侧，
+   放不下的标签横向滚动、滑出视野的就看不见 —— 原来是 flex-wrap: wrap，窄屏下六个
+   标签折成三行，还把那两个下拉挤成了竖排两个字。 */
+.board-head { display: flex; align-items: flex-end; gap: 10px; padding: 0 10px; }
+.board-tabs {
+  display: flex;
+  flex: 1 1 auto;
+  min-width: 0;
+  flex-wrap: nowrap;
+  gap: 4px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  /* 这 1px 是留给当前那个标签的：它靠 margin-bottom:-1px 压住面板的上边线，而
+     overflow-x: auto 会把 overflow-y 一并算成 auto —— 不空出这 1px，接缝就被裁掉。
+     容器自己再 -1px 收回去，面板的位置一点没动。 */
+  padding-bottom: 1px;
+  margin-bottom: -1px;
+  scrollbar-width: none;
+  overscroll-behavior-x: contain;
+  /* 右边淡出一点：滑得到的东西才看得出来还有（标签正好排满时不淡也无妨） */
+  mask-image: linear-gradient(to right, #000 calc(100% - 18px), transparent);
+}
+.board-tabs::-webkit-scrollbar { display: none; }
 
 .board-tab {
   position: relative;
+  flex: 0 0 auto;
+  white-space: nowrap;
   padding: 8px 16px;
   background: transparent;
   border: 1px solid transparent;
@@ -854,7 +878,8 @@ album-card .dl-badge[hidden] { display: none; }
   font-weight: 500;
 }
 
-.board-tools { display: flex; align-items: center; gap: 2px; padding-bottom: 7px; }
+/* 两个下拉固定不缩：宁可让标签条少显示几个，也不许它们折行 */
+.board-tools { display: flex; flex: none; align-items: center; gap: 2px; padding-bottom: 7px; }
 
 .board-panel {
   position: relative;
@@ -1108,13 +1133,8 @@ album-card .dl-badge[hidden] { display: none; }
 }
 
 /* ============ 详情页：正文 + 右侧评论区（评论只读，剧透默认盖住） ============ */
+/* 详情页只有一栏：评论区已经在正文里了（章节与相关作品之间），不再分侧栏 —— 2026-10-15 */
 .detail-layout { display: grid; grid-template-columns: minmax(0, 1fr); gap: 22px; }
-.detail-layout.has-side { grid-template-columns: minmax(0, 1fr) 300px; }
-/* 列宽不够（窗口窄）就退回单栏，评论区挪到章节下面 */
-@media (max-width: 1040px) {
-  .detail-layout.has-side { grid-template-columns: minmax(0, 1fr); }
-  .detail-side { position: static; }
-}
 
 /* 章节折叠：默认只铺前几话，剩下的点按钮摊开 */
 .chapter-actions { display: flex; flex-wrap: wrap; justify-content: center; gap: 10px; margin-top: 10px; }
@@ -1125,9 +1145,21 @@ album-card .dl-badge[hidden] { display: none; }
 .chapter-actions button:hover { background: var(--surface-3); color: var(--text); }
 .chapter-actions button[hidden] { display: none; }
 
-.detail-side { position: sticky; top: 26px; align-self: start; }
-.side-title { display: flex; align-items: baseline; gap: 8px; margin: 0 0 12px; font-size: 15px; font-weight: 600; color: #d8d8d8; }
-.side-title span { color: var(--faint); font-size: 12px; font-weight: 400; }
+/* 评论区（2026-10-15 起折叠）：夹在「章节」与「相关作品」中间，默认只留一行标题栏，
+   点开才去取评论 —— 原来是右侧一整栏（.detail-side），手机上要一路滚到底才看得见。 */
+.comment-toggle {
+  gap: 8px;
+  padding: 4px 8px;
+  background: transparent;
+  border-color: transparent;
+  font-size: 16px;
+  font-weight: 600;
+  color: #d8d8d8;
+}
+.comment-toggle:hover { background: transparent; color: var(--text); }
+.comment-toggle-hint { font-size: 12px; font-weight: 400; color: var(--faint); }
+.comment-toggle-caret { flex: none; color: var(--faint); transition: transform var(--dur) var(--ease-out); }
+.comment-toggle[aria-expanded="true"] .comment-toggle-caret { transform: rotate(180deg); }
 .comment-list { display: flex; flex-direction: column; gap: 10px; }
 .comment { padding: 10px 12px; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); }
 .comment-head { display: flex; align-items: baseline; gap: 6px; }
@@ -1570,6 +1602,61 @@ pre { background: var(--surface-2); padding: 16px; border-radius: var(--radius);
   .nav-resume-go { justify-content: center; padding: 10px 0; }
 }
 
+/* ============ 手机（窄于 760px）：导航栏从左栏挪到顶上 ============
+   桌面窗口的 min_size 是 800×600，所以这一档只会在手机上命中，桌面版式一点不动。
+   为什么挪：手机上一屏才 400 出头，左侧那 64px 是白扔的，六个入口挤在竖排里一屏
+   看不到两个。顶上分两行 —— 上面一行品牌 + 关于 / 设置 / 主题 / 继续阅读，下面
+   一行六个入口横向排，放不下就横向滑。 */
+@media (max-width: 760px) {
+  :root { --rail: 0px; --col-pad: 14px; }
+  body { padding-left: 0; }
+  /* sticky 而不是 fixed：它还在正常流里，下面的内容自己就排在它后面，不用手工留高度 */
+  #nav {
+    position: sticky;
+    inset: auto;
+    top: 0;
+    width: auto;
+    flex-direction: row;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 4px 8px;
+    padding: 8px 12px 6px;
+    border-right: none;
+    border-bottom: 1px solid var(--border);
+    /* 置顶之后内容会从它底下滚过去：毛玻璃主题下 --bg-soft 是半透明的，
+       不糊一下就是两层字叠在一起（手机上实测）。桌面那份是 fixed 且内容让开了位置，没这问题。 */
+    backdrop-filter: blur(18px) saturate(160%);
+  }
+  /* DOM 顺序是 品牌 → 六个入口 → 应用级那排，而六个入口要占满一整行；不显式排序的话
+     应用级那排会被挤到第三行（手机上实测如此）。order 把它们钉回第一行。 */
+  .nav-brand { order: 1; flex: 1 1 auto; justify-content: flex-start; padding: 0; gap: 8px; }
+  /* 64px 那一档把品牌字藏了（那儿是真没地方）；顶上一行放得下，得放回来 ——
+     开场那枚字标要飞进 .brand-slot，落点被藏掉就是 0×0，飞行会退化成淡出 */
+  .brand-text { display: block; }
+  .brand-logo { width: 62px; }
+  .brand-sub { display: none; }
+  /* 六个入口单独一行：横向排、放不下就滑（触屏没有悬停，只留图标没人认得出来） */
+  .nav-links { order: 3; flex: 1 1 100%; flex-direction: row; gap: 4px; overflow-x: auto; scrollbar-width: none; }
+  .nav-links::-webkit-scrollbar { display: none; }
+  #nav a { flex: 0 0 auto; gap: 6px; padding: 7px 12px; }
+  /* 内容导航那六个带字（触屏没有悬停，只留图标没人认得出来）…… */
+  #nav a span { display: inline; }
+  /* ……但「关于 / 设置」是应用级的，跟品牌同一行，挤不下就还是只留图标
+     （盖在上面那条后面：两条权重一样，靠先后顺序分胜负） */
+  .nav-foot-row a span { display: none; }
+  /* 底部那一摞（继续阅读 / 关于 / 设置 / 主题）在顶上跟品牌同一行，照旧只留图标 */
+  .nav-foot { order: 2; flex: none; flex-direction: row; align-items: center; gap: 2px; margin: 0; padding: 0; border: none; }
+  .nav-foot-row { flex-direction: row; }
+  .nav-resume { margin: 0; }
+  .nav-theme,
+  .nav-resume-go { padding: 8px 10px; }
+  /* 内容列：不带左右边界线（那是宽屏的排场），留白收窄 */
+  #app { max-width: none; border-left: none; border-right: none; padding: 16px var(--col-pad) 48px; }
+  .page-title { font-size: 21px; }
+  /* 没有实体键盘，主页搜索框里那个「/」快捷键提示没意义 */
+  .home-search kbd { display: none; }
+}
+
 /* ============ 动效与材质（2026-10-14） ============
    三条规矩：
    1) 会动的东西只有 transform 和 opacity；
@@ -1644,6 +1731,7 @@ body.reading .paper-grain { opacity: .42; }
   .nav-theme,
   .nav-resume-go,
   #nav .resume-card,
+  .comment-toggle-caret,
   .paper-grain { transition: none; }
   .board-panel .reveal album-card,
   .board-panel .reveal.in album-card { opacity: 1; filter: none; transition: none; }

@@ -40,7 +40,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
     },
     "detail": {
         "chapters_collapse": 20,   # 章节数超过这个就先折叠（0 = 全部展开）
-        "comment_preview": 5,      # 右侧评论区先显示几条（0 = 不显示评论区）
+        "comment_preview": 5,      # 评论区展开后先显示几条（0 = 不显示评论区）；评论区在章节与相关作品之间、默认折叠
     },
     "prefetch": {
         "albums": 12,           # 列表铺完后后台预热前 N 部的详情缓存（0 = 关）

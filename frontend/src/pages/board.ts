@@ -143,6 +143,15 @@ export function boardPage(category: ComicCategory, startPage = 1): HTMLElement {
     tabsEl.appendChild(tab)
   }
 
+  // 标签条只显示得下一部分（手机）：当前那个分类必须在视野里，不然看不出自己在哪一页。
+  // 路由要等这个函数返回之后才把节点挂上，所以宽度得等下一帧才量得到。
+  const activeTab = tabsEl.querySelector<HTMLButtonElement>('.board-tab.active')
+  if (activeTab) {
+    requestAnimationFrame(() => {
+      if (activeTab.offsetParent) tabsEl.scrollLeft = Math.max(0, activeTab.offsetLeft - 12)
+    })
+  }
+
   // 面板里：首页铺"别的分类"各一行，分类页铺自己的整页列表
   const boardMsgEl = document.createElement('div')
   boardMsgEl.className = 'board-empty'

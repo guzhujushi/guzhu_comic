@@ -96,7 +96,7 @@ SECTIONS: list[dict[str, Any]] = [
         "fields": [
             {"key": "chapters_collapse", "label": "章节超过几话就折叠", "kind": "int", "min": 0, "max": 500,
              "hint": "0 = 全部展开；折叠后还能一键展开，或直接跳到上次读到的那话"},
-            {"key": "comment_preview", "label": "右侧评论区先显示几条", "kind": "int", "min": 0, "max": 50,
+            {"key": "comment_preview", "label": "评论区展开后先显示几条", "kind": "int", "min": 0, "max": 50,
              "hint": "0 = 不显示评论区；评论只读，不需要登录"},
         ],
     },

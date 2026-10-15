@@ -17,6 +17,8 @@ import android.widget.FrameLayout
 import android.widget.TextView
 import androidx.activity.OnBackPressedCallback
 import androidx.appcompat.app.AppCompatActivity
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowInsetsCompat
 import com.chaquo.python.Python
 import com.chaquo.python.android.AndroidPlatform
 import java.io.File
@@ -57,7 +59,7 @@ class MainActivity : AppCompatActivity() {
 
         webView = WebView(this).apply {
             // 页面画出来之前先垫底色，免得启动那一下闪白（跟桌面的 background_color 一个意思）
-            setBackgroundColor(Color.parseColor("#07080a"))
+            setBackgroundColor(Color.parseColor(SHELL_BG))
             settings.javaScriptEnabled = true
             settings.domStorageEnabled = true
             settings.allowFileAccess = false
@@ -76,15 +78,27 @@ class MainActivity : AppCompatActivity() {
             text = "正在启动 Python…"
         }
 
-        setContentView(
-            FrameLayout(this).apply {
-                addView(webView, FrameLayout.LayoutParams(MATCH_PARENT, MATCH_PARENT))
-                addView(
-                    statusView,
-                    FrameLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT, Gravity.BOTTOM),
-                )
-            },
-        )
+        val root = FrameLayout(this).apply {
+            setBackgroundColor(Color.parseColor(SHELL_BG))
+            addView(webView, FrameLayout.LayoutParams(MATCH_PARENT, MATCH_PARENT))
+            addView(
+                statusView,
+                FrameLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT, Gravity.BOTTOM),
+            )
+        }
+
+        // targetSdk 35 起系统强制 edge-to-edge：窗口一直铺到状态栏 / 导航栏底下，页面顶上
+        // 那行会被状态栏压住（在手机上就是"顶部导航栏被吃掉了"）。让开的办法是拿状态栏 /
+        // 导航栏 / 键盘的高度当根布局的 padding：WebView 由此小一号，页面视口跟着小，
+        // sticky 住的那条导航栏也就不会被滚到状态栏底下去。
+        ViewCompat.setOnApplyWindowInsetsListener(root) { view, insets ->
+            val bars = insets.getInsets(WindowInsetsCompat.Type.systemBars())
+            val ime = insets.getInsets(WindowInsetsCompat.Type.ime())
+            view.setPadding(bars.left, bars.top, bars.right, maxOf(bars.bottom, ime.bottom))
+            insets
+        }
+
+        setContentView(root)
 
         onBackPressedDispatcher.addCallback(
             this,
@@ -109,7 +123,11 @@ class MainActivity : AppCompatActivity() {
             fail(t)
             return
         }
-        worker.execute { boot() }
+        if (intent.getBooleanExtra(PROBE_EXTRA, false)) {
+            worker.execute { runProbe() }
+        } else {
+            worker.execute { boot() }
+        }
     }
 
     private fun boot() {
@@ -132,6 +150,26 @@ class MainActivity : AppCompatActivity() {
                 webView.loadUrl(url)
             }
             Log.i(TAG, "页面已切到 $url")
+        } catch (t: Throwable) {
+            fail(t)
+        }
+    }
+
+    /**
+     * 依赖探针（T1 / T1-b / T2）：`adb shell am start ... --ez guzhu.probe true`。
+     *
+     * 跑的是 `guzhu_probe.py` —— 「安卓轮子装得上 + 图源连得上」这件事只能在真跑起来的安卓
+     * 运行时里验，结果同时进 logcat（`python.stdout`）与屏幕（手机上没有控制台时看屏幕）。
+     */
+    private fun runProbe() {
+        try {
+            say("依赖探针跑起来了（逐步结果看 logcat 的 python.stdout）…")
+            val report = Python.getInstance().getModule("guzhu_probe").callAttr("run").toString()
+            runOnUiThread {
+                statusView.textSize = 9f
+                statusView.text = report
+                statusView.visibility = View.VISIBLE
+            }
         } catch (t: Throwable) {
             fail(t)
         }
@@ -197,6 +235,8 @@ class MainActivity : AppCompatActivity() {
 
     private companion object {
         const val TAG = "GuzhuShell"
+        const val SHELL_BG = "#07080a"
         const val SHELL_PAGE = "file:///android_asset/shell_status.html"
+        const val PROBE_EXTRA = "guzhu.probe"
     }
 }

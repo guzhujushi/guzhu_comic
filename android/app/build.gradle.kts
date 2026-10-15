@@ -67,6 +67,21 @@ chaquopy {
         // Python 3.13：Chaquopy 仓库的安卓原生轮子只到 cp313（pillow / pycryptodome / pyyaml / cffi）
         version = "3.13"
         buildPython(buildPythonPath)
+
+        // 两条变体都要的「原生依赖包」。chaquopy-xxx 是 Chaquopy 把「某个轮子依赖的 C 库」
+        // 单独发的 pip 包，装进来它的 .so 才会被放进 APK 的 lib/<abi>/：
+        //   chaquopy-libffi   -> libffi.so            cffi 的 _cffi_backend.so 要它
+        //   chaquopy-libjpeg  -> libjpeg_chaquopy.so  PIL/_imaging.so 要它
+        //   chaquopy-freetype -> libfreetype.so       PIL/_imagingft.so 要它
+        // ⚠️ 平时这几个是 pip 顺着 `Requires-Dist: chaquopy-libffi` 自己装的，而下面为了绕开
+        //    `cffi>=2.0.0` 用了 `--no-deps` —— 自动依赖一并没了，所以必须在这儿显式点名。
+        //    （2026-10-15 实测教训：不点名的后果是构建照常成功、装到设备上 import 才 dlopen 失败）
+        pip {
+            install("chaquopy-libffi==3.3")
+            install("chaquopy-libjpeg==1.5.3")
+            install("chaquopy-freetype==2.9.1")
+            install("pycparser")            // cffi 的纯 Python 依赖，同样被 --no-deps 甩掉了
+        }
     }
 
     // pip 列表**按变体分别写**（默认配置里不放，免得 ui 变体被默认值带进 curl_cffi）。

@@ -185,7 +185,8 @@ function renderDetail(
 
   const collapseAfter = Math.max(0, cfg.chapters_collapse)   // 0 = 不折叠
   const commentPreview = Math.max(0, cfg.comment_preview)    // 0 = 不显示评论区
-  const withSide = commentPreview > 0
+  // 评论区 2026-10-15 起折叠，位置也从右侧栏挪进了正文（章节与相关作品之间）
+  const showComments = commentPreview > 0
 
   container.innerHTML = `
     <div class="detail-top">
@@ -193,7 +194,7 @@ function renderDetail(
       <span class="fav-hint"></span>
       <button class="fav-btn" type="button"><morph-icon size="16" stroke-width="1.8"></morph-icon><span class="fav-label"></span></button>
     </div>
-    <div class="detail-layout${withSide ? ' has-side' : ''}">
+    <div class="detail-layout">
       <div class="detail-main">
         <div class="detail-hero">
           <img class="detail-cover" src="${cover}" alt="" />
@@ -216,9 +217,22 @@ function renderDetail(
           <button type="button" class="chapter-more" hidden></button>
           <button type="button" class="chapter-jump" hidden></button>
         </div>
+        ${showComments ? `
+        <section class="detail-comments">
+          <h2 class="section-title">
+            <button type="button" class="comment-toggle" aria-expanded="false">
+              <span>评论（${escapeHtml(data.comment_count)}）</span>
+              <span class="comment-toggle-hint">展开</span>
+              <span class="comment-toggle-caret"></span>
+            </button>
+          </h2>
+          <div class="comment-panel" hidden>
+            <div class="comment-list"></div>
+            <button type="button" class="comment-more" hidden>看更多</button>
+          </div>
+        </section>` : ''}
         ${data.related.length ? '<h2 class="section-title">相关作品</h2><div class="album-list related-list"></div>' : ''}
       </div>
-      ${withSide ? '<aside class="detail-side"></aside>' : ''}
     </div>
   `
 
@@ -226,6 +240,9 @@ function renderDetail(
   if (cover) container.querySelector<HTMLElement>('.detail-hero')!.style.setProperty('--cover', `url("${cover}")`)
 
   setIcon(container, '.back-btn morph-icon', icons.back)
+  // 折叠标记：展开时靠 CSS 把它转 180°
+  const caretEl = container.querySelector<HTMLElement>('.comment-toggle-caret')
+  if (caretEl) caretEl.appendChild(createIcon(icons.down, { size: 14 }))
   const readBtn = container.querySelector('.read-btn')
   if (readBtn) setIcon(readBtn, 'morph-icon', icons.read)
 
@@ -259,8 +276,8 @@ function renderDetail(
 
   onDownloadTick = paintChapters(container, data, resumeChapter, collapseAfter, cached)
 
-  const sideEl = container.querySelector<HTMLElement>('.detail-side')
-  if (sideEl) void paintComments(sideEl, data.id, commentPreview)
+  const commentsEl = container.querySelector<HTMLElement>('.detail-comments')
+  if (commentsEl) paintComments(commentsEl, data.id, commentPreview)
 }
 
 /**
@@ -439,22 +456,23 @@ function paintChapters(
   }
 }
 
-/** 右侧评论区：只读预览，先铺 comment_preview 条，点「看更多」再往下加 */
-async function paintComments(sideEl: HTMLElement, albumId: string, limit: number): Promise<void> {
-  sideEl.innerHTML = `
-    <h2 class="side-title">评论<span class="comment-total"></span></h2>
-    <div class="comment-list"></div>
-    <button type="button" class="comment-more" hidden>看更多</button>
-  `
-  const listEl = sideEl.querySelector<HTMLElement>('.comment-list')!
-  const totalEl = sideEl.querySelector<HTMLElement>('.comment-total')!
-  const moreBtn = sideEl.querySelector<HTMLButtonElement>('.comment-more')!
+/**
+ * 评论区（2026-10-15 起折叠）：默认只有标题栏那一行「评论（N） 展开」，点开才去取第一页。
+ * 条数直接读详情里的 comment_count，所以收起时也报得出数、不用先请求一次。
+ */
+function paintComments(root: HTMLElement, albumId: string, limit: number): void {
+  const toggle = root.querySelector<HTMLButtonElement>('.comment-toggle')!
+  const hintEl = root.querySelector<HTMLElement>('.comment-toggle-hint')!
+  const panel = root.querySelector<HTMLElement>('.comment-panel')!
+  const listEl = root.querySelector<HTMLElement>('.comment-list')!
+  const moreBtn = root.querySelector<HTMLButtonElement>('.comment-more')!
 
   const items: CommentItem[] = []
   let shown = 0     // 已经铺在页面上的条数
   let page = 0      // 已经取到的页数
   let hasMore = true
   let busy = false
+  let opened = false      // 展开过一次就不再重复取
 
   const paint = (): void => {
     for (const item of items.slice(shown, shown + limit)) {
@@ -471,7 +489,6 @@ async function paintComments(sideEl: HTMLElement, albumId: string, limit: number
     page++
     items.push(...data.items)
     hasMore = data.has_more && data.items.length > 0
-    totalEl.textContent = data.total ? `（${data.total}）` : ''
   }
 
   moreBtn.addEventListener('click', () => {
@@ -494,18 +511,31 @@ async function paintComments(sideEl: HTMLElement, albumId: string, limit: number
     })()
   })
 
-  try {
-    await loadNextPage()
-    if (items.length === 0) {
-      listEl.appendChild(hint('还没有评论'))
+  /** 展开那一下的动作：第一次展开才真去取（收起 / 再展开都不重复取） */
+  const open = async (): Promise<void> => {
+    if (opened) return
+    opened = true
+    try {
+      await loadNextPage()
+      if (items.length === 0) {
+        listEl.appendChild(hint('还没有评论'))
+        moreBtn.hidden = true
+        return
+      }
+      paint()
+    } catch (err) {
+      listEl.appendChild(hint(`评论加载失败：${String(err)}`))
       moreBtn.hidden = true
-      return
     }
-    paint()
-  } catch (err) {
-    listEl.appendChild(hint(`评论加载失败：${String(err)}`))
-    moreBtn.hidden = true
   }
+
+  toggle.addEventListener('click', () => {
+    const expand = panel.hidden     // 现在收着 = 这一下是要展开
+    panel.hidden = !expand
+    toggle.setAttribute('aria-expanded', String(expand))
+    hintEl.textContent = expand ? '收起' : '展开'
+    if (expand) void open()
+  })
 }
 
 /** 一条评论：剧透的先盖住，点一下展开 */

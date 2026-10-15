@@ -1223,7 +1223,108 @@ Content-Length: 5618
 `guzhu_arm64`（x86_64 主机上跑不起来的那个，用 `avdmanager delete` + `sdkmanager --uninstall` 正规卸的）；
 `tmp/_` 下 9 个一次性脚本与旧构建日志。
 
+## 手机版 UI 三项 + 导航挪到顶部（2026-10-15 晚）
+
+> 用户这一轮的三个要求：① 分类标签条别折三行，要**一行、可横向滑、多的隐藏**；② 评论**折叠**一下，放到
+> **「章节」下面、「相关作品」前面**；③ 顺带：搜索页一进去别自动弹键盘。另外问了两件事：**左边导航栏要不要挪到顶部**、
+> **能不能出个 APK 装到他那台 ARM64 手机上看**（结论见本节末尾）。
+
+**改动清单**
+
+| 文件 | 改了什么 |
+|---|---|
+| `frontend/src/style.css` | ① `.board-head` 收成一行：`.board-tabs` 成为唯一可压缩的一侧（`flex:1 1 auto; min-width:0; flex-wrap:nowrap; overflow-x:auto`），`.board-tools` 固定不缩，`.rank-btn` 不许折行；标签条右缘 18px 淡出（`mask-image`）提示"还有"；② 评论区样式：删掉 `.detail-side` / `.side-title`，换成 `.comment-toggle`（沿用 `.section-title` 那套居中带延长线，右边挂「展开 / 收起」+ 会转的箭头）；③ 新增 `@media (max-width: 760px)`：导航栏从左栏挪到顶部两行、`--rail: 0`、顶栏毛玻璃 `backdrop-filter`、`#app` 去掉左右边界线、`.home-search kbd`（那个 `/` 快捷键提示）在手机上藏掉 |
+| `frontend/src/pages/detail.ts` | 评论区从右侧栏挪进正文，顺序变成 meta → 章节 → **评论（折叠）** → 相关作品；折叠态只有一行「评论（N） 展开」，**第一次点开才去取**（N 直接读详情里的 `comment_count`，所以收起时也报得出数）；再点收起、不重复取 |
+| `frontend/src/pages/board.ts` | 当前分类那一栏滚进视野（一行只显示得下 3~4 个标签，落在「美漫」时得看得出自己在哪一页） |
+| `frontend/src/pages/search.ts` | 进搜索页**只在有鼠标指针时才自动聚焦**（`matchMedia('(hover: hover) and (pointer: fine)')`）；触屏上点了才弹键盘 |
+| `backend/config.py` / `backend/settings_spec.py` | `detail.comment_preview` 的说明文字不再是"右侧评论区"（默认值仍 5、仍是 0 = 不显示评论区） |
+| `android/.../MainActivity.kt` | **壳：让开状态栏 / 导航栏 / 键盘**。targetSdk 35 起系统强制 edge-to-edge，窗口一直铺到状态栏底下 —— 手机上第一版截图里就是"顶部那行被状态栏吃掉"。改法：根 FrameLayout 挂 `setOnApplyWindowInsetsListener`，把 `systemBars()` / `ime()` 的高度当 padding 给根布局，WebView 因此小一号、页面视口跟着小，sticky 的导航栏也不会被滚到状态栏底下 |
+
+**「左边导航栏要不要挪到顶部」—— 要，而且只对手机改**
+
+- 手机上一屏只有 400 出头 CSS px，左侧 64px 图标栏是白扔的（约占 1/6），六个入口竖着排、一屏看不到两个。
+- 改成顶部两行（一行品牌 + 应用级入口，一行六个内容入口横向滑）后，宽度全给内容；顶部这条用 `position: sticky`
+  （不是 fixed）—— 它还在正常流里，不用手工给 `body` 留高度。
+- **桌面版一点没动**：`@media (max-width: 760px)` 这一档，而桌面窗口 `min_size` 是 800×600，永远命中不到。
+  想在桌面上看手机版式，把窗口拖到 760px 以下即可（拖不下去就是这个原因）。
+- 顺带修掉一个潜在问题：<1180px 那档会藏掉品牌字（`.brand-slot`），而开场那枚字标正是要飞进这个落点 ——
+  落点 0×0 时飞行会退化成淡出。手机上现在放得下，字标照常落位（截图里那行「GuZhu 漫画」）。
+
+**假桥工具（tmp/，本轮新建）**：`tmp/_pc_bridge_server.py` + `tmp/_pc_bridge.js`
+
+- 用途：**在还没有 P0（HTTP 桥）的情况下，让手机尺寸下看到"真数据"的版式**。PC 上起一个服务喂 `frontend/dist`，
+  页面里注入一份假桥（`window.pywebview.api.X(...)` → `POST /_api`），`/_api` 交给仓库里真正的 `API` 对象回答 ——
+  排行榜、详情、评论、图片全是真的。
+- 用法：`.venv\Scripts\python.exe tmp\_pc_bridge_server.py`（监听 `127.0.0.1:47755`；用户目录强制落 `tmp/_pcapp`，
+  不碰 `~/.jmreader`）→ `adb reverse tcp:47755 tcp:47755` → 设备上浏览器开 `http://127.0.0.1:47755/#/album?id=644911`。
+- URL 助手参数：`?scrollto=.选择器` 滚过去、`?click=.选择器` 再点一下、`?auto=comment` = 定位并点开评论区。
+  长页面（这本 78 话）靠 `input swipe` 落点太难控，用这个才稳。
+- **坑（踩过）**：假桥用 `Proxy` 对任何属性都回函数时，`then` / `catch` / `finally` **必须回 undefined** ——
+  否则 api 自己成了 thenable，`await api` 会去调 `then(resolve, reject)` 而永不 settle，整个启动挂在 await 上
+  （现象：导航栏画出来了、内容区一片黑）。已在 `_pc_bridge.js` 里注明。
+- 它同时是 **P0 的预演**：真做 P0 时，客户端那半边几乎就是这份假桥 + token 校验。
+
+**验证（截图都在 `tmp/_ui/`）**
+
+| 截图 | 验的什么 |
+|---|---|
+| `p3-17-app-final.png` | **arm64 的 `full` 包装进 x86_64 模拟器**跑起来：两行顶栏、状态栏让位、分类全在一行（不再折三行） |
+| `p3-23-crop.png` | 手指在标签条上左滑 → **短篇 / 韩漫 / 美漫 滑出来了**，周榜 / 按观看 钉住不动（"多的隐藏"就是这个效果） |
+| `p3-13-comment-collapsed.png` | 详情页顺序：章节（78）→「展开全部 78 话」→ **评论（1328） 展开**（折叠着）→ 相关作品 |
+| `p3-15-comment-open.png` | 点开评论区：真评论到手（含剧透模糊）、箭头转 180°、按钮变「收起」 |
+| `p3-16-search.png` | 进搜索页**没有软键盘**（触屏不再自动聚焦），推荐段照常铺 |
+
+**复核到的设备事实（跑出来的，不是推测）**
+
+- 模拟器 `emulator-5554`：`abilist = x86_64,arm64-v8a`、`ro.dalvik.vm.native.bridge = libndk_translation.so`
+  → **arm64 包能装能跑**（`adb install -r app-full-debug.apk` → Success）。
+- `adb shell input swipe` 的起点**必须落在那个可滑容器里**：第一次从右往左划的是工具区，页面对横向手势无反应，
+  被我误读成"标签条滑不动"。量测（假桥 `?auto=tabs`）证明 `scrollWidth=389 > clientWidth=215`、`overflowX: auto`、
+  `scrollLeft` 能设到上限 174 —— 换到标签条上起手，一滑就动。
+- Chrome 头一版把 `full` 包误当"跑不了"的证据不成立：**翻译层能让 arm64 包在这台 x86_64 模拟器上完整跑通**。
+
+**顺带：arm64 的 `full` 包在模拟器上跑了一遍依赖探针（T1 / T1-b / T2 关闭）**
+
+- 探针跟着壳走一个开关（`android/app/src/main/python/guzhu_probe.py` + `MainActivity.runProbe()`）：
+  `adb shell am start -n cn.guzhujushi.comic/cn.guzhujushi.comic.MainActivity --ez guzhu.probe true` →
+  逐步结果进 logcat（`python.stdout`），同时也画在屏幕上（手机上没控制台时看屏幕）。
+  **它不在正常启动路径上**，只在带这个 extra 时才跑。原始输出存 **`tmp/安卓依赖探针实测.md`**。
+- 实测（2026-10-15 晚，`emulator-5554`）：**10 步里 9 步绿、共 12.3s** ——
+  `python 3.13.16` → `cffi 1.17.1`（**C ABI 那关过了**）→ `curl_cffi 0.16.3` 载入 1.4s →
+  `impersonate="chrome"` 的 HTTPS → 200 → `jmcomic` 建客户端（真拉 `/setting`，域名自动从 2.1.7 更到 2.1.11）→
+  拉详情（真作品 `422866`）→ 取一话的图列表 → **真下到一张 218,914 B 的图（RIFF/WEBP）**。
+- **唯一的 FAIL：第 9 步 Pillow 解 WebP** —— Chaquopy 的 Pillow 轮子**不带 libwebp**
+  （`features.check('webp')=False`；桌面同版本 Pillow 是 `True`）。**对本 app 零影响**：
+  图是 WebView（Chromium 原生支持 webp）渲染的，`backend/` 里**一行 PIL 都没有**（`rg` 核过），
+  离线下载走 jmcomic 的下载器原样落盘。**只有「在安卓侧用 PIL 拼长图 / 切图 / 转格式」才要自出带 libwebp 的轮子。**
+- 结论：**T1（`curl_cffi` 装得上 + 连得上图源）、T1-b（`cffi 1.17.1` × `curl_cffi 0.16.3` 的 C ABI）、
+  T2（jmcomic 起得来）三条关闭 —— 零设备、零成本。** 真机剩下的只有 T3~T6（长图渲染上限 / 一话 200 张图内存 /
+  后台下载保活 / 毛玻璃掉帧）那类**只有真机才算数**的（模拟器的性能基线 ≠ 真机）。
+
+**回答用户那句「能不能先做成 apk 放到我的 ARM64 手机上看」**
+
+- APK 早就有：`android/app/build/outputs/apk/full/debug/app-full-debug.apk`（**arm64-v8a**，50.5 MB）——
+  装进模拟器跑通了（上面那张截图就是它）。
+- 但那台 **Mate 80 Pro 装不了**：HarmonyOS 6 不是 Android，APK 连安装界面都进不去（§5.7 实测：Host 侧只有
+  `HDC Device`，没有 ADB 端点）。**"ARM64 手机"这个条件不够用，得是"能装 APK 的 ARM64 安卓设备"。**
+- **不需要为"看一眼"去买设备**：模拟器这套已经能看版式、也能（通过假桥）喂真数据。
+- 真要装到手机上"自己点着用"，还差 **P0**（把 `js_api` 换成带 token 的本地 HTTP 桥）——
+  在那之前装到手机上打开只会看到「加载失败了 / pywebview api 还没就绪」，**只能看版式，不能看内容**。
+
+
 ## 决策记录
+
+- **2026-10-15**：**T1 / T1-b / T2 关闭，靠的是「arm64 的包直接装进 x86_64 模拟器」** —— 模拟器自带 ARM 翻译层（`libndk_translation.so`、`abilist=x86_64,arm64-v8a`），`adb install -r` arm64-v8a 的 `full` 包 → Success，10 步依赖探针 1~8 + 10 全绿（原始 logcat `tmp/安卓依赖探针实测.md`）。**不需要真机、不需要 arm64 系统镜像、不需要买设备**；真机只剩 T3~T6 那类"只有真机才算数"的（手感 / 内存 / 保活）。
+- **2026-10-15**：**探针（`guzhu_probe.py`）留在仓库里**，跟着壳走一个开关（`--ez guzhu.probe true`，**不在正常启动路径上**）。它把"装得上 + 连得上"拆成 **10 步逐步记成败与耗时** —— 卡在第 3 步（cffi 的 C ABI）和第 5 步（域名 / 被墙）的退路完全不同，糊成一句"失败了"等于没验。**每次动 pip 列表或依赖版本之后都该重跑一遍**，它比"查资料"可靠。
+- **2026-10-15**：**Chaquopy 的 Pillow 轮子不带 libwebp**（实测 `features.check('webp')=False`，桌面同版本 Pillow 是 `True`），而图源现在发 `.webp`。**对本 app 零影响**（图片由 WebView 渲染、`backend/` 零 PIL 引用、离线下载走 jmcomic 下载器原样落盘）—— 但**以后谁要在安卓侧用 PIL 做长图 / 切图 / 转格式，必须先自出带 libwebp 的轮子**（记成 T2-b，非阻塞）。
+- **2026-10-15**：**别把「探针绿」当成「安卓版成了」**：它只验依赖与链路，不验手感 / 内存 / 保活，也**没验 P0 之后的真数据路径**（现在装到设备上的包，打开只有"pywebview api 还没就绪"）。要"手机上自己点着用"，下一步仍然是 **P0**。
+- **2026-10-15**：**手机版导航从左栏挪到顶部**，用 `@media (max-width: 760px)` 切；桌面 `min_size` 是 800×600，这一档只会在手机上命中（桌面版式零改动）。用 `sticky` 而不是 `fixed`：留在正常流里就不用给 `body` 补高度。**顺带更正一条**：<1180px 那档把 `.brand-text` 藏掉会让开场字标的落点变成 0×0（飞行退化成淡出），手机上放得下就别藏。
+- **2026-10-15**：**状态栏 / 导航栏 / 键盘的让位放在壳里做**（根布局 padding = `systemBars()` / `ime()` 高度），不放前端 CSS —— targetSdk 35 起系统强制 edge-to-edge，页面顶上第一行会被状态栏压住；靠 `env(safe-area-inset-*)` 还得赌 WebView 有没有把 inset 递进来，pad 根布局是确定的。
+- **2026-10-15**：**详情页评论区只留一个口子**：一处 DOM（章节与相关作品之间）、默认折叠、点开才请求。**桌面也跟着变了**（原来是右侧一整栏 + sticky），没有为桌面保留旧版式 —— 一份代码两条路才是以后最贵的那种债。用户不认再改回来。
+- **2026-10-15**：**"触屏"的判据用 `matchMedia('(hover: hover) and (pointer: fine)')`**（决定进搜索页要不要自动聚焦），不用 UA、不判平台 —— 桌面插鼠标、手机接 OTG 鼠标这些情况本来就不该硬判。
+- **2026-10-15**：**假桥（`tmp/_pc_bridge_server.py` + `_pc_bridge.js`）留在仓库里**：它是"P0 之前唯一能给手机尺寸喂真数据"的手段，也是 P0 客户端那半边的预演。**注意它没有任何鉴权，只许监听 127.0.0.1、只许临时跑。**
+- **2026-10-15**：**x86_64 模拟器自带 ARM 翻译层**（`ro.dalvik.vm.native.bridge=libndk_translation.so`、`abilist=x86_64,arm64-v8a`）→ **arm64 的 `full` 包能直接装进去跑**。此前"要验 R2 必须先有一台 arm64 安卓设备"的结论**作废**（更正见 `tmp/安卓端技术栈调研.md` §5.3）。翻译层有自己的坑、也**不能当性能基线**，T3~T6 那类"手感 / 内存 / 后台被杀"仍要真机。
+
 - **2026-10-15**：**安卓壳的启动链路定案：壳解 assets → Chaquopy 起 Python → `backend/server.py` 起本地静态服务 → WebView 加载 `http://127.0.0.1:47753`**。不用 `file://` 直开 `index.html` 的理由与桌面完全一致（ES module 要过 CORS、`file://` 的 origin 是 opaque；页面与图也不同源，localStorage 留不住），见 `backend/server.py` 开头。**桌面与安卓从此跑的是同一个服务、同一份前端。**
 - **2026-10-15**：**平台差异继续只收在 `backend/paths.py` 一层，安卓靠「`java` 模块在不在」认平台**（不猜 `sys.platform` —— 安卓上它是 `'linux'`）。壳递目录走 `GUZHU_APP_DIR` / `GUZHU_DIST_DIR` 环境变量，**必须早于 `import backend`**（paths 是 import 期算死的常量）；`java` 探测作兜底。理由是既有代码全项目直接读 `paths.APP_DIR`，改成惰性取值要动的面太大。
 - **2026-10-15**：**`backend/` 保持隐式命名空间包（不加 `__init__.py`）** —— 已在设备上实测 Chaquopy 的 importer 能正常 import `backend.server` / `backend.paths`，所以不必为了打包去改仓库结构。
@@ -1375,7 +1476,13 @@ Content-Length: 5618
    它同时解锁两件事：① 安卓侧不用再挂 `js_api`；② **`ui` 变体接 PC 后端就能看到带数据的真界面** ——
    `adb reverse` 把设备的端口导到 PC 上那个 `127.0.0.1:47753`，PC 有真 `curl_cffi`，于是
    「触屏布局 / 阅读器 / 长图渲染 / 内存」这些**不需要 arm64 真机**的部分全部能在模拟器里验。
-   仍然只等真机的：**T1 / T1-b / T2（`curl_cffi` 装得上 + 连得上图源 + 图片真的解码出来）**。
+   ~~仍然只等真机的：T1 / T1-b / T2~~ —— **2026-10-15 晚已关闭**：模拟器自带 ARM 翻译层，arm64 的 `full` 包
+   能装能跑，**10 步依赖探针 1~8 与 10 全绿**（`python 3.13.16` → `cffi 1.17.1` → `curl_cffi 0.16.3` → HTTPS 200 →
+   真拉详情 → 真下到 218,914 B 的图），原始 logcat 存 `tmp/安卓依赖探针实测.md`。**唯一的 FAIL 是第 9 步「Pillow 解 WebP」，
+   但零影响**（图片是 WebView 渲染的、`backend/` 零 PIL 引用）。见上面「手机版 UI」一节与 `安卓版可行性评估.md` §6。
+   **真机只剩手感 / 内存 / 后台存活那类（T3~T6）**。
+   0.5 **下一步是 P0（把桥从 `js_api` 换成带 token 的本地 HTTP JSON-RPC）** —— 在那之前，装到任何设备上的
+   APK 都只能看版式、看不到内容；`tmp/_pc_bridge_server.py` 就是它的预演。
 
 
 1. 用户真窗口验收（真图源、5173 + `main.py`）：

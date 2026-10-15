@@ -27,6 +27,11 @@ const SORTS: { key: SortOrder; label: string }[] = [
 const SCOPE_KEYS = SCOPES.map((item) => item.key)
 const SORT_KEYS = SORTS.map((item) => item.key)
 
+// 「有精确指针（鼠标）才谈得上悬停」这条判据只用在文件末尾一处：进搜索页要不要自动聚焦。
+// 触屏手机上 (hover: hover) 是 false —— 一进来就弹软键盘会把推荐段顶掉半屏，
+// 而这个时候用户多半只是路过，真要搜他自己点输入框。
+const canHover = window.matchMedia('(hover: hover) and (pointer: fine)').matches
+
 // 搜索记录搬进 data/app.db（后端那张 search_log 表）：推荐要知道"搜过什么、搜了几次、
 // 什么时候搜的"，这三样只有后端算得了。所以不存两份，chips 直接读库（清缓存不动它）
 const RECENT_MAX = 12
@@ -311,8 +316,9 @@ export function searchPage(params: Record<string, string>): HTMLElement {
     void doSearch(true)
   } else {
     paintIdle()
-    // 路由要等这个函数返回后才把节点挂上，所以聚焦得等下一帧
-    requestAnimationFrame(() => keywordInput.focus())
+    // 路由要等这个函数返回后才把节点挂上，所以聚焦得等下一帧。
+    // 触屏不自动聚焦（见 canHover）：桌面上保留老手感
+    if (canHover) requestAnimationFrame(() => keywordInput.focus())
   }
 
   return el
