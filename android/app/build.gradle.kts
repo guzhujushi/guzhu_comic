@@ -9,6 +9,18 @@ val repoRoot = rootProject.projectDir.parentFile
 val buildPythonPath = providers.gradleProperty("guzhu.buildPython").orNull
     ?: File(repoRoot, ".venv/Scripts/python.exe").absolutePath
 
+// ── 发布签名（release APK）──────────────────────────────────────────────────────
+// 密钥**不进仓库**：路径与口令都从用户环境变量读（2026-10-15 建好并写进用户变量；
+// 怎么生成 / 怎么备份见 android/README.md）：
+//   GUZHU_KS_PATH   密钥库文件的绝对路径
+//   GUZHU_KS_PASS   口令（PKCS12 下 key 口令必须与它一致）
+//   GUZHU_KS_ALIAS  别名，缺省 guzhu
+// 没配齐 = 不建这个签名配置：`:app:assemble*Release` 照样能跑，出的是**未签名**包（装不上）。
+val ksPath = System.getenv("GUZHU_KS_PATH")
+val ksPass = System.getenv("GUZHU_KS_PASS")
+val ksAlias = System.getenv("GUZHU_KS_ALIAS") ?: "guzhu"
+val hasReleaseKey = !ksPath.isNullOrBlank() && !ksPass.isNullOrBlank() && File(ksPath).isFile
+
 android {
     namespace = "cn.guzhujushi.comic"
     compileSdk = 37
@@ -48,10 +60,23 @@ android {
         buildConfig = true
     }
 
+    signingConfigs {
+        if (hasReleaseKey) {
+            create("release") {
+                storeFile = File(ksPath!!)
+                storePassword = ksPass
+                keyAlias = ksAlias
+                keyPassword = ksPass
+            }
+        }
+    }
+
     buildTypes {
         release {
             isMinifyEnabled = false
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
+            // 没配密钥就不挂签名配置（AGP 会出未签名包，而不是拿空字段报错）
+            if (hasReleaseKey) signingConfig = signingConfigs.getByName("release")
         }
     }
 

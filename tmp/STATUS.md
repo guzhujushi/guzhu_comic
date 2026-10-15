@@ -1600,6 +1600,21 @@ Content-Length: 5618
    就在这一步同步）。修法：拷贝前把目标清空，并加了"目标必须在 `android/app/src/main/` 下"的越界拒绝。
    重出包后 APK 内前端正好 6 个文件（index.html + 1 js + 1 css + 3 图标），装进 emulator-5554 复验正常。
 
+   **发布签名（2026-10-15，用户要求）**：用 keytool 建了发布密钥 —— `%USERPROFILE%\.guzhu\keys\guzhu-release.jks`
+   （4096 位 RSA / PKCS12 / 10000 天），**路径与口令都进用户环境变量**（`GUZHU_KS_PATH` / `GUZHU_KS_PASS` /
+   `GUZHU_KS_ALIAS`），**密钥与口令都不进仓库**；`android/app/build.gradle.kts` 加 `signingConfigs.release`
+   （三个变量没配就退化成未签名包，不会拿空字段报错）；`scripts/build_android.ps1` 会主动从"用户变量"补一次
+   这三个变量（**已经开着的终端看不到新加的变量**，不补的话每次出包都得新开窗口）。细节与备份要求见 `android/README.md`。
+
+   | 包 | 大小 | 说明 |
+   |---|---|---|
+   | `app-full-release.apk` | **35.4 MB**（37,115,117 B） | **签名版**，arm64-v8a / minSdk 26；`apksigner verify --print-certs` 核过，证书 SHA-256 `05CD228B…` 与密钥库一致 |
+   | `app-full-debug.apk` | 48.18 MB（50,523,687 B） | 调试签名（要跑 `adb shell run-as` 读设备上的文件就得用它） |
+
+   两个包都装进 emulator-5554 真跑过：release 版照样起本地服务、首页真轮播 + 真推荐（截图 `tmp/_ui/p4-release-apk.png`）。
+   两条规矩：① release 与 debug **签名不同** → 同一台设备上换着装得先 `adb uninstall cn.guzhujushi.comic`；
+   ② 以后每个版本都得用**同一个密钥库**签，换了就得卸载重装（收藏 / 阅读记录会一起没）。
+
 
 1. 用户真窗口验收（真图源、5173 + `main.py`）：
    - **开场动画**：冷启动看描字 → 揭幕那一下首页是否已经有封面 → 字标飞进左上角顺不顺、落下后是不是 `GuZhu漫画` 一行

@@ -74,9 +74,41 @@ powershell -ExecutionPolicy Bypass -File scripts\sync_android.ps1
   截图要 `cmd /c "...adb.exe exec-out screencap -p > 文件"` —— PowerShell 直接重定向会把二进制搞坏。
 - **还没做的**：真机（`full` 变体，验 T1 / T1-b / T2）—— 手上两台（Mate 80 Pro = HarmonyOS 6、无 ADB 端点；另一台是 iPhone）都装不了。见 `tmp/安卓端技术栈调研.md` §5.3 / §5.7。
 
+## 发布签名（release APK，2026-10-15 建）
+
+密钥**不进仓库**：路径与口令都在**用户环境变量**里。
+
+| 变量 | 值 |
+|---|---|
+| `GUZHU_KS_PATH` | `C:\Users\guzhu\.guzhu\keys\guzhu-release.jks` |
+| `GUZHU_KS_PASS` | 32 位随机（想看：`echo $env:GUZHU_KS_PASS`） |
+| `GUZHU_KS_ALIAS` | `guzhu` |
+
+```powershell
+# 出包（full = arm64-v8a 真机版）
+powershell -ExecutionPolicy Bypass -File scripts\build_android.ps1 :app:assembleFullRelease
+# 产物：android\app\build\outputs\apk\full\release\app-full-release.apk
+# 核签名：apksigner verify --print-certs <apk>  →  CN=Guzhu Comic…，证书 SHA-256 05CD228B…
+```
+
+- **`scripts\build_android.ps1` 会主动从"用户变量"补一次这三个变量**（已经开着的终端看不到新加的变量），所以哪个窗口都能直接跑。
+- 密钥是 4096 位 RSA / PKCS12 / 10000 天；证书 SHA-256 指纹 `05CD228B…`（`apksigner verify --print-certs` 核过）。
+- 当初生成它的命令（万一要重做；**重做后签名就变了，同一台设备必须先卸载**）：
+
+  ```powershell
+  & "D:\Andriod Studio\jbr\bin\keytool.exe" -genkeypair -v -keystore <路径> -alias guzhu `
+    -keyalg RSA -keysize 4096 -validity 10000 -storetype PKCS12 `
+    -storepass <口令> -keypass <口令> `
+    -dname "CN=Guzhu Comic, OU=Personal, O=Guzhu, L=Shanghai, ST=Shanghai, C=CN"
+  ```
+- **覆盖安装的两条规矩**：① release 与 debug 签名不同，换着装要先 `adb uninstall cn.guzhujushi.comic`；
+  ② 以后每个版本都得用**同一个密钥库**签 —— 换了就得卸载重装（收藏 / 阅读记录会跟着没）。
+- **备份**：密钥库文件 + 口令两样都要留一份（口令在用户变量里读得出来）。它是这个 app 唯一的"发布者身份"。
+- 三个变量都没配时，`assemble*Release` 照样能跑，出的是**未签名**包（装不上），不会拿空字段报错。
+
 ## 还没做的（按设计文档的路线）
 
-- **P0**：`server.py` 加 `POST /api/<method>` + 随机 token，前端加桥垫片（桌面一起切）
+- ~~**P0**：`server.py` 加 `POST /api/<method>` + 随机 token，前端加桥垫片（桌面一起切）~~ —— **2026-10-15 已完成**（见 `tmp/STATUS.md` 的 0.5 / 0.7）
 - ~~**P2**：Activity 起 Python → 起静态服务 → WebView 加载 `http://127.0.0.1:47753`~~ —— **2026-10-15 已完成并在模拟器上验收**
 - **P3**：`dataSync` 前台服务 + SAF + `StatFs`（`shutil.disk_usage` 在安卓上读的是 root 分区）
 
