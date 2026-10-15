@@ -92,14 +92,22 @@ setTimeout(async function () {
 }, 1200);</script>"""
 
 profile = os.path.join(tempfile.gettempdir(), "gz_p0_chrome")
-work = os.path.join(tempfile.gettempdir(), "gz_p0_dist")
 shutil.rmtree(profile, ignore_errors=True)
-shutil.rmtree(work, ignore_errors=True)
-shutil.copytree(DIST, work)
-idx = Path(work) / "index.html"
-html = idx.read_text(encoding="utf-8")
-assert "</body>" in html, "index.html 里没有 </body>，标记注不进去"
-idx.write_text(html.replace("</body>", MARK + "</body>", 1), encoding="utf-8", newline="")
+
+
+def prepare(tag: str, inject: str) -> str:
+    """拷一份 dist 出来（不动真产物），在 </body> 前注入一段脚本。"""
+    d = os.path.join(tempfile.gettempdir(), "gz_p0_dist" + tag)
+    shutil.rmtree(d, ignore_errors=True)
+    shutil.copytree(DIST, d)
+    f = Path(d) / "index.html"
+    html = f.read_text(encoding="utf-8")
+    assert "</body>" in html, "index.html 里没有 </body>，标记注不进去"
+    f.write_text(html.replace("</body>", inject + "</body>", 1), encoding="utf-8", newline="")
+    return d
+
+
+work = prepare("", MARK)
 
 # ---------------------------------------------------------------- 起服务
 PORT = free_port()
@@ -171,10 +179,59 @@ check("首页铺出了作品卡（真数据，不是版式空壳）", (got.get("
       f"cards={got.get('cards')} 正文={(got.get('snippet') or '')[:60]!r}")
 check("页面**没有**出现「桥没连上」", got.get("noBridge") is False)
 
+# ---------------------------------------------------------------- ③ 桌面壳那档：先有一个**空的**原生桥
+# 打包态桌面（main.py 冻结态）就是 js_api=None：pywebview 照样先把 js/api.js 注进来，
+# window.pywebview.api 是个空对象 —— 判真、可一个方法都没有。bridge.ts 曾经按"原生桥在不在"
+# 判桥，于是把这一档判成 native、垫片根本不装，首页整页"pywebview 桥没就绪"（2026-10-15 修）。
+# 这里连"它还会注第二遍、整块重写 window.pywebview"一起模拟。
+SHELL = """<script>
+window.pywebview = { api: {}, platform: 'winforms', guzhu_injected: 1 };
+setTimeout(function () {                                   // 第二遍注入：整块重写，然后派发 ready
+  window.pywebview = { api: {}, platform: 'winforms', guzhu_injected: 2 };
+  window.dispatchEvent(new CustomEvent('pywebviewready'));
+}, 400);
+setTimeout(async function () {
+  var out = {};
+  try { var v = await window.pywebview.api.get_version(); out.version = (v && v.app) || 'null'; }
+  catch (e) { out.errVersion = String(e).slice(0, 80); }
+  out.own = window.pywebview.guzhu_injected === undefined;   // 现在挂着的是我们的垫片吗
+  out.cards = document.querySelectorAll('album-card').length;
+  out.noBridge = document.body.innerText.indexOf('桥没连上') >= 0;
+  out.snippet = document.body.innerText.replace(/\\s+/g, ' ').slice(0, 90);
+  document.title = 'P0B|' + JSON.stringify(out);
+}, 1200);</script>"""
+
+work_b = prepare("_b", SHELL)   # 只注模拟壳那段：它与 MARK 都是 1200ms 的定时器，两个一起注会后跑的盖掉先跑的
+PORT_B = free_port()
+base_b = start_static_server(
+    Path(work_b),
+    {"/images": paths.IMG_DIR, "/downloads": paths.resolve_download_dir("~/.jmreader/downloads")},
+    PORT_B, token=TOKEN, rpc=bridge.make_rpc(api),
+)
+print("\n③ 桌面壳那档（先注一个空的原生桥 + 400ms 后再注一遍）", flush=True)
+dom3 = chrome_dom(f"{base_b}/?t={TOKEN}", 25000)
+m3 = re.search(r"<title>(.*?)</title>", dom3, re.S)
+title3 = (m3.group(1) if m3 else "").strip()
+got3: dict = {}
+if "P0B|" in title3:
+    try:
+        got3 = json.loads(title3.split("P0B|", 1)[1])
+    except ValueError:
+        got3 = {}
+check("壳里那个空的 window.pywebview.api 没把垫片挡住（bridgeMode 该是 http）",
+      got3.get("version", "null") not in ("", "null") and not got3.get("errVersion"),
+      f"version={got3.get('version')} errVersion={got3.get('errVersion')}")
+check("第二遍注入（整块重写 + pywebviewready）之后垫片自己长回来了",
+      got3.get("own") is True, f"own={got3.get('own')}（False = 还被壳那版空对象压着）")
+check("这一档首页照样铺出真数据", (got3.get("cards") or 0) > 0,
+      f"cards={got3.get('cards')} 正文={(got3.get('snippet') or '')[:60]!r}")
+check("这一档页面不出现「桥没连上」", got3.get("noBridge") is False)
+
 dom2 = chrome_dom(f"{base}/", 25000)          # 不带 token：静态页面照开，但页面要明说
 check("不带 token 打开页面 → 提示「桥没连上：…?t=…」", "桥没连上" in dom2)
 
 shutil.rmtree(work, ignore_errors=True)
+shutil.rmtree(work_b, ignore_errors=True)
 shutil.rmtree(profile, ignore_errors=True)
 
 print("\n================================", flush=True)

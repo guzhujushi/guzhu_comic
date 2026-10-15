@@ -1580,6 +1580,19 @@ Content-Length: 5618
    `tmp/_runchecks.py` 跑的全是 Python 侧 —— **没有一路真的开过"桌面冻结态"的窗口**。
    这条缺口现在由 `_check_desktop_frozen.ps1` 补上（它开真窗口、看真截图，得在有桌面的机器上人工跑）。
 
+   **收口（同一轮做完）**：
+   - **热更通道重发**：构建号 `20261015-1850-2c9ba73`（线上验收 `tmp/_check_publish_real.py` **21/21**）——
+     通道上原来那份 `20261015-1838-8615249` 正是"桌面冻结态无数据"的版本，谁点一下「更新」谁中招。
+     顺手把 `publish_frontend.ps1` 里那句常年打噪声的 `git pull --ff-only` 写成 `pull --ff-only origin main`
+     （分支没配 upstream，光写 `pull` 只会打一句 tracking 提示、其实什么都没同步）。
+   - **回归用例补进 `tmp/_check_http_bridge.py` 第 ③ 节**：无头 Chrome 里**先注一个空的 `window.pywebview.api`**
+     模拟桌面壳，再在 400ms 后"整块重写 + 派发 `pywebviewready`"模拟第二遍注入，然后断言垫片照样接管、
+     首页照样铺真数据（22 → **26 项**）。**反向验过**：把旧写法放回去跑，这一节 3 项当场 FAIL
+     （`TypeError: window.pywebview.api.get_version is not a function`、`cards=0`）—— 用例真的咬得住。
+   - **设备端复验**（`sync_android.ps1` → `:app:assembleFullDebug` → 装进 emulator-5554）：壳日志照旧
+     `本地服务已起：http://127.0.0.1:47753（token 已拼进页面地址）`；设备上跑的是**修好的**
+     `index-BGiKUf3w.js`，首页真轮播 + 真「热门推荐」（截图 `tmp/_ui/p4-dev-home.png`）。
+
 
 1. 用户真窗口验收（真图源、5173 + `main.py`）：
    - **开场动画**：冷启动看描字 → 揭幕那一下首页是否已经有封面 → 字标飞进左上角顺不顺、落下后是不是 `GuZhu漫画` 一行
