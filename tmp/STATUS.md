@@ -1206,6 +1206,19 @@ A / B 组后端补齐 + 前端热更新通道（§「A / B 组后端补齐」「
 - 搜索页一进去**自动聚焦输入框**并弹起软键盘 —— 触屏上应该改成「点了才聚焦」。
 - **`curl_cffi` 依旧缺**：`ui` 变体是 x86_64，图源那条路在模拟器上永远验不了 → **T1 / T1-b / T2 仍等真机**。
 
+**T8 实锤了（这条是 P0 的理由）**：在设备上用 `adb shell`（uid=2000 shell，**不是我们的 app**）直接打这个端口：
+
+```
+$ adb shell "printf 'GET / HTTP/1.0\r\nHost: 127.0.0.1\r\n\r\n' | toybox nc 127.0.0.1 47753"
+HTTP/1.0 200 OK
+Server: SimpleHTTP/0.6 Python/3.13.16
+Content-Length: 5618
+```
+
+→ **同机任何 app 都能读到 127.0.0.1:47753**。眼下暴露的是前端静态资源（无所谓），但 `/images`（缓存过的漫画图）
+与 `/downloads`（离线副本）挂在**同一个服务、同一个口**上 —— 用户看过/下过的内容，别的 app 一个 GET 就能拿走。
+这就是 `可行性评估 §6-T8` 说的那个洞，也是 **P0 必须带 token** 的原因。**P0 之前的每一次装机（含这一轮）都带着这个洞，别拿它当可用版本。**
+
 **顺手清掉的（本机环境）**：4.36 GB 的 `system-images;android-36;google_apis;arm64-v8a` 与废弃 AVD
 `guzhu_arm64`（x86_64 主机上跑不起来的那个，用 `avdmanager delete` + `sdkmanager --uninstall` 正规卸的）；
 `tmp/_` 下 9 个一次性脚本与旧构建日志。
