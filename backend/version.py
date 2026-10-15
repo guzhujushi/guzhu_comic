@@ -9,7 +9,9 @@
 
 改了这里记得同步 `scripts/build_exe.ps1` 的 -Version 与 `scripts/publish_frontend.ps1` 的 manifest。
 """
-APP_VERSION = "0.1.1"
+APP_VERSION = "0.1.2"
 
 # 打包进 exe 的那份 dist 的构建号（打包脚本不写就是空串）
-BUNDLED_WEB = ""
+# 2026-10-15：打 0.1.2 时，通道上那一版前端就是 20261015-2314-26fa005 —— 包内这份与它一致，
+# 用户装完不会一开窗就被提示"有新版本"。
+BUNDLED_WEB = "20261015-2314-26fa005"

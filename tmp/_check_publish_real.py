@@ -72,14 +72,18 @@ ok("zip 的字节数与 manifest 一致", len(blob) == manifest["size"], "%d vs 
 ok("manifest 里 file 指的文件真的在目录里", zip_path.is_file(), manifest["file"])
 
 # ---- check ----
+# 先"假装"我这份比发布端旧：0.1.2 起 `BUNDLED_WEB` 就是通道上那一版（装完不该一开窗就提示有新版本），
+# 不假装的话下面 apply 只会是个 no-op，这条用例就白跑了（同版不提示那条口径由 _check_channel_live.py 守）。
+updater.BUNDLED_WEB = "0"
 info = updater.check(sec)
 ok("check 没报错", not info["error"], info["error"])
 ok("check 认得出有新版", info["available"] is True, str(info))
 ok("check 报的构建号 = manifest 的", info["web"] == manifest["web"], info["web"])
-ok("check 报的版本 = 0.1.1", info["version"] == "0.1.1", info["version"])
+ok("check 报的版本 = manifest 的", info["version"] == manifest["version"], info["version"])
 ok("check 报的体积 = manifest 的", info["size"] == manifest["size"], str(info["size"]))
 ok("check 没把自己判成 too_new", info["too_new"] is False)
-ok("没装之前 current_web() 还是空的", updater.current_web() == "", updater.current_web())
+ok("没装之前 current_web() 就是「包内那版」（覆盖层还没落下来）",
+   updater.current_web() == updater.BUNDLED_WEB, updater.current_web())
 
 # ---- apply ----
 res = updater.apply(sec)

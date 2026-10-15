@@ -40,6 +40,12 @@ tmp/_pcapp/
 # 前端热更产物（scripts/publish_frontend.ps1 的输出：整包 + manifest，往更新地址上传）
 web_dist_out/
 
+# 发布脚本用的 GitHub PAT（tmp/_gh_release.py 读它；**别进仓库**）
+tmp/_gh_token.txt
+
+# 全量回归的日志（tmp/_runchecks.py 的 stdout 重定向；临时产物）
+tmp/_runchecks*.txt
+
 # 安卓侧（tmp/安卓端技术栈调研.md）：调研时下载的 wheel / 运行时 zip 等大文件
 tmp/_dl/
 tmp/_dl2/

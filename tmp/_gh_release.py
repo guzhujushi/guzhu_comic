@@ -1,9 +1,15 @@
 # -*- coding: utf-8 -*-
-"""发布 GitHub release（v0.1.1）：推 main + 打 tag + 建 release + 上传 zip。
+"""发布 GitHub release：推 main + 打 tag + 建 release + 上传 zip。
 
-凭据（二选一）：
+版本号从 `backend/version.py` 的 `APP_VERSION` 取（不再写死），对应：
+  * tag   `v<版本>`
+  * 说明  `tmp/release-notes-v<版本>.md`
+  * 资产  `build_out/GuzhuComic-<版本>-win64.zip`（要先跑 scripts/build_exe.ps1 出包）
+
+凭据（三选一，按顺序找）：
   * 环境变量 GH_TOKEN / GITHUB_TOKEN
   * 文件 tmp/_gh_token.txt（一行，PAT 本身）
+  * 兜底：git 凭据管理器里那个 GitHub 凭据（`git credential fill`，push 用的就是它）
 
 跑法：.venv\\Scripts\\python.exe tmp\\_gh_release.py
 它自己会先验身份；任何一步失败都停下说清楚，不会半途留下乱七八糟的状态。
@@ -12,6 +18,7 @@ import base64
 import json
 import os
 import pathlib
+import re
 import subprocess
 import sys
 import urllib.error
@@ -19,10 +26,14 @@ import urllib.request
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 REPO = "guzhujushi/guzhu_comic"
-TAG = "v0.1.1"
+
+VERSION = re.search(r'^APP_VERSION\s*=\s*"([^"]+)"',
+                    (ROOT / "backend" / "version.py").read_text(encoding="utf-8"),
+                    re.M).group(1)
+TAG = "v" + VERSION
 TITLE = "GuzhuComic"
-NOTES = ROOT / "tmp" / "release-notes-v0.1.1.md"
-ZIP = ROOT / "build_out" / "GuzhuComic-0.1.1-win64.zip"
+NOTES = ROOT / "tmp" / ("release-notes-v%s.md" % VERSION)
+ZIP = ROOT / "build_out" / ("GuzhuComic-%s-win64.zip" % VERSION)
 
 API = "https://api.github.com"
 UPLOADS = "https://uploads.github.com"
@@ -36,7 +47,24 @@ def token():
     path = ROOT / "tmp" / "_gh_token.txt"
     if path.exists():
         return path.read_text(encoding="utf-8").strip(), str(path)
+    value = credential_manager_token()
+    if value:
+        return value, "git 凭据管理器（github.com）"
     raise SystemExit("没有凭据：设 GH_TOKEN 环境变量，或把 PAT 写进 tmp\\_gh_token.txt")
+
+
+def credential_manager_token() -> str:
+    """兜底：git 在 github.com 上缓存的那个凭据（`git push` 走的就是它）"""
+    try:
+        p = subprocess.run(["git", "credential", "fill"],
+                           input="protocol=https\nhost=github.com\n\n",
+                           capture_output=True, text=True, timeout=60, cwd=str(ROOT))
+    except (OSError, subprocess.SubprocessError):
+        return ""
+    for line in (p.stdout or "").splitlines():
+        if line.startswith("password="):
+            return line.split("=", 1)[1].strip()
+    return ""
 
 
 def call(method, url, tok, *, data=None, raw=None, ctype="application/json"):
@@ -70,6 +98,10 @@ def git(*args, extra_env=None):
 
 
 def main():
+    print("[0/6] 这一版：%s → tag %s" % (VERSION, TAG))
+    for f in (NOTES, ZIP):
+        if not f.exists():
+            raise SystemExit("找不到 " + str(f) + "（说明要先写说明 / 先出包）")
     tok, where = token()
     print("[1/6] 凭据来源:", where)
 
@@ -96,7 +128,7 @@ def main():
 
     rc, out, _ = git("tag", "--list", TAG)
     if not out:
-        rc, out, err = git("tag", "-a", TAG, "-m", "GuzhuComic 0.1.1")
+        rc, out, err = git("tag", "-a", TAG, "-m", "GuzhuComic " + VERSION)
         if rc != 0:
             raise SystemExit("打 tag 失败：" + err[:300])
         print("[4/6] 本地打 tag", TAG)

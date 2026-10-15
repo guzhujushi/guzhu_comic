@@ -2,6 +2,9 @@
 r"""打包态验收：真 exe（build_out 的**副本**）→ 真窗口 → 页面通过真桥回报 DOM。
 
 为什么用副本：要在 dist/index.html 里注入一段探针脚本，绝不能碰要发出去的那个包。
+
+P0（2026-10-15）之后 /images 与 /downloads 都带 token 闸门，所以取图那条用例从启动日志里读
+这次开窗的 `?t=`（页面地址上就带着它），并且**同时**验"不带 token 必须 403"。
 回报通道走产品自己的桥（save_settings 写 window.title），不额外加任何接口 —— 顺带把
 "冻结态能不能把 config.yaml 写进用户目录"这条也验了。
 
@@ -9,13 +12,18 @@ r"""打包态验收：真 exe（build_out 的**副本**）→ 真窗口 → 页�
 """
 import ctypes
 import ctypes.wintypes as wt
+import hashlib
+import io
 import json
+import re
 import shutil
 import subprocess
 import sys
 import time
+import urllib.error
 import urllib.parse
 import urllib.request
+import zipfile
 from pathlib import Path
 
 ROOT = Path("D:/guzhu_comic")
@@ -73,11 +81,61 @@ def get(url, timeout=5):
         return r.status, r.read()
 
 
+LOG = USER_DIR / "logs" / "app.log"
+
+# 热更通道（前端那份）：用来核"包内这份 dist 到底是哪一版"
+CHANNEL = "https://code.guzhujushi.cn/guzhujushi/guzhu_comic/raw/branch/main/web"
+
+
+def digest_tree(root: Path) -> dict:
+    out = {}
+    for p in sorted(root.rglob("*")):
+        if p.is_file():
+            out[p.relative_to(root).as_posix()] = hashlib.sha256(p.read_bytes()).hexdigest()
+    return out
+
+
+def digest_zip(raw: bytes) -> dict:
+    out = {}
+    with zipfile.ZipFile(io.BytesIO(raw)) as zf:
+        for e in zf.infolist():
+            if e.is_dir():
+                continue
+            name = e.filename.replace("\\", "/")
+            if name.startswith("__MACOSX/") or name.rsplit("/", 1)[-1].startswith("."):
+                continue
+            out[name] = hashlib.sha256(zf.read(e)).hexdigest()
+    return out
+
+
+def token_from_log() -> str:
+    """
+    这次开窗的通行证：启动日志里那行「加载地址：http://127.0.0.1:47753/?t=<token>」
+    （P0 之后 /images、/downloads 都要带它，见 backend/server.py 的 _protected）。
+    """
+    try:
+        text = LOG.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return ""
+    hits = re.findall(r"加载地址：http://127\.0\.0\.1:\d+/\?t=([A-Za-z0-9_-]+)", text)
+    return hits[-1] if hits else ""
+
+
 def main():
     ok = True
     if not (SRC / "GuzhuComic.exe").exists():
         print("FAIL  没找到 exe：" + str(SRC / "GuzhuComic.exe") + "（先跑 scripts/build_exe.ps1）", flush=True)
         return False
+    # 端口上已经有人应答 = **别的实例**还开着（上一轮没杀干净的 / 用户自己开着的）：它会占住
+    # 47753，我们这次起的实例只能退到 47754，于是后面每一条请求都打在错的那个进程上、
+    # 报出来全是不着边际的 FAIL（2026-10-15 就踩过一次）。这里先说清楚。
+    try:
+        get("http://127.0.0.1:%d/index.html" % PORT, timeout=3)
+        print("FAIL  :%d 已经有实例在应答（先关掉那个 GuzhuComic 再跑这条）" % PORT, flush=True)
+        return False
+    except Exception:
+        pass
+
     if CFG.exists():
         print("[setup] 已有的用户配置先备份到 config.yaml.bak", flush=True)
         shutil.copy2(CFG, str(CFG) + ".bak")
@@ -132,6 +190,13 @@ def main():
         print("FAIL  静态服务连不上 :%d - %r" % (PORT, e), flush=True)
         ok = False
 
+    token = token_from_log()
+    if token:
+        print("[check] 从启动日志里拿到这次开窗的 token（%d 位）" % len(token), flush=True)
+    else:
+        print("FAIL  %s 里没有「加载地址：…?t=」那一行，取不到 token" % LOG, flush=True)
+        ok = False
+
     sample = None
     for pid_dir in sorted((USER_DIR / "cache" / "images").glob("*")):
         files = sorted(p for p in pid_dir.iterdir() if p.is_file())
@@ -139,20 +204,68 @@ def main():
             sample = (pid_dir.name, files[0].name)
             break
     if sample:
-        url = "http://127.0.0.1:%d/images/%s/%s" % (PORT, sample[0], urllib.parse.quote(sample[1]))
+        bare = "http://127.0.0.1:%d/images/%s/%s" % (PORT, sample[0], urllib.parse.quote(sample[1]))
         try:
-            status, body = get(url)
-            print("[check] /images 同源取图 -> %s %dB" % (status, len(body)), flush=True)
+            status, body = get(bare + "?t=" + urllib.parse.quote(token, safe=""))
+            print("[check] /images 带 token 同源取图 -> %s %dB" % (status, len(body)), flush=True)
             if status != 200 or not body:
-                print("FAIL  打包态取图失败：" + url, flush=True)
+                print("FAIL  打包态取图失败：" + bare, flush=True)
                 ok = False
         except Exception as e:
-            print("FAIL  打包态取图炸了 %s - %r" % (url, e), flush=True)
+            print("FAIL  打包态取图炸了 %s - %r" % (bare, e), flush=True)
+            ok = False
+        # 反例：/images 是带 token 闸门的（同机随便哪个程序都不该白读），这条得一直是 403
+        try:
+            status, body = get(bare)
+            print("FAIL  不带 token 居然也取到图了（%s -> %s %dB）" % (bare, status, len(body)), flush=True)
+            ok = False
+        except urllib.error.HTTPError as e:
+            if e.code == 403:
+                print("[check] 不带 token 取图 -> 403（闸门在）", flush=True)
+            else:
+                print("FAIL  不带 token 取图报的是 %d，不是 403" % e.code, flush=True)
+                ok = False
+        except Exception as e:
+            print("FAIL  不带 token 取图的异常看不懂：%r" % (e,), flush=True)
             ok = False
     else:
         print("[check] /images 同源取图 -> skip（缓存里没有图）", flush=True)
 
-    # 4) WebView2 的 user data 落在用户目录（localStorage 才留得住）
+    # 4) 包内那份前端到底是哪一版：`backend/version.py` 的 `BUNDLED_WEB` 是打包时钉进去的构建号，
+    #    也是"装完不会一开窗就被提示有新版本"的依据（updater.current_web() 就是读它）。
+    #    这里核两条：① 不是空串（空串 = 打包脚本没写，老包收不到热更那种坑）；② 它若等于通道上
+    #    那一版，包内 dist 就得与线上那份**逐文件一致**（否则用户拿到的页面跟"构建号说的"不是一个东西）。
+    try:
+        ver = (ROOT / "backend" / "version.py").read_text(encoding="utf-8")
+        bundled = re.search(r'^BUNDLED_WEB\s*=\s*"([^"]*)"', ver, re.M).group(1)
+        app_ver = re.search(r'^APP_VERSION\s*=\s*"([^"]*)"', ver, re.M).group(1)
+        print("[check] backend/version.py: APP_VERSION=%s BUNDLED_WEB=%s" % (app_ver, bundled), flush=True)
+        if not bundled:
+            print("FAIL  BUNDLED_WEB 是空串（打包时没钉构建号 → 用户装完会被提示一次「有新版本」）", flush=True)
+            ok = False
+        remote = json.loads(urllib.request.urlopen(CHANNEL + "/manifest.json", timeout=30).read().decode("utf-8"))
+        if bundled and bundled == str(remote.get("web") or ""):
+            raw = urllib.request.urlopen(CHANNEL + "/" + remote["file"], timeout=120).read()
+            # 比 SRC（真正要发出去的包）而不是 APP —— APP 那份的 index.html 被注了探针
+            packed, online = digest_tree(SRC / "_internal" / "dist"), digest_zip(raw)
+            only_local = sorted(set(packed) - set(online))
+            only_online = sorted(set(online) - set(packed))
+            differs = sorted(k for k in set(packed) & set(online) if packed[k] != online[k])
+            same = not (only_local or only_online or differs)
+            print("[check] 包内 dist vs 线上 %s：%d / %d 个文件，逐文件一致=%s"
+                  % (bundled, len(packed), len(online), same), flush=True)
+            if not same:
+                print("FAIL  包内 dist 与线上那一版对不上（只在包内 %s / 只在线上 %s / 内容不同 %s）"
+                      % (only_local, only_online, differs), flush=True)
+                ok = False
+        else:
+            print("[check] 包内是 %s，通道上是 %s → 装完会提示一次更新（允许；只在这两版相同时才逐文件核）"
+                  % (bundled or "（空）", remote.get("web")), flush=True)
+    except Exception as e:
+        print("FAIL  核包内前端版本这一段炸了：%r" % (e,), flush=True)
+        ok = False
+
+    # 5) WebView2 的 user data 落在用户目录（localStorage 才留得住）
     wv = USER_DIR / "webview"
     wv_files = sum(1 for _ in wv.rglob("*")) if wv.exists() else 0
     print("[check] %s 里 %d 个文件" % (wv, wv_files), flush=True)
@@ -160,7 +273,7 @@ def main():
         print("FAIL  WebView2 的 user data 没落到用户目录（localStorage 会丢）", flush=True)
         ok = False
 
-    # 5) 收尾：杀掉进程树，再把被探针改过的用户配置还回去 —— 不还原的话，下一个用例读到的
+    # 6) 收尾：杀掉进程树，再把被探针改过的用户配置还回去 —— 不还原的话，下一个用例读到的
     #    窗口标题就是 "PROBE|…"（_check_exe_single / _check_exe_real 都按标题找窗口）
     subprocess.run(["taskkill", "/PID", str(proc.pid), "/T", "/F"], capture_output=True, text=True)
     time.sleep(1)

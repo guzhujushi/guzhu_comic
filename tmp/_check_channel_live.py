@@ -5,6 +5,10 @@
   * _check_publish_real.py —— 发布**之前**，拿 web_dist_out 里那两个产物起本地服务自检；
   * 这个 —— 发布**之后**，拿真地址真网络真 TLS 走一遍，确认通道真的通了（顺便证明不用代理）。
 
+2026-10-15 改过一处口径：官方包从 0.1.2 起把 `BUNDLED_WEB` 钉成通道上那一版（装完不该一开窗就提示
+"有新版本"），所以这里先按真实构建号验"同版就不提示"，再**假装**自己比线上旧（`BUNDLED_WEB = "0"`）
+把真下载 / 真解压 / 真换目录走一遍 —— 否则 apply 只会是个 no-op，这条就白跑了。
+
 跑法：.venv\\Scripts\\python.exe tmp\\_check_channel_live.py
 """
 import hashlib
@@ -64,12 +68,18 @@ ok("下载回来的 zip sha256 与 manifest 一致",
 # 3) 走客户端的 check()
 info = updater.check(sec)
 ok("check 没报错（这条同时证明不需要代理）", not info["error"], info["error"])
-ok("check 认得出有新版", info["available"] is True, str(info))
+# "同版就不该提示有新版" 从 0.1.2 起是**正常状态**（包内那份就是通道上那一版）
+same_as_channel = (updater.BUNDLED_WEB == manifest["web"])
+ok("包内与线上同版 → 不提示有新版（装完一开窗不该弹「有新版本」）" if same_as_channel
+   else "check 认得出有新版",
+   info["available"] is (not same_as_channel),
+   "BUNDLED_WEB=%s available=%s" % (updater.BUNDLED_WEB, info["available"]))
 ok("check 报的构建号 = 线上 manifest 的", info["web"] == manifest["web"], info["web"])
 ok("check 报的 notes 与线上一致", info["notes"] == manifest["notes"], info["notes"][:60])
 ok("check 的 app_min 不卡我（0.1.1）", info["too_new"] is False and info["app_min"] == "0.1.1")
 
-# 4) 走客户端的 apply()
+# 4) 走客户端的 apply() —— 先"假装"我这份比线上旧，好让真下载 / 真解压 / 真换目录都跑一遍
+updater.BUNDLED_WEB = "0"
 res = updater.apply(sec)
 ok("apply 成功", res.get("ok") is True, str(res))
 ok("装完 current_web() = 线上构建号", updater.current_web() == manifest["web"], updater.current_web())

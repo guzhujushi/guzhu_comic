@@ -8,9 +8,13 @@ r"""打包态热更验收：真 exe 走一遍**线上更新通道**。
 做法：
   1. 复制要发出去的那个包（**不动** `build_out\` 里的原件），往副本的 `_internal\dist\index.html`
      注入探针；探针依次调 `check_update` → `apply_update` → `fetch('/version.json')`；
-  2. 假 `USERPROFILE`（= 全新首启，配置与覆盖层都从零）起真 exe；
+  2. 假 `USERPROFILE`（= 全新首启，配置从零）起真 exe，**并在起之前先塞一份"假覆盖层"**（把包内
+     dist 拷进 `<家>/.jmreader/web/`，`version.json` 里写一个哨兵构建号）—— 这样"通道上有新版"
+     就不依赖包内 `BUNDLED_WEB` 是不是恰好等于线上那一版（2026-10-15 打 0.1.2 时特意钉成同一个），
+     真下载 / 真解压 / 真换目录每次都跑一遍。探针只注入覆盖层那份 index.html；
   3. 关键的那一步是 `fetch('/version.json')`：**包内 dist 里没有** version.json，只有覆盖层里才有
-     （`updater._swap` 写进去的）—— 它 200 且带对的构建号，就等于"静态服务真换成覆盖层了"；
+     （我们先放一份哨兵、`updater._swap` 再换成线上的）—— 它 200 且带线上构建号，就等于
+     "静态服务真换成覆盖层了"；
   4. 探针怎么把结果送回来：**不用** `save_settings` 那条路（应用自己会写回 window.title，撞车），
      改成页面 `fetch('http://127.0.0.1:<测试进程的端口>/?d=…', {mode:'no-cors'})`，测试进程收。
 
@@ -37,6 +41,9 @@ HOME = WORK / "home"
 TEMP = WORK / "temp"
 CFG = HOME / ".jmreader" / "config.yaml"
 CHANNEL = "https://code.guzhujushi.cn/guzhujushi/guzhu_comic/raw/branch/main/web"
+
+# 起 exe 之前塞进假家目录的那份覆盖层的构建号（哨兵）：只要它不在通道上，`check_update` 就一定认得出有新版
+OFFLINE_WEB = "checkhu-offline"
 
 FAILS = []
 REPORTS = []
@@ -85,7 +92,7 @@ def probe_js(port: int) -> str:
     send('HU2 bridge api=' + (typeof api.check_update));
     try {
       var c = await api.check_update();
-      send('HU3 check err=[' + brief(c.error) + '] avail=' + c.available + ' web=' + brief(c.web) + ' app_min=' + brief(c.app_min));
+      send('HU3 check err=[' + brief(c.error) + '] cur=' + brief(c.current_web) + ' avail=' + c.available + ' web=' + brief(c.web) + ' app_min=' + brief(c.app_min));
       await new Promise(function(r){ setTimeout(r, 800) });
       var a = await api.apply_update();
       send('HU4 apply ok=' + a.ok + ' changed=' + a.changed + ' files=' + a.files + ' web=' + brief(a.web));
@@ -131,6 +138,15 @@ def main():
         print("FAIL  没找到 exe：" + str(SRC), flush=True)
         return False
 
+    # 这条也走 47753：端口上已经有人应答 = 别的实例还开着，我们这回的实例会退到 47754，
+    # 后面每条请求都打在错的那个进程上（先关掉再跑）。
+    try:
+        urllib.request.urlopen("http://127.0.0.1:47753/index.html", timeout=3).read(1)
+        print("FAIL  :47753 已经有实例在应答（先关掉那个 GuzhuComic 再跑这条）", flush=True)
+        return False
+    except Exception:
+        pass
+
     live = json.loads(urllib.request.urlopen(CHANNEL + "/manifest.json", timeout=20).read().decode("utf-8"))
     print("线上构建号 %s" % live["web"], flush=True)
 
@@ -145,12 +161,20 @@ def main():
     TEMP.mkdir(parents=True)
     shutil.copytree(SRC, APP)
 
-    index = APP / "_internal" / "dist" / "index.html"
-    html = index.read_text(encoding="utf-8")
-    expect("</body>" in html, "副本 dist/index.html 里有注入点")
-    index.write_text(html.replace("</body>", probe_js(sink_port) + "</body>"), encoding="utf-8")
     expect(not (APP / "_internal" / "dist" / "version.json").exists(),
            "对照组：包内 dist 里本来**没有** version.json（它出现只能来自覆盖层）")
+
+    # 预先塞一份"假覆盖层"：包内那份 dist + 哨兵 version.json；探针只注进这一份，包内那份保持原样。
+    # 页面从覆盖层来 —— 先证明本地静态服务每请求重挑根；同时线上那一版永远显得更新，
+    # apply_update 于是每次都会真跑（真下载 / 真解压 / 真换目录），跟包内 BUNDLED_WEB 是多少无关。
+    overlay = HOME / ".jmreader" / "web"
+    shutil.copytree(APP / "_internal" / "dist", overlay)
+    ov_index = overlay / "index.html"
+    ov_html = ov_index.read_text(encoding="utf-8")
+    expect("</body>" in ov_html, "覆盖层那份 index.html 里有注入点")
+    ov_index.write_text(ov_html.replace("</body>", probe_js(sink_port) + "</body>"), encoding="utf-8")
+    (overlay / "version.json").write_text(json.dumps({"web": OFFLINE_WEB, "version": "0.0.0"}),
+                                          encoding="utf-8")
 
     env = dict(os.environ)
     env["USERPROFILE"] = str(HOME)
@@ -179,20 +203,25 @@ def main():
     h6 = next((r for r in REPORTS if r.startswith("HU6")), "")
 
     expect("HU3 check err=[]" in h3, "exe 里 check_update 没报错（%s）" % h3)
+    expect("cur=" + OFFLINE_WEB in h3, "check_update 报的当前版本 = 那份假覆盖层（%s）" % h3)
     expect("avail=true" in h3, "exe 里 check_update 认得出有新版（%s）" % h3)
-    expect(live["web"] in h3, "exe 报的构建号 = 线上那个（%s）" % h3)
-    expect("app_min=0.1.1" in h3, "exe 读到的 app_min 是 0.1.1（%s）" % h3)
+    expect(live["web"] in h3, "exe 报的通道构建号 = 线上那个（%s）" % h3)
+    expect(("app_min=" + str(live.get("app_min") or "")) in h3,
+           "exe 读到的 app_min = 通道 manifest 里那个（%s）" % h3)
     expect("ok=true" in h4, "exe 里 apply_update 成功（%s）" % h4)
+    expect("changed=true" in h4, "apply_update 真换了目录（%s）" % h4)
     expect(live["web"] in h4, "装的就是线上那一版（%s）" % h4)
     expect("status=200" in h5 and live["web"] in h5,
            "装完请求 /version.json → 200 且带新构建号 → **静态服务真用上覆盖层了**（%s）" % h5)
     expect("overlay=true" in h6 and live["web"] in h6, "get_version 认覆盖层（%s）" % h6)
 
-    overlay = HOME / ".jmreader" / "web"
-    expect((overlay / "index.html").is_file(), "假家目录里落了覆盖层 index.html")
-    expect((overlay / "version.json").is_file(), "假家目录里落了覆盖层 version.json")
-    expect((overlay / "assets").is_dir(), "假家目录里落了覆盖层 assets/")
-    expect(not (HOME / ".jmreader" / "web.old").exists(), "首启没有上一版，不该有 web.old")
+    expect((overlay / "index.html").is_file(), "覆盖层里落了 index.html")
+    expect((overlay / "version.json").is_file(), "覆盖层里落了 version.json")
+    expect((overlay / "assets").is_dir(), "覆盖层里落了 assets/")
+    old = HOME / ".jmreader" / "web.old"
+    expect((old / "index.html").is_file(), "上一版覆盖层被挪进 web.old（起不来时的退路）")
+    expect(OFFLINE_WEB in (old / "version.json").read_text(encoding="utf-8"),
+           "web.old 里就是刚才那份假覆盖层")
 
     try:
         proc.terminate()

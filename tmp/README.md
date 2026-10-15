@@ -12,24 +12,26 @@
 **现在能跑的四样**（2026-10-15）：
 
 - **桌面·源码态**：`.venv\Scripts\python.exe main.py`（要 vite 跑在 5173）—— 这条路桥走 pywebview 的 `js_api`。
-- **桌面·打包态**：`scripts\build_exe.ps1` 出 PyInstaller onedir + zip —— 已发 GitHub release `v0.1.1`
-  （**那是 P0 之前的壳**，桥走 `js_api`，照常能用）；新壳走 `POST /api`。
+- **桌面·打包态**：`scripts\build_exe.ps1 -Version <版本>` 出 PyInstaller onedir + zip —— 已发 GitHub release
+  **`v0.1.2`**（说明与 SHA256 在 `tmp/release-notes-v0.1.2.md`；包内那份 dist 与热更通道上那份逐文件一致）。
+  上一版 `v0.1.1` 是 P0 之前的壳（桥走 `js_api`，照常能用）；新壳走 `POST /api`。
 - **安卓 APK**：`scripts\sync_android.ps1` → `scripts\build_android.ps1 :app:assembleFullRelease`
   —— 发布签名版 **35.4 MB / arm64-v8a / Android 8.0+**，模拟器上跑通全部页面与真图；
   **用户手上的鸿蒙真机实测可装可用**（但 Host 侧只有华为 `hdc`、没有 ADB 端点 → 只能拷 APK 手动装 + 肉眼看，`adb` 用不上）。
 - **前端热更**：`scripts\publish_frontend.ps1 -Push` 推到 Gitea 的 `web/` —— 改前端不用重打包、不用重发给用户。
-  推进去的节奏（用户 2026-10-15 定）：**攒到"一定程度"再推**；只有 0day / 通道上那份本身是坏的才立刻重发。
+  最新构建号 `20261015-2314-26fa005`。推进去的节奏（用户 2026-10-15 定）：**攒到"一定程度"再推**；
+  只有 0day / 通道上那份本身是坏的才立刻重发。
 
 **2026-10-15 第三轮新增**：阅读器破图自愈 · 搜索页折叠 + 输入联想 · 空状态品牌字标 · 快捷键面板（`?`）
 + 一键防社死（`P`；手机侧换成工具条里那颗「遮罩」按钮）· 触屏手势（左右滑翻页 / 边缘横滑切话 / 中间双击放大）
 · 安卓热更兜底三件套。
+**2026-10-15 收工**：桌面 0.1.2 打包并发布（GitHub release）；手机那侧不做快捷键面板、只留工具条那颗「遮罩」按钮。
 
-**下一步三件**：① 桌面重打一版 **0.1.2**（吃上 P0 的 `?t=` 桥 + 整页图解扰）→ 再发一次 GitHub release；
-② 安卓后台下载的 `dataSync` 前台服务（Android 15 起 24h 累计上限 6 小时，要靠断点续传收尾）；
-③ 真机手感（T3~T6：长图上限 / 一话 200 张图的内存 / 后台保活 / 毛玻璃掉帧）；
-④ 安卓热更的兜底**已经接上**（2026-10-15：开窗前撤坏前端 + 开窗后等报到）；欠的是**真机验**
+**下一步三件**：① 安卓后台下载的 `dataSync` 前台服务（Android 15 起 24h 累计上限 6 小时，要靠断点续传收尾）；
+② 真机手感（T3~T6：长图上限 / 一话 200 张图的内存 / 后台保活 / 毛玻璃掉帧）；
+③ 安卓热更的兜底**已经接上**（2026-10-15：开窗前撤坏前端 + 开窗后等报到）；欠的是**真机验**
 （`tmp/_check_android_boot.py` 只在桌上按安卓口径验）与「壳内 dist vs 热更覆盖层」的取舍。
-其余长期项见 `STATUS.md` 的「任务清单」。
+桌面这条线这一轮**结清**（0.1.2 已发）。其余长期项见 `STATUS.md` 的「任务清单」。
 
 **这台机器上的环境常量**：venv = `.venv`；adb = `%LOCALAPPDATA%\Android\Sdk\platform-tools\adb.exe`
 （AVD `guzhu_x86` = `emulator-5554`）；跑 Gradle 的 JDK 用 Android Studio 自带的 `D:\Andriod Studio\jbr`；
@@ -57,7 +59,8 @@
 | `后端能力接入评估.md` | jmcomic 还能接什么、哪些明确不做 |
 | `安卓端技术栈与现状.md` | **安卓线主文档**：逐层选型 + 版本线、难点 D1~D10 的现状、三种"环境"别混、依赖探针实测 |
 | `安卓真机连接与调试操作手册.md` | 手机能不能当测试机 / 一次性准备 / 核验命令 / 装包 / 排障表 |
-| `release-notes-v0.1.1.md` | 0.1.1 的发布说明（发给同学那份的原文） |
+| `release-notes-v0.1.2.md` | **当前这版**（0.1.2）的发布说明：新增 / 修好 / 怎么用 / SHA256（发给同学那份的原文） |
+| `release-notes-v0.1.1.md` | 上一版（0.1.1）的发布说明，留作对照 |
 
 ## 3. 历史（2026-10-15 压缩时删掉或压掉的，原文从 git 历史取）
 
@@ -85,7 +88,8 @@
   用法写在各自 docstring 头几行。
 - `_probe_*.py` —— 真窗口探针（真 pywebview + 真 `API()`，读 DOM 回报）；`_shot_*.py` —— 无头截图，产物落 `_ui/`
   （第三轮那四张是 `_shot_round3.py` 出的：`r3-*.png`）。
-- `_net_*.py` —— 直连图源的端到端小工具；`_vt_*.py` —— VirusTotal 扫描 / 查询；`_gh_release.py` —— 发 GitHub release。
+- `_net_*.py` —— 直连图源的端到端小工具；`tmp/_vt_*.py` —— VirusTotal 扫描 / 查询；`_gh_release.py` —— 发 GitHub release
+  （版本号从 `backend/version.py` 读，凭据按 环境变量 → `tmp/_gh_token.txt` → git 凭据管理器 的顺序找）。
 - `_pc_bridge.js` / `_pc_bridge_server.py` —— 假桥 + PC 上的假前端（手机尺寸）预演；**没有任何鉴权，只许监听 127.0.0.1、只许临时跑**。
 - `_flip_dev.py` —— 翻转 `config.yaml` 的 `dev.use_dev_server`（`_check_desktop_frozen.ps1` 会调它）。
 - `_probe_run.ps1` / `_probe_run.log` —— 拉安卓 logcat 的脚本与最近一次原始输出（`.log` 不进仓库）。
