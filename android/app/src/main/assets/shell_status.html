@@ -3,28 +3,50 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>孤竹漫画 · 安卓壳</title>
+<title>孤竹漫画 · 安卓壳自检</title>
 <style>
   :root { color-scheme: dark; }
-  body { margin: 0; padding: 24px 20px; background: #07080a; color: #e7e9ee;
+  body { margin: 0; padding: 24px 20px 40px; background: #07080a; color: #e7e9ee;
          font: 15px/1.75 system-ui, -apple-system, "Noto Sans SC", sans-serif; }
-  h1 { font-size: 20px; margin: 0 0 12px; }
+  h1 { font-size: 20px; margin: 0 0 6px; }
+  h2 { font-size: 15px; margin: 22px 0 6px; color: #e7e9ee; }
   p, li { color: #a9aebb; }
-  code { color: #e7e9ee; background: #16171c; padding: 1px 5px; border-radius: 5px; }
-  hr { border: 0; border-top: 1px solid #24262e; margin: 20px 0; }
-  a { color: #7fb2ff; }
+  code { color: #e7e9ee; background: #16171c; padding: 1px 5px; border-radius: 5px;
+         font: 12px/1.5 ui-monospace, Consolas, monospace; }
+  hr { border: 0; border-top: 1px solid #24262e; margin: 22px 0; }
+  ul { padding-left: 20px; }
 </style>
 </head>
 <body>
-<h1>安卓壳已就位</h1>
+<h1>孤竹漫画 · 安卓壳自检页</h1>
+<p>这一页只在两种时候露出来：<b>启动过程中</b>，或者 <b>Python / 本地服务起不来</b>。
+   正常起来之后，页面会自动切到 <code>http://127.0.0.1:47753</code> 上的真前端。</p>
+
+<h2>正常的启动链路</h2>
 <ul>
-  <li>壳：Kotlin + AndroidX WebView；返回键已接到 <code>goBack()</code></li>
-  <li>运行时：Chaquopy 17.1.0 / CPython 3.14（已配好，还没接线）</li>
-  <li>前端产物：<code>assets/web/</code>，脚本从 <code>frontend/dist</code> 同步</li>
-  <li>后端代码：<code>python/backend/</code>，脚本从仓库根 <code>backend/</code> 同步</li>
+  <li><code>assets/web/</code> ──解包──▶ <code>filesDir/dist</code>（assets 是只读 zip，起服务读不了）</li>
+  <li>Chaquopy 起 CPython → <code>android_boot.start()</code> → <code>backend/server.py</code> 静态服务</li>
+  <li>WebView 加载 <code>http://127.0.0.1:47753</code>（页面与图片同源，localStorage 才留得住）</li>
+  <li>返回键：页面能后退就后退，退到头再退出 App</li>
+</ul>
+
+<h2>构建版本线（2026-10-15）</h2>
+<ul>
+  <li>AGP <b>9.4.0</b> + Gradle <b>9.8.1</b>（Java 25 要求 Gradle ≥ 9.1、AGP 9.4 要求 ≥ 9.6）</li>
+  <li>Chaquopy <b>17.1.0</b> / CPython <b>3.13</b>（轮子仓库只到 cp313）</li>
+  <li><code>minSdk 26</code> / <code>compileSdk 37</code> / <code>targetSdk 36</code></li>
+  <li>两条变体：<code>full</code>（arm64-v8a，带 curl_cffi，回真机）与
+      <code>ui</code>（x86_64，不带 curl_cffi，只跑模拟器看界面）</li>
+</ul>
+
+<h2>起不来时看哪里</h2>
+<ul>
+  <li>屏幕底部那几行就是异常栈（Kotlin 侧）。</li>
+  <li>Python 侧的更全：<code>adb logcat -s python.stdout python.stderr</code>，
+      以及设备里的 <code>filesDir/logs/app.log</code>。</li>
 </ul>
 <hr>
-<p>下一步是 P0/P2：桥换成本地 HTTP JSON-RPC + token，再由 Activity 起 Python 静态服务，把这一页换成 http://127.0.0.1:47753。</p>
-<p>临时预览（后端还没起，取图与接口调用都会失败）：<a href="file:///android_asset/web/index.html">打开前端产物</a></p>
+<p>设计文档在仓库 <code>tmp/</code>：技术栈调研 / 可行性评估 / 真机连接与调试操作手册。
+   工作区说明见 <code>android/README.md</code>。</p>
 </body>
 </html>

@@ -1,4 +1,3 @@
-
 plugins {
     id("com.android.application")
     id("com.chaquo.python")
@@ -21,10 +20,27 @@ android {
         // 必须与 backend/version.py 的 APP_VERSION 同步：热更的 app_min 比的就是它
         versionCode = 1
         versionName = "0.1.1"
+    }
 
-        // curl_cffi 只发 android_24_arm64_v8a 轮子，x86_64 连 pip 阶段都过不去
-        ndk {
-            abiFilters += listOf("arm64-v8a")
+    // ── 两条变体线（来龙去脉见 tmp/安卓端技术栈调研.md §5.3.1）────────────────────────
+    //   full —— arm64-v8a 真机。带 curl_cffi（图源的 TLS 指纹就在它里面）。
+    //   ui   —— x86_64 模拟器。**故意不带 curl_cffi**：它在 PyPI 上只有 android_24_arm64_v8a
+    //           轮子，没有任何 x86_64 安卓轮子，x86_64 构建在 pip 阶段就过不去。
+    //           代价是这条路验不了图源连通（T1/T1-b/T2）；
+    //           换来的是：不用买任何安卓设备，就能把壳 / 路由 / 触屏布局 / 长图渲染 /
+    //           内存那一层（P2 / P3 与 T3~T7 的大半）在模拟器上跑起来。
+    flavorDimensions += "engine"
+    productFlavors {
+        create("full") {
+            dimension = "engine"
+            ndk { abiFilters += listOf("arm64-v8a") }
+        }
+        create("ui") {
+            dimension = "engine"
+            // 加后缀：两条变体能同时装在一台设备上，互不覆盖
+            applicationIdSuffix = ".ui"
+            versionNameSuffix = "-ui"
+            ndk { abiFilters += listOf("x86_64") }
         }
     }
 
@@ -48,22 +64,41 @@ android {
 
 chaquopy {
     defaultConfig {
-        // Python 3.13：Chaquopy 仓库的安卓原生轮子只到 cp313（pillow/pycryptodome/pyyaml/cffi 都没有 cp314）
+        // Python 3.13：Chaquopy 仓库的安卓原生轮子只到 cp313（pillow / pycryptodome / pyyaml / cffi）
         version = "3.13"
         buildPython(buildPythonPath)
-        // Chaquopy 17 起 pip 只装 wheel。--no-deps 是必需的：curl-cffi 要求 cffi>=2.0.0，
-        // 而安卓上根本没有 cffi 2.x 的轮子（Chaquopy 仓库最高 1.17.1，PyPI 的 cffi 无安卓轮子）
-        // → 只能把依赖全部显式列出来、锁死版本（2026-10-15 用 pip --dry-run 逐个验过）
-        pip {
-            options("--no-deps")
-            install("cffi==1.17.1")
-            install("certifi")
-            install("curl-cffi==0.16.3")
-            install("pillow==11.0.0")
-            install("pycryptodome==3.21.0")
-            install("pyyaml==6.0.3")
-            install("jmcomic==2.7.9")
-            install("commonx==0.6.40")
+    }
+
+    // pip 列表**按变体分别写**（默认配置里不放，免得 ui 变体被默认值带进 curl_cffi）。
+    // 两边都用 `--no-deps` + 显式锁版本：curl_cffi 0.15+ 声明 `cffi>=2.0.0`，
+    // 而安卓上不存在 cffi 2.x 的轮子，只能硬压 cffi==1.17.1。
+    productFlavors {
+        getByName("full") {
+            pip {
+                options("--no-deps")
+                install("cffi==1.17.1")
+                install("certifi")
+                install("curl-cffi==0.16.3")
+                install("pillow==11.0.0")
+                install("pycryptodome==3.21.0")
+                install("pyyaml==6.0.3")
+                install("jmcomic==2.7.9")
+                install("commonx==0.6.40")
+            }
+        }
+        getByName("ui") {
+            // 除 curl-cffi 之外与 full 完全一致。缺的那个由 src/ui/python/curl_cffi/ 里的桩顶上，
+            // 否则 jmcomic 在 import 期就 ModuleNotFoundError。
+            pip {
+                options("--no-deps")
+                install("cffi==1.17.1")
+                install("certifi")
+                install("pillow==11.0.0")
+                install("pycryptodome==3.21.0")
+                install("pyyaml==6.0.3")
+                install("jmcomic==2.7.9")
+                install("commonx==0.6.40")
+            }
         }
     }
 }

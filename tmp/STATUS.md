@@ -85,6 +85,7 @@
    构建文件的版本号都是**现查现核**：~~AGP **8.13.2**（它要求 Gradle ≥ 8.13 —— 从 AGP 包里的 `GRADLE_MIN_VERSION` 挖出来的）+ Gradle **8.14.6**（wrapper jar 取自 gradle/gradle v8.14.6）+ Kotlin **2.3.21** + Chaquopy **17.1.0**~~ → **2026-10-15 实跑后全部上调：AGP 9.4.0 + Gradle 9.8.1 + Chaquopy 17.1.0，Kotlin 插件摘除**（细节见「安卓工作区落地 + 构建环境实测」一节）；
    顺带核实到一条能**下调 T2 风险**的：`jmcomic 2.7.9` 与 `commonx 0.6.40` 在 PyPI 上都是 `py3-none-any` **纯 Python wheel** → Chaquopy 的「只装 wheel」这道闸对它们不构成障碍；
    **还没跑过构建**（PC 上没有 Android Studio / SDK，`local.properties` 留给 AS 首开生成），P1 依赖 spike 仍未开始。
+ - [x] **安卓 P2：壳 → Chaquopy → 本地静态服务 → WebView**（2026-10-15 完成、模拟器实测）：`backend/paths.py` 加安卓分支、新增 `android/app/src/main/python/android_boot.py`、`MainActivity.kt` 起 Python + 解 assets + 起服务 + `loadUrl`、自检页改写并更正版本线；**真前端已在安卓 WebView 里渲染出来**（截图 `tmp/_ui/p2-*.png`），触屏导航与返回键链路（T7）通。详见下面「安卓 P2」一节。
 
 ## A / B 组后端补齐（2026-10-14 用户定：**只做 A、B；C 组不做，以后也不做**）
 
@@ -1140,7 +1141,7 @@ A / B 组后端补齐 + 前端热更新通道（§「A / B 组后端补齐」「
 
 **模拟器调研（2026-10-15，为「没有测试机」找路）**
 
-- **arm64 系统镜像其实有**（改正旧口径）：到 **API 34** 都有，**只有 API 35/36/37 没有**；本机 emulator 37.2.12.0 **自带 `qemu-system-aarch64.exe`** → arm64 镜像在 x86 PC 上跑得起来，但**是全软件模拟**。
+- ~~arm64 系统镜像其实有，到 API 34 都有~~ → **2026-10-15 实测更正**：arm64 镜像**一直到 API 37 都有**（我前面写「只到 API 34」是 grep 用错分隔符导致的误判）；**但真的跑不起来** —— 本机装了 `system-images;android-36;google_apis;arm64-v8a`（1.7 GB）并建好 AVD，启动时模拟器**直接 FATAL**：`Avd's CPU Architecture 'arm64' is not supported by the QEMU2 emulator on x86_64 host`。**厂商硬限制，没有开关。**
 - **x86_64 镜像对我们没用**：`curl_cffi` / `cffi` 都没有 x86_64 安卓轮子，pip 阶段就失败。
 - 所以模拟器**只能验 T1 / T1-b / T2 那几道一次性结论**；T3~T7（长图 / 内存 / 后台下载 / 手势）在模拟器上测出来没有意义。
 - **iPhone 完全不可用**（另一套系统，零复用）。
@@ -1150,7 +1151,75 @@ A / B 组后端补齐 + 前端热更新通道（§「A / B 组后端补齐」「
 - **没有能装 APK 的测试机**：手上两台（Mate 80 Pro = HarmonyOS 6、无 ADB 端点；另一台 iPhone）都不行。三条路：① **便宜的二手 arm64 安卓机**（最省事，T1~T7 一次到位）；② **arm64 模拟器（API 33/34）只撞 T1**；③ **改走 R1 瘦客户端**（后端留 PC）—— 那样 x86_64 模拟器就够用，整类难题消失。
 
 
+## 安卓 P2：壳 → Chaquopy → 本地静态服务 → WebView（2026-10-15）
+
+> 这一轮把「安卓壳里能看见真前端」做完了 —— **全程没有安卓设备**，用的是 x86_64 模拟器
+> （AVD `guzhu_x86`，镜像 `android-37.0;google_apis_playstore;x86_64`）+ 上一轮建的 `ui` 变体。
+
+**改的四处**
+
+| 文件 | 改动 |
+|---|---|
+| `backend/paths.py` | 加安卓分支（口径见下）；**桌面那条路一个字节没动** |
+| `android/app/src/main/python/android_boot.py`（新，**入库**） | 安卓侧 Python 入口：接壳递进来的私有目录 → 装日志 → 起静态服务 → 回 base url |
+| `android/.../MainActivity.kt` | 起 Python → 解 assets → 起服务 → `loadUrl`；起不来退回自检页并把栈糊在屏上；加 `WebViewClient`（`127.0.0.1` 留 WebView，外链交系统浏览器） |
+| `android/.../assets/shell_status.html` | 改成「启动中 / 起不来」时的自检页。原来写的「Chaquopy 17.1.0 / CPython **3.14**」是**错的**（实际 3.13），已更正并补上版本线与两条变体 |
+
+**`paths.py` 的安卓口径**（平台差异仍然只在这一层，业务代码零改动）：
+
+- 认平台靠 **`java` 模块在不在**（Chaquopy 才有）—— **不去猜 `sys.platform`**：安卓上它也是 `'linux'`，跟桌面的 linux 分不开。
+- `APP_DIR` = app 私有目录 `/data/user/0/<包名>/files`。壳在 `import backend` **之前**用 `GUZHU_APP_DIR` / `GUZHU_DIST_DIR`
+  两个环境变量递进来（`paths.py` 是在 import 期就把常量算死的），`java` 探测只是兜底。
+- `config_path()` 安卓一律落私有目录 —— 包里那份（`backend/` 在 APK 里的位置）是只读的。
+- `dist_dir()` 安卓 = `filesDir/dist`：APK 里的 `assets/web/` 是**只读 zip**，`http.server` 读不了，
+  所以由壳在启动时**整块解包**过去（0.32 MB，几十毫秒，每次启动重解一遍，顺手清掉改名的旧文件）。
+- `WEB_DIR`（热更覆盖层）仍与包内 dist **分开**，`web_dist_dir()` 的优先级逻辑一点没改。
+
+**实测证据（模拟器，全是跑出来的，不是推断）**
+
+- `:app:assembleUiDebug` → BUILD SUCCESSFUL，`app-ui-debug.apk` = **29,004,046 B（≈27.7 MiB）**，`lib/` 只有 `x86_64`。
+- `adb install` + `am start` → logcat：
+  ```
+  I GuzhuShell:   解包前端资源 → /data/user/0/cn.guzhujushi.comic.ui/files/dist
+  I GuzhuShell:   起本地静态服务…
+  I python.stdout: [android] 用户目录 /data/user/0/cn.guzhujushi.comic.ui/files
+  I python.stdout: [android] 前端根 .../files/dist（在=True）
+  I python.stdout: [android] 本地服务已起：http://127.0.0.1:47753
+  I GuzhuShell:   页面已切到 http://127.0.0.1:47753
+  ```
+  → **`backend` 这个隐式命名空间包在 Chaquopy 的 importer 上是通的**（`backend/` 没有 `__init__.py`），这一条此前是未验的风险项。
+- **从 PC 侧穿过 `adb forward tcp:47753 tcp:47753` 直接打这个服务**（等于把设备里那个 server 拉到本机测）：
+  `GET /` → **200** `text/html` 5618 B；`GET /assets/index-*.js` → **200** 128150 B；`GET /nope.html` → **404**；
+  `Host: localhost` → 200；`Host: evil.example.com` → **403**（Host 白名单在安卓上照样生效）。
+- **截图**（`tmp/_ui/p2-*.png`）：真前端在安卓 WebView 里渲染出来了 —— 左侧导航栏、「热门榜单」标题、
+  搜索框、分类 chips 全在；数据区显示的是前端自己的**优雅错误态**「加载失败了 / pywebview api 还没就绪」
+  （**P0 没做，桥还不存在，这是预期结果**，不是 bug）。
+- **触屏 + 返回键（T7）**：点左侧「搜索」图标 → 进搜索页（软键盘正常顶起，`adjustResize` 生效）；
+  第一次返回键收键盘（系统行为）、**第二次返回键回到榜单页** —— hash 历史 + `goBack()` 链路通，
+  且是同一文档里的历史穿梭（没重新加载）。
+
+**这一轮同时暴露的（留给「触屏 UI」那一轮，都不是 bug）**
+
+- 布局还是**桌面版式**：左侧固定导航栏 + 内容区在 1080px 宽的手机上明显挤 —— 榜单页的
+  「周榜 / 按观看」两个下拉被压成三行（`p2-1-board.png` 里肉眼可见）。这就是 `可行性评估 §D6`
+  说的「前端改动量最大的一块」，**还没动**。
+- 搜索页一进去**自动聚焦输入框**并弹起软键盘 —— 触屏上应该改成「点了才聚焦」。
+- **`curl_cffi` 依旧缺**：`ui` 变体是 x86_64，图源那条路在模拟器上永远验不了 → **T1 / T1-b / T2 仍等真机**。
+
+**顺手清掉的（本机环境）**：4.36 GB 的 `system-images;android-36;google_apis;arm64-v8a` 与废弃 AVD
+`guzhu_arm64`（x86_64 主机上跑不起来的那个，用 `avdmanager delete` + `sdkmanager --uninstall` 正规卸的）；
+`tmp/_` 下 9 个一次性脚本与旧构建日志。
+
 ## 决策记录
+- **2026-10-15**：**安卓壳的启动链路定案：壳解 assets → Chaquopy 起 Python → `backend/server.py` 起本地静态服务 → WebView 加载 `http://127.0.0.1:47753`**。不用 `file://` 直开 `index.html` 的理由与桌面完全一致（ES module 要过 CORS、`file://` 的 origin 是 opaque；页面与图也不同源，localStorage 留不住），见 `backend/server.py` 开头。**桌面与安卓从此跑的是同一个服务、同一份前端。**
+- **2026-10-15**：**平台差异继续只收在 `backend/paths.py` 一层，安卓靠「`java` 模块在不在」认平台**（不猜 `sys.platform` —— 安卓上它是 `'linux'`）。壳递目录走 `GUZHU_APP_DIR` / `GUZHU_DIST_DIR` 环境变量，**必须早于 `import backend`**（paths 是 import 期算死的常量）；`java` 探测作兜底。理由是既有代码全项目直接读 `paths.APP_DIR`，改成惰性取值要动的面太大。
+- **2026-10-15**：**`backend/` 保持隐式命名空间包（不加 `__init__.py`）** —— 已在设备上实测 Chaquopy 的 importer 能正常 import `backend.server` / `backend.paths`，所以不必为了打包去改仓库结构。
+- **2026-10-15**：**`ui` 变体的定位再确认**：它只用于「壳 / 路由 / 触屏布局 / 长图渲染 / 内存」这一层，**图源连通性（T1 / T1-b / T2）在它上面永远验不了**（x86_64 没有 `curl_cffi` 轮子）。不要因为它跑得通就误判成「安卓版成了」。
+
+- **2026-10-15**：**模拟器路线实测定论** —— ① arm64 系统镜像**一直到 API 37 都有**（此前两次写「只到 API 34」是错的：grep 用了分号而 sdkmanager 输出用斜杠，属没查到就下结论）；② **但 Android Emulator 37.2.12.0 在 x86_64 主机上直接封杀 arm64 客户机**（实跑报 `FATAL | Avd's CPU Architecture 'arm64' is not supported by the QEMU2 emulator on x86_64 host. System image must match the host architecture.`，装了 1.7 GB 镜像 + 建了 AVD 也白搭）→ **「用模拟器验 R2」这条路是死的**。
+- **2026-10-15**：**x86_64 模拟器仍然有用，但只对 UI / 壳那一层有效**（见 `tmp/安卓端技术栈调研.md` §5.3.1）。要点：`abiFilters` 改 x86_64 + pip 列表去掉 `curl_cffi` / `jmcomic`（换桩）→ 能验 P2、T7、T3、T4、T6、T8 的大半，**0 元、不需要任何安卓设备**；`curl_cffi` 相关的 T1 / T1-b / T2 继续等真机。这条路要不要走，是下一步的决策点。
+- **2026-10-15**：**测试设备的 0 元备选**（用户无收入，二手手机不考虑）：① **x86_64 模拟器**（见上条，解锁 UI 层）；② 家里/同学淘汰的旧安卓机（尤其**屏幕坏了但能开机 + USB 调试开着**的 —— 配 `scrcpy` 就能当完整测试机用，因为它靠 adb 投屏+注入输入，不依赖物理屏与触控）；③ 改 R1 瘦客户端（后端留 PC，x86_64 模拟器即可）。
+
 - **2026-10-15**：**`compileSdk` 36 → 37**（`targetSdk` 仍 36）。依据：`androidx.core:core:1.19.1` / `core-ktx:1.19.1` 在 `checkDebugAarMetadata` 里硬性要求 compileSdk ≥ 37。`compileSdk` 只影响「能编到哪些 API」，不改运行时行为，也不动 Play 的 targetSdk 门槛。
 - **2026-10-15**：**T1-b（cffi ABI）风险大幅下调** —— 在 **Windows 上用同一组版本**（`cffi 1.17.1` + `curl_cffi 0.16.3`）实测：`import curl_cffi` 成功，且 `impersonate="chrome"` 的 HTTPS 请求返回 **200**。**FFI 调用路径与 TLS 指纹路径都跑通了** → 平台上挂掉的概率很低，真机只要补一次确认。
 - **2026-10-15**：**`:app:assembleDebug` BUILD SUCCESSFUL**，APK **35.71 MB**（依赖已拆包核对，`curl_cffi/_wrapper.abi3.so` 24.0 MB、`_cffi_backend.so`、`libc++_shared.so`、`libpython3.13.so` 全在）。构建入口固定为 **`scripts/build_android.ps1`**（负责把 `JAVA_HOME` 指到 AS 自带的 JBR 25，绕开系统那个 JDK 26）。
@@ -1287,7 +1356,13 @@ A / B 组后端补齐 + 前端热更新通道（§「A / B 组后端补齐」「
   ③ **依赖 spike（Chaquopy 装 curl_cffi + 直连图源）没过之前，不投入 R2 的工作量**；分发合规（Play / 备案）想不清楚就不开工。
 
 ## 下一步
-0. **安卓线（2026-10-15 收工状态）**：~~① 装 Python 3.13 → 重跑构建~~ **已完成**（APK 35.71 MB 出得来）。**只剩一条：拿到一台能装 APK 的 arm64 设备**（二手安卓机最省事；或 arm64 模拟器 API 33/34 只撞 T1）。设备到了先跑 `adb install` + `import curl_cffi` + 一次图源请求，然后再动 P2（壳接 `127.0.0.1`）。
+0. **安卓线（2026-10-15 收工状态）**：~~① 装 Python 3.13 → 重跑构建~~ 已完成；~~② 拿到设备再动 P2~~ **改成不等设备** ——
+   已用 **x86_64 模拟器 + `ui` 变体**把 **P2 做完并验收**（真前端渲染、触屏导航、返回键链路，见上面「安卓 P2」一节）。
+   **下一步是 P0：把 `js_api` 换成本地 HTTP JSON-RPC + token**（`可行性评估 §5` 与 `交接文档` 里定的第一条）。
+   它同时解锁两件事：① 安卓侧不用再挂 `js_api`；② **`ui` 变体接 PC 后端就能看到带数据的真界面** ——
+   `adb reverse` 把设备的端口导到 PC 上那个 `127.0.0.1:47753`，PC 有真 `curl_cffi`，于是
+   「触屏布局 / 阅读器 / 长图渲染 / 内存」这些**不需要 arm64 真机**的部分全部能在模拟器里验。
+   仍然只等真机的：**T1 / T1-b / T2（`curl_cffi` 装得上 + 连得上图源 + 图片真的解码出来）**。
 
 
 1. 用户真窗口验收（真图源、5173 + `main.py`）：

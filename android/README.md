@@ -11,10 +11,15 @@ Gradle 工程，用 Android Studio **单独打开这一层**。设计文档在�
 | 路径 | 是什么 | 入库 |
 |---|---|---|
 | `app/src/main/java/cn/guzhujushi/comic/MainActivity.kt` | 壳：Activity + WebView + 返回键 | 是 |
-| `app/src/main/assets/shell_status.html` | 壳自检页（P2 接线前先看这一页） | 是 |
+| `app/src/main/python/android_boot.py` | 安卓侧 Python 入口：接目录 → 装日志 → 起静态服务 → 回 base url | 是 |
+| `app/src/ui/python/curl_cffi/` | **`ui` 变体专用的空壳**（见下「两条变体」） | 是 |
+| `app/src/main/assets/shell_status.html` | 启动中 / 起不来时的自检页 | 是 |
 | `app/src/main/python/backend/` | 仓库根 `backend/` 的同步副本 | **否**（.gitignore） |
 | `app/src/main/assets/web/` | 仓库 `frontend/dist` 的同步副本 | **否**（.gitignore） |
 | `gradle/wrapper/` | Gradle **9.8.1** wrapper（jar / `gradlew` / `gradlew.bat` 取自 gradle/gradle **v9.8.1**） | 是 |
+
+`app/src/main/python/backend/` 与 `app/src/ui/python/curl_cffi/` 是两回事：前者是同步来的副本（不入库），
+后者是**手写的桩**（入库）—— 见「两条变体」。
 
 ## 同步生成物
 
@@ -32,12 +37,21 @@ powershell -ExecutionPolicy Bypass -File scripts\sync_android.ps1
 - **Python 不能用 3.14**：Chaquopy 的轮子仓库（`chaquo.com/pypi-13.1`）里 `cffi` / `pillow` / `pycryptodome` / `pyyaml` 的 arm64 轮子**只到 cp313**
 - pip 段是 **`--no-deps` + 显式锁版本**：`curl_cffi` 0.15+ 全系声明 `cffi>=2.0.0`，而安卓上不存在 cffi 2.x 轮子 → 只能硬压 `cffi==1.17.1`（**C ABI 兼容性未验，这是 T1 剩下的风险**）
 - `versionName` 必须与 `backend/version.py` 的 `APP_VERSION` 同步 —— 热更的 `app_min` 比的就是它
+- **两条变体**（`flavorDimensions += "engine"`，两套包名能同时装在一台设备上）：
+  - `full` —— `arm64-v8a` + 完整 pip 列表（含 `curl-cffi`），**回真机**、能连图源；
+  - `ui` —— `x86_64` + **去掉 `curl-cffi`**，只跑模拟器：x86_64 上根本没有 `curl_cffi` 的安卓轮子，
+    少了它 `jmcomic` 在 import 期就会 `ModuleNotFoundError`，所以 `src/ui/python/curl_cffi/` 里放了个
+    **一调就抛错的桩**（`__version__ = "0.0.0+ui-stub"`），把 import 撑住、把「图源不可用」变成运行时明确报错。
+    代价：**这个变体永远验不了 T1 / T1-b / T2（图源连通）**。
 - 跑 Gradle 的 JDK：本机 Android Studio（`D:\Andriod Studio`）自带 **JBR 25.0.3**、系统 JDK 是 **26.0.1**；Java 25 要求 **Gradle ≥ 9.1**、AGP 9.4 又要求 **Gradle ≥ 9.6** → 版本线只能落在 AGP 9.4.0 / Gradle 9.8.1（见 `tmp/安卓端技术栈调研.md` §1.5）
 - **开工前先把 Python 3.13 装上**，并在 `gradle.properties` 里把 `guzhu.buildPython` 指向它，否则 Chaquopy 的 pip 阶段会以 `from versions: none` 失败
 
 ## 当前进度（2026-10-15）
 
-- **`:app:assembleDebug` → BUILD SUCCESSFUL**，产出 `app/build/outputs/apk/debug/app-debug.apk` = **35.71 MB**（`curl_cffi` / `cffi` / `pillow` / `pycryptodome` / `pyyaml` / `jmcomic` / `commonx` 全部打包在内）。
+- **`full` 变体**：`:app:assembleFullDebug` → BUILD SUCCESSFUL，`app-full-debug.apk` = **35.71 MB**
+  （`curl_cffi` / `cffi` / `pillow` / `pycryptodome` / `pyyaml` / `jmcomic` / `commonx` 全部打包在内）。
+- **`ui` 变体**：`:app:assembleUiDebug` → BUILD SUCCESSFUL，`app-ui-debug.apk` = **29,004,046 B**；
+  已装进 x86_64 模拟器（AVD `guzhu_x86`）跑通，**真前端在安卓 WebView 里渲染出来了**。
 - 构建入口：**`scripts\build_android.ps1`**（仓库根，把 `JAVA_HOME` 指到 AS 自带的 JBR 25 再跑 `gradlew`）：
 
   ```powershell
@@ -46,12 +60,24 @@ powershell -ExecutionPolicy Bypass -File scripts\sync_android.ps1
   ```
 
 - 修过的三处：① Kotlin 插件与 AGP 9 内置的冲突（已摘插件）；② 构建机 Python 3.14 → **3.13**（轮子只到 cp313）；③ `compileSdk` **36 → 37**（`androidx.core 1.19.1` 要求 ≥37；`targetSdk` 仍 36）。
-- **还没做的**：装到真机/模拟器上跑（**手上没有能装 APK 的设备** —— Mate 80 Pro 是 HarmonyOS 6、无 ADB 端点；另一台是 iPhone）。见 `tmp/安卓端技术栈调研.md` §5.3 / §5.7。
+- **已经能跑的那条（`ui` 变体 + 模拟器，0 元、不需要任何安卓设备）**：
+
+  ```powershell
+  powershell -ExecutionPolicy Bypass -File scripts\build_android.ps1 :app:assembleUiDebug
+  $adb = "$env:LOCALAPPDATA\Android\Sdk\platform-tools\adb.exe"
+  & $adb install -r android\app\build\outputs\apk\ui\debug\app-ui-debug.apk
+  & $adb shell am start -n cn.guzhujushi.comic.ui/cn.guzhujushi.comic.MainActivity
+  & $adb logcat -s GuzhuShell:* python.stdout:* python.stderr:*      # 启动链路
+  & $adb forward tcp:47753 tcp:47753                                 # 想看设备里起的服务，从 PC 打 127.0.0.1:47753
+  ```
+
+  截图要 `cmd /c "...adb.exe exec-out screencap -p > 文件"` —— PowerShell 直接重定向会把二进制搞坏。
+- **还没做的**：真机（`full` 变体，验 T1 / T1-b / T2）—— 手上两台（Mate 80 Pro = HarmonyOS 6、无 ADB 端点；另一台是 iPhone）都装不了。见 `tmp/安卓端技术栈调研.md` §5.3 / §5.7。
 
 ## 还没做的（按设计文档的路线）
 
 - **P0**：`server.py` 加 `POST /api/<method>` + 随机 token，前端加桥垫片（桌面一起切）
-- **P2**：Activity 起 Python → 起静态服务 → WebView 加载 `http://127.0.0.1:47753`（替换现在的自检页）
+- ~~**P2**：Activity 起 Python → 起静态服务 → WebView 加载 `http://127.0.0.1:47753`~~ —— **2026-10-15 已完成并在模拟器上验收**
 - **P3**：`dataSync` 前台服务 + SAF + `StatFs`（`shutil.disk_usage` 在安卓上读的是 root 分区）
 
 `local.properties`（`sdk.dir`）由 Android Studio 首次打开时自己生成，不在仓库里。
