@@ -46,6 +46,9 @@ tmp/_gh_token.txt
 # 全量回归的日志（tmp/_runchecks.py 的 stdout 重定向；临时产物）
 tmp/_runchecks*.txt
 
+# 喂给 git commit -F 的提交信息（临时产物；别进仓库 —— 2026-10-15 手滑进过一次）
+tmp/_msg*.txt
+
 # 安卓侧（tmp/安卓端技术栈调研.md）：调研时下载的 wheel / 运行时 zip 等大文件
 tmp/_dl/
 tmp/_dl2/
