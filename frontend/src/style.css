@@ -2,6 +2,7 @@
 /* 层级靠“越亮越近”的表面阶梯和 1px 发丝线，不靠投影；强调色只给加载 / 焦点 / 进度 */
 :root {
   --bg: #07080a;            /* canvas 画布 */
+  --panic-bg: #07080a;      /* 防社死那层遮罩：必须不透明，不跟毛玻璃那套走 */
   --bg-soft: #0d0d0d;       /* surface 凹陷容器 */
   --surface: #101111;       /* 卡片 */
   --surface-2: #121212;     /* 卡片里的小块 */
@@ -80,6 +81,7 @@
    写在这儿必须排在 :root[data-glass="on"] 后面 —— 两者权重一样，靠顺序定胜负。 */
 :root[data-theme="light"] {
   --bg: #eef0f3;
+  --panic-bg: #eef0f3;
   --bg-soft: #f5f6f8;
   --surface: #ffffff;
   --surface-2: #f6f7f9;
@@ -336,6 +338,28 @@ input:focus { outline: 2px solid var(--primary-soft); outline-offset: 1px; borde
 .search-bar { display: flex; gap: 10px; margin: 0 0 24px; }
 .search-bar input { flex: 1; }
 
+/* 输入联想：挂在输入框正下方（没有热搜源，词全来自本机 —— 最近搜索 + 收藏 / 看过的标题） */
+.search-input-wrap { position: relative; flex: 1; display: flex; min-width: 0; }
+.search-input-wrap input { flex: 1; }
+.search-suggest {
+  position: absolute; left: 0; right: 0; top: calc(100% + 6px); z-index: 30;
+  padding: 5px; max-height: 268px; overflow: auto;
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+}
+.search-suggest[hidden] { display: none; }
+.suggest-row {
+  display: flex; align-items: center; gap: 10px; width: 100%;
+  padding: 7px 9px;
+  background: transparent; border: 0; border-radius: var(--radius-sm);
+  color: var(--text-soft); font-size: 13px; text-align: left;
+}
+.suggest-row.on, .suggest-row:hover { background: var(--surface-3); color: var(--text); }
+.suggest-word { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.suggest-kind { flex: none; color: var(--faint); font-size: 11.5px; }
+
 .empty-hint { text-align: center; color: var(--faint); font-size: 14px; padding: 56px 16px; margin: 0; }
 
 /* ============ 毛玻璃：半透明白 + 背景模糊 + 顶部高光 ============ */
@@ -445,6 +469,18 @@ input:focus { outline: 2px solid var(--primary-soft); outline-offset: 1px; borde
 .recent-hit:hover, .recent-del:hover { background: transparent; color: var(--text); }
 .recent-clear:hover { background: var(--surface); color: var(--text-soft); }
 
+/* 搜索结果太多时那颗「展开其余 N 部」：占满一整行，别被当成第 13 张卡 */
+.search-more {
+  grid-column: 1 / -1;
+  padding: 12px 16px;
+  font-size: 13px;
+  color: var(--text-soft);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+.search-more:hover { background: var(--surface-3); border-color: var(--border-strong); color: var(--text); }
+
 /* ============ 空状态 / 骨架屏：全站"网点"这一套 ============ */
 
 /* 空状态：一张漫画气泡，底上铺网点 */
@@ -477,6 +513,8 @@ input:focus { outline: 2px solid var(--primary-soft); outline-offset: 1px; borde
 }
 .empty-icon { font-size: 30px; line-height: 1; opacity: .6; }
 .empty-avatar { display: block; width: 46px; height: 46px; margin: 0 auto; border-radius: 14px; box-shadow: 0 0 0 1px var(--ring); }
+/* 空状态里的品牌字标：一支淡墨，别抢正文；宽高比由 brand.ts 按 viewBox 算好 */
+.empty-mark { display: block; margin: 0 auto 4px; color: var(--faint); opacity: .62; }
 .empty-title { font-size: 15px; color: var(--text-soft); margin: 12px 0 0; }
 .empty-sub { color: var(--faint); font-size: 13px; margin: 6px 0 0; }
 .empty-action { margin-top: 16px; }
@@ -1226,7 +1264,17 @@ album-card .dl-badge[hidden] { display: none; }
 body.reading #app { max-width: none; padding: 0; border-color: transparent; }
 
 .reader { --reader-col: 1080px; max-width: var(--reader-col); margin: 0 auto; min-height: 100vh; }
+/* 触屏双击放大：整列铺成两倍宽，页面横向能拖（列宽那档记在 JS 里，还原时还回去） */
+.reader.zoomed { width: 200%; max-width: none; }
 .reader-images img { display: block; width: 100%; margin-bottom: var(--page-gap, 0px); background-color: var(--surface-2); background-image: var(--dots); background-size: 10px 10px; }
+/* 还没下来的图（网络抖动 / 这一话还在补）：给一块虚线占位，别在长条漫里留一个看不出来的缝 */
+.reader-images img[data-broken="true"] {
+  min-height: 180px;
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--radius-sm);
+  font-size: 12px;
+  color: var(--faint);
+}
 
 /* 单页模式：一次一页，图片撑满窗口 */
 .reader[data-mode="single"] .reader-images { position: fixed; inset: 0; }
@@ -1800,5 +1848,54 @@ body.reading .paper-grain { opacity: .42; }
 .disk-row-book { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--faint); }
 .disk-row-size { flex: none; color: var(--faint); }
 .disk-tag { flex: none; padding: 1px 8px; border-radius: 999px; background: var(--surface-3); color: var(--muted); font-size: 11.5px; }
+
+/* ============ 快捷键面板 + 防社死（shortcuts.ts） ============ */
+
+/* 面板压在所有浮层之上（阅读器最高那条 63、右下角更新提示 60），但低于开场闪屏（100） */
+.hotkey-sheet {
+  position: fixed; inset: 0; z-index: 72;
+  display: grid; place-items: center;
+  padding: 24px;
+  background: rgba(0, 0, 0, .5);
+  -webkit-backdrop-filter: blur(7px); backdrop-filter: blur(7px);
+}
+.hotkey-sheet[hidden] { display: none; }
+html[data-theme="light"] .hotkey-sheet { background: rgba(20, 22, 26, .34); }
+.hotkey-card {
+  width: min(430px, 100%); max-height: 78vh; overflow: auto;
+  padding: 16px 18px 18px;
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow);
+  animation: hotkey-in var(--dur) var(--ease-out);
+}
+@keyframes hotkey-in { from { opacity: 0; transform: translateY(8px) } to { opacity: 1; transform: none } }
+.hotkey-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.hotkey-title { margin: 0; font-size: 15px; font-weight: 600; color: var(--text); }
+.hotkey-close { padding: 4px 6px; background: transparent; border: 1px solid transparent; border-radius: var(--radius-sm); color: var(--muted); }
+.hotkey-close:hover { background: var(--surface-3); color: var(--text); }
+.hotkey-group { margin: 16px 0 6px; font-size: 12px; color: var(--faint); }
+.hotkey-row { display: flex; align-items: center; gap: 10px; padding: 5px 0; }
+.hotkey-keys { flex: none; display: inline-flex; align-items: center; gap: 3px; min-width: 112px; }
+.hotkey-label { color: var(--text-soft); font-size: 13px; }
+
+/* 防社死：按 P 把整窗盖死。**必须不透明** —— 毛玻璃窗下 --bg 是半透明的，
+   沿用它会透出底下的漫画，那就不是"防社死"了。 */
+.panic-cover {
+  position: fixed; inset: 0; z-index: 70;
+  display: grid; place-items: center;
+  background: var(--panic-bg);
+  cursor: pointer;
+}
+.panic-cover[hidden] { display: none; }
+.panic-inner { text-align: center; }
+.panic-inner .brand-mark-svg { display: block; margin: 0 auto; color: var(--faint); opacity: .5; }
+.panic-title { margin: 18px 0 0; font-size: 15px; color: var(--text-soft); }
+.panic-sub { margin: 6px 0 0; font-size: 12.5px; color: var(--faint); }
+
+@media (prefers-reduced-motion: reduce) {
+  .hotkey-card { animation: none; }
+}
 .disk-tag.offline { background: rgba(89, 212, 153, .12); color: var(--ok); }
 .desktop-line { margin: 0; color: var(--text-soft); font-size: 12.5px; line-height: 1.7; }

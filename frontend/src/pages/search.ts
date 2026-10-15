@@ -6,6 +6,7 @@ import { createIcon, icons, morphIcon, setIcon } from '../components/icons.js'
 import { onUnmount, replaceHash } from '../router.js'
 import { loadState, pickKey, saveState } from '../store.js'
 import { warmAlbumList } from '../prefetch.js'
+import type { AlbumSummary, FavoriteItem, HistoryItem } from '../types.js'
 
 // 搜索范围：对应后端 search() 的 scope（五个 search_* 方法共用同一套参数）
 const SCOPES: { key: SearchScope; label: string }[] = [
@@ -36,6 +37,10 @@ const canHover = window.matchMedia('(hover: hover) and (pointer: fine)').matches
 // 什么时候搜的"，这三样只有后端算得了。所以不存两份，chips 直接读库（清缓存不动它）
 const RECENT_MAX = 12
 
+// 搜索结果一次能来好几屏（图源按"页"给，一页几十部）：先只铺这么多，想看全的点一下展开。
+// 12 在桌面上正好两行（一行 6 张），手机上是一屏多一点。
+const FOLD_AT = 12
+
 interface SearchPrefs {
   scope: SearchScope
   sort: SortOrder
@@ -60,7 +65,10 @@ export function searchPage(params: Record<string, string>): HTMLElement {
         <p class="page-sub">输入关键词，回车或点「搜索」</p>
       </header>
       <div class="search-bar">
-        <input id="keyword" placeholder="输入关键词" />
+        <div class="search-input-wrap">
+          <input id="keyword" placeholder="输入关键词" />
+          <div class="search-suggest" hidden></div>
+        </div>
         <button id="search-btn"><morph-icon size="16" stroke-width="1.8"></morph-icon><span>搜索</span></button>
       </div>
       <div class="search-filters">
@@ -108,7 +116,12 @@ export function searchPage(params: Record<string, string>): HTMLElement {
   el.querySelector('.sort-slot')!.appendChild(sortPicker.el)
 
   const closeMenus = (): void => { scopePicker.close(); sortPicker.close() }
-  const onKey = (event: KeyboardEvent): void => { if (event.key === 'Escape') closeMenus() }
+  const onKey = (event: KeyboardEvent): void => {
+    if (event.key === 'Escape') {
+      closeMenus()
+      hideSuggest()
+    }
+  }
   document.addEventListener('click', closeMenus)
   window.addEventListener('keydown', onKey)
   onUnmount(() => {
@@ -198,12 +211,117 @@ export function searchPage(params: Record<string, string>): HTMLElement {
     recentBox.append(head, row)
   }
 
+  // ==================== 输入联想（纯本地） ====================
+  //
+  // 图源不给「热搜 / 建议词」，所以联想只用**本机已经有的东西**：最近搜过的词（带次数与
+  // 时间，存在 search_log）+ 收藏 / 看过的作品标题。做法是纯内存子串匹配（几百条，毫秒级），
+  // 输入时同步出结果，不搞防抖。
+  //
+  // 天花板也说清楚：**冷启动是空的**（没搜过、没收藏、没看过就没词可联），这不是 bug。
+  // 要"猜你没搜过的词"得抓图源搜索页的联想接口 —— 那要新接一套 HTML 客户端，先不做。
+  const SUGGEST_MAX = 8
+  type SuggestKind = 'recent' | 'fav' | 'hist'
+  const KIND_LABEL: Record<SuggestKind, string> = { recent: '最近', fav: '收藏', hist: '看过' }
+
+  const suggestBox = el.querySelector<HTMLElement>('.search-suggest')!
+  let pool: { word: string; kind: SuggestKind }[] = []
+  let suggestRows: { word: string; kind: SuggestKind }[] = []
+  let suggestAt = -1        // 键盘选中的下标，-1 = 没选（这时回车搜输入框里原样的词）
+
+  /** 攒联想池：最近搜索打头（那是用户自己搜过的词，命中率最高），后面接收藏 / 看过的标题 */
+  async function loadPool(): Promise<void> {
+    const words: { word: string; kind: SuggestKind }[] = recent.map((word) => ({ word, kind: 'recent' }))
+    const seen = new Set(words.map((item) => item.word.toLowerCase()))
+    const push = (title: unknown, kind: SuggestKind): void => {
+      const word = String(title ?? '').trim()
+      if (!word || word.length > 40) return     // 整串标题当建议词没法看
+      const key = word.toLowerCase()
+      if (seen.has(key)) return
+      seen.add(key)
+      words.push({ word, kind })
+    }
+    const bridge = window.pywebview?.api
+    if (bridge) {
+      try {
+        const [favs, hist] = await Promise.all([
+          bridge.get_favorites?.(200) as Promise<FavoriteItem[] | null | undefined>,
+          bridge.get_history?.(100) as Promise<HistoryItem[] | null | undefined>,
+        ])
+        for (const row of favs ?? []) push(row?.title, 'fav')
+        for (const row of hist ?? []) push(row?.title, 'hist')
+      } catch {
+        /* 这两下读不出来就只剩最近搜索那几条 —— 联想本来就是锦上添花，不该挡搜索 */
+      }
+    }
+    pool = words
+    if (keywordInput.value.trim()) paintSuggest()   // 池子回来晚了：这会儿可能已经打好字了
+  }
+
+  /** 按当前输入把命中的建议铺出来；没输入 / 没命中就整块收起来 */
+  function paintSuggest(): void {
+    const query = keywordInput.value.trim().toLowerCase()
+    suggestRows = []
+    if (query) {
+      for (const item of pool) {
+        const word = item.word.toLowerCase()
+        if (word === query || !word.includes(query)) continue
+        suggestRows.push(item)
+        if (suggestRows.length >= SUGGEST_MAX) break
+      }
+    }
+    suggestAt = -1
+    suggestBox.innerHTML = ''
+    suggestBox.hidden = suggestRows.length === 0
+    suggestRows.forEach((item) => {
+      const row = document.createElement('button')
+      row.type = 'button'
+      row.className = 'suggest-row'
+      const word = document.createElement('span')
+      word.className = 'suggest-word'
+      word.textContent = item.word
+      const kind = document.createElement('span')
+      kind.className = 'suggest-kind'
+      kind.textContent = KIND_LABEL[item.kind]
+      row.append(word, kind)
+      // mousedown 而不是 click：click 之前输入框先 blur，那一下会顺手把面板收掉
+      row.addEventListener('mousedown', (event) => {
+        event.preventDefault()
+        adopt(item.word)
+      })
+      suggestBox.appendChild(row)
+    })
+    paintSuggestActive()
+  }
+
+  function paintSuggestActive(): void {
+    const rows = suggestBox.children
+    for (let i = 0; i < rows.length; i++) rows[i].classList.toggle('on', i === suggestAt)
+  }
+
+  /** 采用一条建议：词填进输入框、面板收掉、当场搜 */
+  function adopt(word: string): void {
+    hideSuggest()
+    keywordInput.value = word
+    void doSearch()
+  }
+
+  function hideSuggest(): void {
+    suggestRows = []
+    suggestAt = -1
+    suggestBox.hidden = true
+    suggestBox.innerHTML = ''
+  }
+
   /** 记一次搜索：本地先把词挪到最前（chips 立刻更新），库里那份记累加次数与时间 */
   function rememberRecent(keyword: string): void {
     recent = [keyword, ...recent.filter((item) => item.toLowerCase() !== keyword.toLowerCase())]
       .slice(0, RECENT_MAX)
     paintRecent()
     logSearch(keyword)
+    // 刚搜过的词立刻进联想池，不用等下回进页面才联得上
+    const key = keyword.toLowerCase()
+    pool = [{ word: keyword, kind: 'recent' },
+      ...pool.filter((item) => item.word.toLowerCase() !== key)]
   }
 
   // 从 URL 参数恢复关键词
@@ -237,6 +355,34 @@ export function searchPage(params: Record<string, string>): HTMLElement {
   }
 
   /**
+   * 铺搜索结果。条数多就先折起来：铺前 FOLD_AT 张 + 一颗「展开其余 N 部」。
+   *
+   * 展开是**往后面追加**、不重建：重建会让已经铺出来的封面重新请求一遍，滚动位置也会跳回顶部。
+   */
+  function paintResults(items: AlbumSummary[], keyword: string): void {
+    hideSuggest()     // 结果铺出来了，联想面板就别再挂着
+    renderAlbumList(items.slice(0, FOLD_AT), listEl, {
+      icon: '🔍',
+      title: `没搜到「${keyword}」`,
+      hint: '换个关键词或换个搜索范围，也可以去热门里逛逛',
+      actionLabel: '去热门',
+      onAction: goPopular,
+    })
+    if (items.length <= FOLD_AT) return
+    const more = document.createElement('button')
+    more.type = 'button'
+    more.className = 'search-more'
+    more.textContent = `展开其余 ${items.length - FOLD_AT} 部（共 ${items.length} 部）`
+    more.addEventListener('click', () => {
+      const rest = document.createElement('div')
+      renderAlbumList(items.slice(FOLD_AT), rest)
+      for (const node of [...rest.children]) listEl.insertBefore(node, more)
+      more.remove()
+    })
+    listEl.appendChild(more)
+  }
+
+  /**
    * restore=true 是"按地址栏还原"那条路（从详情返回 / 刷新 / 直接打开链接）：这种情况**不记搜索记录** ——
    * 记录里的次数与时间是推荐画像的输入，跟着返回键刷上去就失真了。
    */
@@ -263,13 +409,7 @@ export function searchPage(params: Record<string, string>): HTMLElement {
       const data = await window.pywebview.api.search(keyword, 1, scope, sort)
       searchIco.classList.remove('spin')
       morphIcon(searchIco, data.length ? icons.searchDone : icons.search)
-      renderAlbumList(data, listEl, {
-        icon: '🔍',
-        title: `没搜到「${keyword}」`,
-        hint: '换个关键词或换个搜索范围，也可以去热门里逛逛',
-        actionLabel: '去热门',
-        onAction: goPopular,
-      })
+      paintResults(data, keyword)
       // 封面 + 标题已经铺在屏幕上了，详情缓存丢后台慢慢预热
       warmAlbumList(data.map((item) => item.id))
     } catch (err) {
@@ -280,8 +420,23 @@ export function searchPage(params: Record<string, string>): HTMLElement {
   }
 
   searchBtn.addEventListener('click', () => void doSearch())
-  keywordInput.addEventListener('keydown', e => {
-    if (e.key === 'Enter') void doSearch()
+  keywordInput.addEventListener('input', () => paintSuggest())
+  keywordInput.addEventListener('focus', () => paintSuggest())
+  keywordInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') {
+      // 键盘选中的那条优先；没选就按输入框里原样的词搜
+      const picked = suggestAt >= 0 ? suggestRows[suggestAt] : null
+      if (picked) adopt(picked.word)
+      else void doSearch()
+    } else if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      if (!suggestRows.length) return
+      e.preventDefault()
+      if (e.key === 'ArrowDown') suggestAt = suggestAt + 1 >= suggestRows.length ? -1 : suggestAt + 1
+      else suggestAt = suggestAt <= 0 ? suggestRows.length - 1 : suggestAt - 1
+      paintSuggestActive()
+    } else if (e.key === 'Escape') {
+      hideSuggest()
+    }
   })
 
   // 老版本把搜索记录存在 localStorage（guzhu:search:recent）：搬进 data/app.db 之后
@@ -306,6 +461,8 @@ export function searchPage(params: Record<string, string>): HTMLElement {
   // 记录是异步读回来的（真相在后端库里），读完再把这句提示定稿
   void loadRecent().then(() => {
     if (idle) paintIdle()
+    // 联想池跟着记录一起攒（收藏 / 看过的标题），攒到什么算什么
+    void loadPool()
   })
 
   // 推荐段跟首页同一套（一期不吃本次关键词），进来就开始铺

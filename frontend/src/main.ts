@@ -9,6 +9,8 @@ import { waitForBridge } from './webstatus.js'
 import { DEFAULT_SETTINGS, loadSettings } from './settings.js'
 import type { AppSettings } from './settings.js'
 import { bootSplash, splashConfigure } from './splash.js'
+import { rememberBrandMark } from './components/brand.js'
+import { installShortcuts } from './shortcuts.js'
 import { homePrefs } from './pages/board.js'
 import { albumPage } from './pages/detail.js'
 import { readerPage } from './pages/reader.js'
@@ -66,6 +68,11 @@ nav.innerHTML = `
 // 开场闪屏（写死在 index.html 里那块）交给它接管，顺手把导航里的字标落点放好。
 // 得等导航铺完再调 —— 落点先存在，字标才知道往哪飞。
 bootSplash()
+// 字标的路径数据只在闪屏那份 SVG 里，揭幕时整层会被 remove() —— 赶在那之前抄一份进内存，
+// 之后空状态要用字标就有得取（brand.ts）
+rememberBrandMark()
+// 快捷键面板（`?` 唤出）+ 防社死（`P` 盖住画面）：全站一份，装在捕获阶段
+installShortcuts()
 
 const navInner = nav.querySelector<HTMLElement>('.nav-links')!
 const navFootRow = nav.querySelector<HTMLElement>('.nav-foot-row')!

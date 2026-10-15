@@ -56,11 +56,14 @@ export function aboutPage(): HTMLElement {
         <span><kbd>空格</kbd>下一页</span>
         <span><kbd>Home</kbd><kbd>End</kbd>最前 / 最后</span>
         <span><kbd>M</kbd>唤出阅读工具条</span>
+        <span><kbd>?</kbd>唤出快捷键面板</span>
+        <span><kbd>P</kbd>一键防社死</span>
         <span><kbd>Esc</kbd>收面板 / 返回</span>
       </div>
       <p class="about-text">
         阅读时工具条默认藏着，鼠标晃一下才出来；点屏幕中间收放工具条，点左右两侧翻页（设置里能关），
         最上面那条细线是这一话的进度。阅读模式、图片宽度这些在工具条里的<b>设置</b>浮层改。
+        <b>手机上</b>对应的手势：左右滑翻页，中间双击放大 / 还原，从左右边缘横滑切上下一话。
       </p>
     </section>
 

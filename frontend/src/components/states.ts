@@ -1,24 +1,50 @@
 // 列表和详情页共用的几种状态：空空如也、加载中、出错
+import { brandMark } from './brand.js'
 
 export interface EmptyOptions {
   icon?: string
-  avatar?: boolean   // 用项目头像当插图，别给 emoji
+  avatar?: boolean   // 要插图（品牌字标），别给 emoji
   title: string
   hint?: string
   actionLabel?: string
   onAction?: () => void
 }
 
-/** 空状态：图标 + 标题 + 说明 + 可选按钮，文字一律走 textContent，免得拼串被转义坑到 */
+/**
+ * 空状态：插图 + 标题 + 说明 + 可选按钮，文字一律走 textContent，免得拼串被转义坑到。
+ *
+ * 插图三档（2026-10-15）：给了 icon 就用那枚 emoji（⚠️ / 🔍 这类有含义的照样留着）；
+ * 否则用品牌「孤竹」字标（`avatar: true` 与默认都是它）；字标取不到（老 index.html
+ * 没有闪屏 SVG）才退回那张方头像 / 📭 —— 视觉上始终有东西，不会留白。
+ */
 export function renderEmpty(container: HTMLElement, opts: EmptyOptions): void {
   container.innerHTML = `
     <div class="empty-state">
-      ${opts.avatar ? '<img class="empty-avatar" src="/apple-touch-icon.png" alt="" />' : `<div class="empty-icon">${opts.icon ?? '📭'}</div>`}
+      <div class="empty-art"></div>
       <p class="empty-title"></p>
       <p class="empty-sub"></p>
       <button type="button" class="empty-action"></button>
     </div>
   `
+  const art = container.querySelector<HTMLElement>('.empty-art')!
+  if (opts.icon) {
+    const box = document.createElement('div')
+    box.className = 'empty-icon'
+    box.textContent = opts.icon
+    art.appendChild(box)
+  } else {
+    const mark = brandMark(172)
+    if (mark) {
+      mark.classList.add('empty-mark')
+      art.appendChild(mark)
+    } else {
+      const img = document.createElement('img')
+      img.className = 'empty-avatar'
+      img.src = '/apple-touch-icon.png'
+      img.alt = ''
+      art.appendChild(img)
+    }
+  }
   container.querySelector('.empty-title')!.textContent = opts.title
 
   const sub = container.querySelector<HTMLElement>('.empty-sub')!

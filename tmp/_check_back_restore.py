@@ -96,7 +96,16 @@ setTimeout(function () {
       input.value = '测试';
       click('#search-btn', '搜索按钮');
     },
-    function () { note('cardsAfterSearch=' + searchCards()); window.scrollTo(0, 500); note('searchScroll=' + y()); },
+    function () {
+      // 搜索页现在把结果折起来（先铺 12 张）：这一支要验"返回还原滚动位置"，得先展开把页面撑高，
+      // 否则 12 张卡撑不到 500px、浏览器把滚动位置夹回 0（那是页面短，不是还原坏了）。
+      note('foldedCards=' + searchCards());
+      var more = document.querySelector('.search-more');
+      if (more) more.click();
+      note('cardsAfterSearch=' + searchCards());
+      window.scrollTo(0, 500);
+      note('searchScroll=' + y());
+    },
     function () { click('.search-page album-card', '第一张结果'); note('hashAfterCard=' + location.hash); },
     function () { click('.back-btn', '详情返回'); },
     function () { }, function () { }, function () {
@@ -239,9 +248,13 @@ def main():
     q = urllib.parse.quote("测试")
     expect = [
         ("搜完地址带关键词", (fields.get("hashSearch") or "") == "#/search"),
-        ("结果铺出来了（20 张）", fields.get("cardsAfterSearch") == "20"),
+        # 假桥给 20 部：搜索页会先折成 12 张（折叠本身见 _check_search_fold.py），探针顺手点了展开，
+        # 所以这里仍然按 20 张算 —— 这一支要验的是"返回后列表与滚动位置都还在"
+        ("结果先折成 12 张", fields.get("foldedCards") == "12"),
+        ("展开后铺出 20 张", fields.get("cardsAfterSearch") == "20"),
         ("返回落回那次搜索", (fields.get("hashAfterBack") or "") == "#/search?q=" + q),
-        ("返回后结果还在", fields.get("cardsAfterBack") == "20"),
+        # 返回是"按地址栏重搜一遍"，折叠也重新来一遍 —— 它本来就不记忆"展开过"
+        ("返回后结果还在（重新搜一遍，仍是折叠态 12 张）", fields.get("cardsAfterBack") == "12"),
         ("返回后滚动位置也回来了", near("scrollAfterBack", 500)),
         ("点导航进新页面回到顶部（不是接着上一页的位置）", near("scrollAfterNav", 0, 4)),
         ("再从新页面退回搜索页也会还原", near("scrollAfterBack2", 500)),

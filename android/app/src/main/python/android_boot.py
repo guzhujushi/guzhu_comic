@@ -16,6 +16,7 @@ Kotlin 侧的调用顺序（`android/app/src/main/java/cn/guzhujushi/comic/MainA
     同一个服务、同一份前端，桌面怎么调的这里照着调（那边是那份口径的出处）。
 """
 import os
+import threading
 from urllib.parse import quote
 
 # 这次开窗的 API（挂在服务的 /api 上；模块级引用，别让它在页面加载前被回收）
@@ -31,6 +32,11 @@ def start(app_dir: str, dist_dir: str) -> str:
     import `backend` 之前**写进环境变量：`backend.paths` 是在 import 期就把 APP_DIR / dist_dir
     算死的（模块级常量，全项目都直接读），晚一步就赶不上。
 
+    热更的兜底（2026-10-15 第三轮补）：`review_boot()` / `mark_boot()` / 看门狗三件套与桌面
+    `main.py` 同一套口径 —— 上次那份热更前端要是没起来，这次开窗前先撤掉；这次用的覆盖层要等
+    前端报到，30 秒没报到就记一笔，下次开窗自动退回上一版。**安卓上原来没有这一声**，热更下来的
+    前端一旦白屏，用户只能清数据。
+
     P0（2026-10-15）之后这里也多了一件事：**把 `API` 建出来**。安卓上没有 pywebview，桥只能走
     `POST /api`（`backend/bridge.py`），所以 token 由这边生成、拼在 URL 上交给页面 —— 桌面
     `main.py._wire_bridge` 是同一套口径（那边是这份口径的出处，改两边一起改）。
@@ -40,13 +46,19 @@ def start(app_dir: str, dist_dir: str) -> str:
     os.environ["GUZHU_APP_DIR"] = app_dir
     os.environ["GUZHU_DIST_DIR"] = dist_dir
 
-    from backend import bridge, logging_setup, paths
+    from backend import bridge, logging_setup, paths, updater
     from backend.api import API
     from backend.config import load_config
     from backend.server import DEFAULT_PORT, start_static_server
 
     log_path = logging_setup.setup()
     config = load_config()
+
+    # 热更那份前端上一次"起没起来"：`boot.json` 里写着没起来就现在撤掉，别让这次照样白屏 ——
+    # 桌面上是 `main.py` 的 `updater.review_boot()`，安卓这边原来漏了这一声（2026-10-15 补）。
+    rolled = updater.review_boot()
+    if rolled["note"]:
+        print(f"[update] {rolled['note']}", flush=True)
 
     dist = paths.dist_dir()
     log_path_text = str(log_path) if log_path else "装不上"
@@ -75,6 +87,11 @@ def start(app_dir: str, dist_dir: str) -> str:
     api.img_base = base
     # 留一个模块级引用：API 里挂着下载线程 / 缓存线程，别让它在页面加载前被回收
     _API = api
+    # 前端起来后会自己来报到（`main.ts` 的 `notify_booted`）；30 秒还没等到 = 这份热更前端是坏的，
+    # 下次开窗由上面那句 `review_boot()` 撤掉。与桌面 `main.py` 是同一套口径（那边是出处）。
+    if updater.mark_boot():
+        threading.Thread(target=updater.boot_watchdog, daemon=True, name="boot-watch").start()
+
     url = f"{base}/?t={quote(token, safe='')}"
     print(f"[android] 本地服务已起：{base}（token 已拼进页面地址）", flush=True)
     return url
