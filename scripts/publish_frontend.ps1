@@ -133,7 +133,9 @@ if (-not (Test-Path (Join-Path $Channel '.git'))) {
     throw "clone 失败：$RepoUrl（仓库建了吗？公开的吗？这台机器 ssh 到 code.guzhujushi.cn 通吗？）"
   }
 } else {
-  & git -C $Channel pull --ff-only
+  # 分支上没配 upstream（首次是 clone 空仓库后本地建的 main），所以要写全 origin main ——
+  # 光写 pull 会打一句 "There is no tracking information"，看着像没网，其实什么都没同步
+  & git -C $Channel pull --ff-only origin main
   if ($LASTEXITCODE -ne 0) { Write-Host '  ！pull 没成功（本地分叉或没网），按现状继续' }
 }
 # 空仓库 clone 出来 HEAD 是 unborn（还没提交），rev-parse 会打 fatal；symbolic-ref 照样能报出分支名
