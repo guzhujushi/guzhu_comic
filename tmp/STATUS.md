@@ -14,7 +14,7 @@
 | 桌面·源码态 | `.venv\Scripts\python.exe main.py`（要 vite 跑在 5173） | 可用；这条路桥走 `js_api` |
 | 桌面·打包态 | `scripts\build_exe.ps1` | 已出 0.1.0 / 0.1.1（GitHub release）；页面走本地静态服务 + `?t=`，桥是 `POST /api` |
 | 安卓 APK | `scripts\build_android.ps1 :app:assembleFullRelease` | **签名版 35.4 MB**；x86_64 模拟器上跑通全部页面与真图 |
-| 前端热更 | `scripts\publish_frontend.ps1 -Push` | 通道 `code.guzhujushi.cn/.../web`，最新构建号 `20261015-1850-2c9ba73` |
+| 前端热更 | `scripts\publish_frontend.ps1 -Push` | 通道 `code.guzhujushi.cn/.../web`，最新构建号 `20261015-2303-a7a5526`（第三轮这批已推） |
 
 技术栈、版本线、数据目录、坑清单、怎么验 —— 全在 `tmp/现状与技术栈.md`。
 
