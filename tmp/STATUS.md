@@ -13,7 +13,7 @@
 |---|---|---|
 | 桌面·源码态 | `.venv\Scripts\python.exe main.py`（要 vite 跑在 5173） | 可用；这条路桥走 `js_api` |
 | 桌面·打包态 | `scripts\build_exe.ps1` | **已发 0.1.0 / 0.1.1 / 0.1.2（GitHub release）**；页面走本地静态服务 + `?t=`，桥是 `POST /api`；0.1.2 包内那份 dist 与热更通道上的**逐文件一致** |
-| 安卓 APK | `scripts\build_android.ps1 :app:assembleFullRelease` | **签名版 35.4 MB**；x86_64 模拟器上跑通全部页面与真图 |
+| 安卓 APK | `scripts\build_android.ps1 :app:assembleFullRelease` | **签名版 35.4 MB**；x86_64 模拟器上跑通全部页面与真图。**版本仍是 0.1.1**（2026-10-15 19:11 那个包，出厂前端冻的是 `20261015-1850-2c9ba73`）—— **0.1.2 是桌面版号，手机不会有**；手机上更新只走前端热更，怎么看/怎么升见 `tmp/安卓真机连接与调试操作手册.md` §8 |
 | 前端热更 | `scripts\publish_frontend.ps1 -Push` | 通道 `code.guzhujushi.cn/.../web`，最新构建号 `20261015-2314-26fa005`（第三轮这批 + 手机侧那颗「遮罩」按钮，2026-10-15 推） |
 
 技术栈、版本线、数据目录、坑清单、怎么验 —— 全在 `tmp/现状与技术栈.md`。
