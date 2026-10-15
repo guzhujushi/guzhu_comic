@@ -1,0 +1,20 @@
+{
+  "sha256": "0197395c741ca0f0c769ca99110f46f1aafbeb3a21bbe9d6275a88d7bdced2ae",
+  "stats": {
+    "malicious": 1,
+    "suspicious": 0,
+    "undetected": 65,
+    "harmless": 0,
+    "timeout": 1,
+    "confirmed-timeout": 0,
+    "failure": 1,
+    "type-unsupported": 7
+  },
+  "hits": [
+    [
+      "Zillya",
+      "Trojan.Blank.Script.2228",
+      "malicious"
+    ]
+  ]
+}

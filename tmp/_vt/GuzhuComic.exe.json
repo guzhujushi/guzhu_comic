@@ -1,5 +1,5 @@
 {
-  "sha256": "f9f472feff4be9588ce70ec6e879203547d2d6162ce422f047ea331e88982abf",
+  "sha256": "c6b3ca1bbbd93d8f435185b13cad819f3c4f241f8ed3e06c6959de8db44275d3",
   "stats": {
     "malicious": 3,
     "suspicious": 0,
@@ -17,13 +17,13 @@
       "malicious"
     ],
     [
-      "Skyhigh",
-      "BehavesLike.Win64.Backdoor.vc",
+      "Cylance",
+      "Unsafe",
       "malicious"
     ],
     [
-      "Zillya",
-      "Trojan.Blank.Script.2228",
+      "Skyhigh",
+      "BehavesLike.Win64.Backdoor.vc",
       "malicious"
     ]
   ]
