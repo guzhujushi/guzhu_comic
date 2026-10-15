@@ -86,6 +86,9 @@
    顺带核实到一条能**下调 T2 风险**的：`jmcomic 2.7.9` 与 `commonx 0.6.40` 在 PyPI 上都是 `py3-none-any` **纯 Python wheel** → Chaquopy 的「只装 wheel」这道闸对它们不构成障碍；
    **还没跑过构建**（PC 上没有 Android Studio / SDK，`local.properties` 留给 AS 首开生成），P1 依赖 spike 仍未开始。
  - [x] **安卓 P2：壳 → Chaquopy → 本地静态服务 → WebView**（2026-10-15 完成、模拟器实测）：`backend/paths.py` 加安卓分支、新增 `android/app/src/main/python/android_boot.py`、`MainActivity.kt` 起 Python + 解 assets + 起服务 + `loadUrl`、自检页改写并更正版本线；**真前端已在安卓 WebView 里渲染出来**（截图 `tmp/_ui/p2-*.png`），触屏导航与返回键链路（T7）通。详见下面「安卓 P2」一节。
+- [x] **P0 的桌面回归：查出来并修掉（2026-10-15 夜）** —— 打包态桌面在 P0 之后**整页无数据**（页面上一条「pywebview 桥就没绪」），
+  而设备端 / 无头 Chrome / 30 支检查**全都没抓到**：`bridge.ts` 曾按「原生桥在不在」判桥，而桌面壳没挂 `js_api` 时 pywebview 也会先注入一个**空**的 `window.pywebview.api`。
+  修法 = `?t=` 优先 + 垫片抗重注入（详见「下一步 0.7」）；验收脚手架 `tmp/_check_desktop_frozen.ps1` 留下。
 
 ## A / B 组后端补齐（2026-10-14 用户定：**只做 A、B；C 组不做，以后也不做**）
 
@@ -1312,6 +1315,15 @@ Content-Length: 5618
 
 ## 决策记录
 
+- **2026-10-15**：**`?t=`（本地 HTTP 桥）优先于 pywebview 的 `js_api`，不再"看原生桥在不在"** ——
+  pywebview 在 `js_api=None` 时**照样**注入一个空的 `window.pywebview.api`，"它在不在"根本判不出"桥通不通"。
+  曾经的写法（`token && !nativeApi`）把**打包态桌面**判成 native → 垫片不装 → 首页整页无数据，
+  而安卓（没有 pywebview）与源码态 dev（真挂着 `js_api`）都正好是绿的，所以三路验收一路都没抓到。
+  配套三条纪律：垫片**对象引用要稳**（否则被当成重注入）、`pywebviewready` 每响一次**重挂垫片**
+  （`js/api.js` 是整块重写 `window.pywebview`）、**HTTP 档下 `pywebviewready` 不判死在飞调用**（那些调用走 fetch）。
+- **2026-10-15**：**热更通道要立刻重发一版** —— 通道上那份 `20261015-1838-8615249` 正是"桌面冻结态无数据"的
+  P0 版，用户（桌面或手机）点一下「更新」就会把好的前端换成坏的那份。规矩：前端一改就 `publish_frontend.ps1 -Push`。
+
 - **2026-10-15**：**T1 / T1-b / T2 关闭，靠的是「arm64 的包直接装进 x86_64 模拟器」** —— 模拟器自带 ARM 翻译层（`libndk_translation.so`、`abilist=x86_64,arm64-v8a`），`adb install -r` arm64-v8a 的 `full` 包 → Success，10 步依赖探针 1~8 + 10 全绿（原始 logcat `tmp/安卓依赖探针实测.md`）。**不需要真机、不需要 arm64 系统镜像、不需要买设备**；真机只剩 T3~T6 那类"只有真机才算数"的（手感 / 内存 / 保活）。
 - **2026-10-15**：**探针（`guzhu_probe.py`）留在仓库里**，跟着壳走一个开关（`--ez guzhu.probe true`，**不在正常启动路径上**）。它把"装得上 + 连得上"拆成 **10 步逐步记成败与耗时** —— 卡在第 3 步（cffi 的 C ABI）和第 5 步（域名 / 被墙）的退路完全不同，糊成一句"失败了"等于没验。**每次动 pip 列表或依赖版本之后都该重跑一遍**，它比"查资料"可靠。
 - **2026-10-15**：**Chaquopy 的 Pillow 轮子不带 libwebp**（实测 `features.check('webp')=False`，桌面同版本 Pillow 是 `True`），而图源现在发 `.webp`。
@@ -1539,6 +1551,34 @@ Content-Length: 5618
    | **设备端解码器** | 探针第 11 步（emulator-5554） | `num=10`，218,914 B → 307,042 B、**0.4s** |
    | 设备端结果 | 把探针产物拉回电脑逐像素比 | 设备 vs 桌面解扰 **平均每像素差 1.71**（只差一次有损重编）；vs 不解扰的原图 **85.06**；逐条带 1.4~2.1（错位会到 80+）→ **肉眼 + 数值双确认** |
    | 设备端手感 | emulator-5554 真点进阅读器截图 | **整页图正常铺出**（条带顺序正确）；`files/cache/images/<章节>/` 落满真图（292 KB~650 KB/张） |
+
+   0.7 **P0 的桌面回归：被发现并修掉（2026-10-15 夜，本轮真正的收获）** —— 打包态桌面（= `dev.use_dev_server: false`
+   那条路：起本地静态服务、页面地址挂 `?t=`、**不挂 `js_api`**）在 P0 之后**整页无数据**。
+
+   症状：真窗口开起来，UI 骨架在，但首页中部一条红字 **「最火的三部没拉下来：pywebview 桥就没绪：get_ranking」**，
+   封面全是占位、推荐段空着、「继续阅读」不出现 —— 也就是"页面能画、数据一个也取不到"。
+
+   根因：`frontend/src/bridge.ts` 当时写的是 `token && !nativeApi`（有原生桥就优先原生），而
+   **桌面壳即使不挂 `js_api`（`main.py` 冻结态就是 `js_api=None`），pywebview 也会先把 `js/api.js` 那遍注进来** ——
+   `window.pywebview.api` 是个**空对象**：判真、可一个方法都没有。于是冻结态被判成 `native`、HTTP 垫片根本不装，
+   页面每次调用都撞"桥没就绪"。**安卓没有 pywebview，所以这条只在桌面暴露** —— 这正是设备端一路全绿、
+   桌面却整页空着的原因。
+
+   修法（`bridge.ts` + `webstatus.ts`）：
+   - `bridgeMode` 改成 **`?t=` 优先**（`token ? 'http' : nativeApi ? 'native' : 'none'`）；
+   - 垫片**只造一次**（对象引用必须稳定，否则 `webstatus` 会把它当成"又注入了一遍"，反复重置启动闸门）；
+   - `js/api.js` 每注一遍都是**整块重写** `window.pywebview`，会把垫片冲掉 → **监听 `pywebviewready`，每响一次重挂一次**；
+   - `webstatus.ts`：垫片那一档（`bridgeMode !== 'native'`）**不再把在飞调用判死** —— 那些调用走 `fetch`，
+     回调压根不在 pywebview 那儿，判死纯属误伤（写调用还得白白丢一次）。
+
+   验收：`tmp/_check_desktop_frozen.ps1`（新增：真窗口 + PrintWindow 截图 + 本次新写的日志 + 端口监听，
+   `try/finally` 保证还原 `config.yaml` 与 adb 转发）——
+   同一支脚本**修前**抓到的就是那张「桥没就绪」的图，**修后**同一位置是**真轮播 / 真「热门推荐」/ 真「继续阅读」**；
+   `tmp/_runchecks.py` 30/30 通过、`tsc` 零错、`frontend/dist` 重新构建。
+
+   ⚠️ **为什么之前三路验收全没抓到**：设备端没有 pywebview；无头 Chrome 那路用的是**注入的假桥**；
+   `tmp/_runchecks.py` 跑的全是 Python 侧 —— **没有一路真的开过"桌面冻结态"的窗口**。
+   这条缺口现在由 `_check_desktop_frozen.ps1` 补上（它开真窗口、看真截图，得在有桌面的机器上人工跑）。
 
 
 1. 用户真窗口验收（真图源、5173 + `main.py`）：

@@ -192,10 +192,10 @@ powershell -ExecutionPolicy Bypass -File scripts\publish_frontend.ps1
 
 ```text
 guzhu_comic/
-├── main.py                 # 入口：读 config.yaml 开窗，把 API 挂成 js_api
+├── main.py                 # 入口：读 config.yaml 开窗；打包态起本地静态服务（桥 = POST /api），源码态 dev 才挂 js_api
 ├── config.yaml             # 配置（设置页读写）
 ├── backend/
-│   ├── api.py              # 全部 js_api：搜索 / 榜单 / 详情 / 评论 / 章节图 / 下载 / 进度与收藏 / 推荐 / 缓存 / 磁盘与日志 / 更新 / 桌面集成
+│   ├── api.py              # 全部后端方法（打包态经 /api 派发，源码态 dev 走 js_api）：搜索 / 榜单 / 详情 / 评论 / 章节图 / 下载 / 进度与收藏 / 推荐 / 缓存 / 磁盘与日志 / 更新 / 桌面集成
 │   ├── config.py           # config.yaml 读写，缺的键用默认值补齐
 │   ├── settings_spec.py    # 设置项的声明式表（设置页表单 + save_settings 校验都按它来）
 │   ├── paths.py            # 目录常量（APP_DIR / DATA_DIR / CACHE_DIR / WEB_DIR …）
@@ -210,7 +210,7 @@ guzhu_comic/
         ├── main.ts         # 导航 + 路由注册
         ├── router.ts       # hash 路由
         ├── settings.ts     # 前端读配置（进程内缓存一份）
-        ├── webstatus.ts    # 等 pywebview 把桥注入好
+        ├── webstatus.ts    # 等桥就绪：垫片 / 原生两档都能等（`?t=` 时 pywebview 还会重注入，见 bridge.ts）
         ├── prefetch.ts     # 后台预热：列表 -> 详情缓存，详情 / 阅读 -> 章节图
         ├── recommend.ts    # 推荐段（首页第一段 / 搜索页结果下方共用）
         ├── splash.ts       # 开场闪屏：揭幕时机 + 飞进左上角（画面本身内联在 index.html）

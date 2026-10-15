@@ -45,9 +45,14 @@ function noteMount(api: PyApi, method: string): number {
 }
 
 /** 正在飞的桥调用：下一次注入一到，它们的回调就没了 —— 当场判死，别让调用方干等 */
+import { bridgeMode } from './bridge'
+
 const inflight = new Set<{ reject: (err: Error) => void }>()
 
 window.addEventListener('pywebviewready', () => {
+  // HTTP 垫片那一档（打包态桌面 / 安卓）：注进来的是**空**的原生桥，我们的调用走 `fetch`，
+  // 回调压根不在 pywebview 那儿 —— 判死纯属误伤（写调用还得白白丢一次，见 bridge.ts）
+  if (bridgeMode !== 'native') return
   const err = new Error('pywebview 又注入了一遍：这次调用的回调被清掉了')
   for (const entry of [...inflight]) entry.reject(err)
   inflight.clear()

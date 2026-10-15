@@ -80,13 +80,37 @@ function makeApi(token: string): PyApi {
 const token = pickToken()
 const nativeApi = window.pywebview?.api
 
-/** 这次开窗走的哪条桥：`http`（本地服务）/ `native`（pywebview js_api）/ `none`。排障看它 */
+/**
+ * 这次开窗走的哪条桥：`http`（本地服务）/ `native`（pywebview js_api）/ `none`。排障看它
+ *
+ * **`?t=` 优先，别拿"原生桥在不在"当条件**（2026-10-15 真窗口验收坐实）：桌面壳即使**没挂**
+ * `js_api`（`main.py` 冻结态就是 `js_api=None`），pywebview 也会先把 `js/api.js` 那遍注进来 ——
+ * `window.pywebview.api` 是个**空对象**，判真、可一个方法都没有。这里早先写的是
+ * `token && !nativeApi`，于是打包态桌面被判成 `native`、垫片根本不装 → 首页整片
+ * 「pywebview 桥没就绪」。安卓那边没有 pywebview，所以这条缺陷只在桌面暴露。
+ */
 export const bridgeMode: 'http' | 'native' | 'none' =
-  token && !nativeApi ? 'http' : nativeApi ? 'native' : 'none'
+  token ? 'http' : nativeApi ? 'native' : 'none'
+
+/** 垫片本体：**只造一次**，重复挂同一个对象 —— 引用变了 webstatus 会当成"又注入了一遍" */
+const httpShim = token ? { api: makeApi(token) } : null
+
+/**
+ * 把垫片挂上 `window.pywebview`。要挂**不止一次**：pywebview 启动那几百毫秒里会注两遍，
+ * 而 `js/api.js` 每次都是**整块重写** `window.pywebview`（见 webstatus.ts 开头那段），
+ * 我们这份会被它冲掉；好在那两遍注完都会派发 `pywebviewready`，所以监听它、每响一次重挂一次。
+ */
+function installHttpShim(): void {
+  if (httpShim) window.pywebview = httpShim
+}
 
 if (bridgeMode === 'http') {
-  window.pywebview = { api: makeApi(token as string) }
+  installHttpShim()
   console.log(`[bridge] 本地 HTTP 桥已就位（POST ${RPC_PATH}）`)
+  window.addEventListener('pywebviewready', () => {
+    installHttpShim()
+    console.log('[bridge] pywebview 又注了一遍：垫片已重挂')
+  })
 } else if (bridgeMode === 'none') {
   console.warn('[bridge] 地址上没有 ?t=，也没有原生桥：用启动日志里那条带 ?t= 的地址打开')
 }

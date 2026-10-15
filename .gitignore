@@ -34,6 +34,9 @@ tmp/_exe/
 tmp/_exe_verify/
 tmp/_exe_fp/
 tmp/_exe_hu/
+# 检查脚本的沙箱用户目录（tmp/_check_http_bridge.py 跑一次就落一份）
+tmp/_p0app/
+tmp/_pcapp/
 # 前端热更产物（scripts/publish_frontend.ps1 的输出：整包 + manifest，往更新地址上传）
 web_dist_out/
 
