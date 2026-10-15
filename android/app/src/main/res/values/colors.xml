@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- 桌面开窗底色（main.py 传的就是它，见 tmp/开场动画设计.md §3.4） -->
+    <color name="splash_background">#FF07080A</color>
+    <color name="ic_launcher_background">#FF16171C</color>
+</resources>

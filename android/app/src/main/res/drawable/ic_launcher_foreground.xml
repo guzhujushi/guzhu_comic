@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 占位图标（P5 再定正式的） -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <path
+        android:fillColor="#FFE7E9EE"
+        android:pathData="M34,30 L52,30 A6,6 0 0 1 58,36 L58,76 A6,6 0 0 1 52,82 L34,82 Z" />
+    <path
+        android:fillColor="#FF8A909E"
+        android:pathData="M58,30 L74,30 A6,6 0 0 1 80,36 L80,76 A6,6 0 0 1 74,82 L58,82 Z" />
+</vector>

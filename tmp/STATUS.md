@@ -71,14 +71,20 @@
   卡点三件：**Android 生命周期**（全项目建立在"窗口在 = 进程活"上）/ **桥**（js_api 54 个方法在安卓 WebView 上要换通道）/ **触屏 UI**（hover 显形 + 键盘 + 208px 固定左栏）；
   非技术风险最高：**Play 上不了架 + 国内 APP 备案**；
   建议第一步 P0（1~2 人天、**不用安卓机器**）：把 js_api 换成本地 **HTTP JSON-RPC + token** —— 桌面一起切，手机浏览器当场就能试这套 UI
-- [x] 安卓端**技术栈调研**（`tmp/安卓端技术栈调研.md`，2026-10-14）：定案 = **Chaquopy 17.1.0（CPython 3.14，MIT）+ AndroidX WebView + 本地 HTTP JSON-RPC**；
-  minSdk 26 / compileSdk 36 / targetSdk 36 / 只出 arm64-v8a；后台下载走**前台服务 `dataSync`**；壳用 Kotlin；构建 AGP 8.13.x + `buildPython` 指向仓库 `.venv`（3.14.6）；
+- [x] 安卓端**技术栈调研**（`tmp/安卓端技术栈调研.md`，2026-10-14）：定案 = **Chaquopy 17.1.0（CPython 3.14，MIT）+ AndroidX WebView + 本地 HTTP JSON-RPC**（**2026-10-15 更正：Python 改为 3.13、构建线改为 AGP 9.4.0 + Gradle 9.8.1**，见下面「安卓工作区落地 + 构建环境实测」一节）；
+  minSdk 26 / compileSdk 36 / targetSdk 36 / 只出 arm64-v8a；后台下载走**前台服务 `dataSync`**；壳用 Kotlin；构建 AGP 8.13.x + `buildPython` 指向仓库 `.venv`（3.14.6）**（2026-10-15 更正：实跑后改为 AGP 9.4.0 + Gradle 9.8.1 + Python 3.13）**；
   **本机解包实测**：curl_cffi 安卓轮子里的 `_wrapper.abi3.so` 22.9 MB（libcurl-impersonate 静态链进去）、PT_LOAD 按 **16 KB 对齐**（Android 15+ 能加载）、要的 `libpython3.14.so` 由 Chaquopy 运行时提供（已从 Maven Central 下载核对）；
   **新发现的硬约束**：Android 15 起 `dataSync` 前台服务 **24 小时内累计上限 6 小时**，超时回调 `onTimeout()` → 整本下载必须优雅收尾 + 靠断点续传接着下（现有设计正好扛得住）
  - [ ] 安卓**真机与 USB 连接现状**（2026-10-15 实测，见 `tmp/安卓真机连接与调试操作手册.md`）：本机现在插着的是 **HUAWEI Mate 80 Pro（`SGT-AL50`）**，Host 侧只报 `HDC Device`（华为 `hdc`、不是 ADB），注册表里它的 USB 历史只有 MTP + Mass Storage、**从没出现过 ADB 接口**；
   **Mate 80 全系（2025-11-25 上市）是 HarmonyOS 6**，鸿蒙 5 / NEXT 起不兼容 Android 应用 → **这台装不了我们的 APK，不能当测试机**（旁证：MTP 根目录只有 `HO_DATA_EXT_MISC` / `图库` 那套，没有 `Android/`）；
   PC 历史里唯一枚举成 `ADB Device` 的是 **iFlytek EBook R2**（Rockchip，arm64，墨水屏，2026-07-22）→ 只够验 T1 总闸。
+  **2026-10-15 复核（USB 调试已开）**：设备 PID 由 `107E` 变 `1101`、接口由 2 个变 3 个，但 `MI_00` 的 `CompatibleIds` 是 **`Class_ff&SubClass_50&Prot_01`**（华为私有 HDC）—— **ADB 是 `ff/42/01`**。所以 `adb devices` 空是**必然**，不是驱动/配置问题，没有可修的地方（见手册 §1-A2）。
   **卡在用户这一句**：另一台手机是什么型号 / 系统、能不能装 APK —— 这是 P1 开工前的硬前置条件。
+ - [x] **安卓工作区 `android/`**（2026-10-15 建，入口说明见 `android/README.md`）：Gradle 工程骨架 + 壳（Kotlin + AndroidX WebView + 返回键）+ Chaquopy 17.1.0 配置 + 只放行 `127.0.0.1` 的明文策略 + 占位图标与壳自检页；
+   **文件迁移**走 `scripts/sync_android.ps1`（`backend/` → `app/src/main/python/backend/`、`frontend/dist` → `app/src/main/assets/web/`，两处都是生成物、都已 gitignore），已跑通一次（12 + 6 个文件）；
+   构建文件的版本号都是**现查现核**：~~AGP **8.13.2**（它要求 Gradle ≥ 8.13 —— 从 AGP 包里的 `GRADLE_MIN_VERSION` 挖出来的）+ Gradle **8.14.6**（wrapper jar 取自 gradle/gradle v8.14.6）+ Kotlin **2.3.21** + Chaquopy **17.1.0**~~ → **2026-10-15 实跑后全部上调：AGP 9.4.0 + Gradle 9.8.1 + Chaquopy 17.1.0，Kotlin 插件摘除**（细节见「安卓工作区落地 + 构建环境实测」一节）；
+   顺带核实到一条能**下调 T2 风险**的：`jmcomic 2.7.9` 与 `commonx 0.6.40` 在 PyPI 上都是 `py3-none-any` **纯 Python wheel** → Chaquopy 的「只装 wheel」这道闸对它们不构成障碍；
+   **还没跑过构建**（PC 上没有 Android Studio / SDK，`local.properties` 留给 AS 首开生成），P1 依赖 spike 仍未开始。
 
 ## A / B 组后端补齐（2026-10-14 用户定：**只做 A、B；C 组不做，以后也不做**）
 
@@ -1107,7 +1113,59 @@ A / B 组后端补齐 + 前端热更新通道（§「A / B 组后端补齐」「
 - **要改的部分**：后端 `main.py` 重写 + `server.py` 挂 `/api`（+ 随机 token）+ `paths.py` 注入 app 私有目录 + `desktop.py` 拆平台门面（安卓侧用 Chaquopy 的 `java` 模块）+ `settings_spec` 加平台属性；前端加桥垫片（51 处 `window.pywebview` 引用可不动）+ `style.css` 触屏布局 + `reader.ts` 懒加载。
 - **没想清楚就不能开工的一条**：内容合规（Play 上不了架 + 国内 APP 备案）。
 
+## 安卓工作区落地 + 构建环境实测（2026-10-15）
+
+> 本轮用户指示**已从"只调研"转为动手**：`android/` 工作区建好、文件迁移跑通、构建试跑。
+
+**做了的事**
+
+- 工作区 `android/` 已建（Gradle 工程 + Kotlin 壳 + Chaquopy 配置），文件迁移脚本 `scripts/sync_android.ps1` 跑通；细节见 `android/README.md` 与 `tmp/安卓端技术栈调研.md` §3。
+- `gradlew help` → **BUILD SUCCESSFUL**（AGP 9.4.0 + Gradle 9.8.1 + Chaquopy 17.1.0 都能加载）。
+- `:app:assembleDebug` → **失败两次，都已定位**：① Kotlin 插件冲突（AGP 9 起 Kotlin 内置）→ 摘掉插件；② Chaquopy 的 pip 阶段 —— `curl-cffi` 的安卓轮子**下载成功**（PyPI 这条路是通的），但 **`pillow` 报 `from versions: none`**（当时构建机 Python 是仓库 `.venv` 的 3.14.6）。
+
+**结论（本机实测 + 联网逐包核过，不是推测）**
+
+- **版本线被迫上调**：Android Studio（`D:\Andriod Studio`，目录名就是 `Andriod`）自带 **JBR 25.0.3**（旧文档写 21 **已过期**），系统 JDK 是 **26.0.1**。Java 25 要求 **Gradle ≥ 9.1**，AGP 9.4 又要求 **Gradle ≥ 9.6** → **AGP 9.4.0 + Gradle 9.8.1**，原定的 8.13.2 / 8.14.6 **在这台机器上跑不起来**。**Kotlin 插件不挂**（AGP 9 内置）。
+- **Python 必须 3.13，本机没有**：Chaquopy 的轮子仓库只有 **`chaquo.com/pypi-13.1`** 一个（`pypi-12.0` / `13.0` / `14.0` / `15.0` / `16.0` / `17.0` / `pypi` 全 404），其中 `cffi` / `pillow` / `pycryptodome` / `pyyaml` 的 arm64 轮子**只到 cp313，没有 cp314** → 3.14 一个原生轮子都拿不到。
+- **cffi 是硬堵点**：`curl_cffi` **0.15.0 起每一版**都声明 `cffi>=2.0.0`（逐版本查 PyPI metadata 核过；且 0.14 及以前**没有安卓轮子**，所以"降版本躲开"这条退路不存在），而**安卓上不存在 cffi 2.x 轮子**（Chaquopy 仓库到 1.17.1 封顶，PyPI 全系 0 个安卓轮子）。绕法只有「**`--no-deps` + 锁 `cffi==1.17.1`**」（已在 `app/build.gradle.kts` 里落地、`pip --dry-run` 验过能解析）。**代价**：`cffi 1.17.1` 与 `curl_cffi 0.16.3` 的 **C ABI 兼容性未验** → 这是 T1 剩下的唯一未知，只能真机撞一次（新编号 **T1-b**）。
+
+**续：跑通了（2026-10-15 晚）**
+
+1. 装了 **Python 3.13.15**（`winget install Python.Python.3.13` → `%LOCALAPPDATA%\Programs\Python\Python313\python.exe`），接进 `android/gradle.properties` 的 `guzhu.buildPython`。
+2. 重跑构建又撞一步：`checkDebugAarMetadata` 报 `androidx.core:core:1.19.1` / `core-ktx:1.19.1` **要求 compileSdk ≥ 37** → `compileSdk` **36 → 37**（`targetSdk` 仍 36）。
+3. **`:app:assembleDebug` → BUILD SUCCESSFUL（1m06s），产出 `app-debug.apk` = 35.71 MB**。8 个依赖全部拿到 cp313 的 arm64 轮子（`certifi / cffi 1.17.1 / commonx / curl-cffi 0.16.3 / jmcomic / pillow 11.0.0 / pycryptodome 3.21.0 / pyyaml`）。
+4. **APK 内容拆开核对过**：`curl_cffi/_wrapper.abi3.so` 24.0 MB、`curl_cffi.libs/libc++_shared-*.so` 1.96 MB、`_cffi_backend.so` 193 KB、`PIL/_imaging.so`、`Crypto/…`、`yaml/_yaml.so`、`libpython3.13.so` 5.42 MB **全都在**。
+5. **T1-b 那个悬着的 cffi ABI 风险，已经用实验大幅下调**：Windows 上拿**同一组版本**（cffi 1.17.1 + curl_cffi 0.16.3）实测 —— `import curl_cffi` 成功，且 `impersonate="chrome"` 的 HTTPS 请求返回 **200 / 51,998 字节**。**FFI 调用路径 + TLS 指纹路径都跑通了**，剩下只差平台差异。
+6. 新增构建入口 **`scripts/build_android.ps1`**（把 `JAVA_HOME` 指到 AS 自带的 JBR 25 再跑 `gradlew`，绕开系统那个 JDK 26）。
+
+**模拟器调研（2026-10-15，为「没有测试机」找路）**
+
+- **arm64 系统镜像其实有**（改正旧口径）：到 **API 34** 都有，**只有 API 35/36/37 没有**；本机 emulator 37.2.12.0 **自带 `qemu-system-aarch64.exe`** → arm64 镜像在 x86 PC 上跑得起来，但**是全软件模拟**。
+- **x86_64 镜像对我们没用**：`curl_cffi` / `cffi` 都没有 x86_64 安卓轮子，pip 阶段就失败。
+- 所以模拟器**只能验 T1 / T1-b / T2 那几道一次性结论**；T3~T7（长图 / 内存 / 后台下载 / 手势）在模拟器上测出来没有意义。
+- **iPhone 完全不可用**（另一套系统，零复用）。
+
+**现在只卡一条**
+
+- **没有能装 APK 的测试机**：手上两台（Mate 80 Pro = HarmonyOS 6、无 ADB 端点；另一台 iPhone）都不行。三条路：① **便宜的二手 arm64 安卓机**（最省事，T1~T7 一次到位）；② **arm64 模拟器（API 33/34）只撞 T1**；③ **改走 R1 瘦客户端**（后端留 PC）—— 那样 x86_64 模拟器就够用，整类难题消失。
+
+
 ## 决策记录
+- **2026-10-15**：**`compileSdk` 36 → 37**（`targetSdk` 仍 36）。依据：`androidx.core:core:1.19.1` / `core-ktx:1.19.1` 在 `checkDebugAarMetadata` 里硬性要求 compileSdk ≥ 37。`compileSdk` 只影响「能编到哪些 API」，不改运行时行为，也不动 Play 的 targetSdk 门槛。
+- **2026-10-15**：**T1-b（cffi ABI）风险大幅下调** —— 在 **Windows 上用同一组版本**（`cffi 1.17.1` + `curl_cffi 0.16.3`）实测：`import curl_cffi` 成功，且 `impersonate="chrome"` 的 HTTPS 请求返回 **200**。**FFI 调用路径与 TLS 指纹路径都跑通了** → 平台上挂掉的概率很低，真机只要补一次确认。
+- **2026-10-15**：**`:app:assembleDebug` BUILD SUCCESSFUL**，APK **35.71 MB**（依赖已拆包核对，`curl_cffi/_wrapper.abi3.so` 24.0 MB、`_cffi_backend.so`、`libc++_shared.so`、`libpython3.13.so` 全在）。构建入口固定为 **`scripts/build_android.ps1`**（负责把 `JAVA_HOME` 指到 AS 自带的 JBR 25，绕开系统那个 JDK 26）。
+- **2026-10-15**（**更正**）：原来写「模拟器顶不上 / sdkmanager 里没有任何 arm64 镜像」——**不准确**。arm64 系统镜像一直到 **API 34** 都有（**只有 API 35 / 36 / 37 没有**），本机 emulator（37.2.12.0）也**自带 `qemu-system-aarch64.exe`**。准确的结论是：**x86_64 镜像装不上依赖**（`curl_cffi` / `cffi` 都没有 x86_64 安卓轮子），**arm64 镜像能跑但是全软件模拟** → 模拟器够验 **T1 / T1-b / T2**，验不了 T3~T7（长图 / 内存 / 后台下载 / 手感）。
+- **2026-10-15**：**iPhone 不当安卓测试机**（另一套系统，代码零复用）→ 现有两台手机**都当不了测试机**，**测试设备是唯一的阻塞项**。
+
+- **2026-10-15**（**更正** 下面那条同日记录）：构建版本线**从 AGP 8.13.2 / Gradle 8.14.6 改判为 AGP 9.4.0 / Gradle 9.8.1**，并且**不再挂 Kotlin 插件**。理由全是硬约束不是偏好：本机 Android Studio（`D:\Andriod Studio`）自带的 JBR 是 **Java 25.0.3**（旧口径写的 21 已过期），**Java 25 要求 Gradle ≥ 9.1**、**AGP 9.4 要求 Gradle ≥ 9.6** → 8.x 版本线在这台机器上跑不起来；**AGP 9 起 Kotlin 内置**，显式再挂 `org.jetbrains.kotlin.android` 会硬失败（本轮 `assembleDebug` 实测踩到）。
+- **2026-10-15**：安卓侧**构建机 Python 定为 3.13**（原定仓库 `.venv` 的 3.14.6 作废）。依据：Chaquopy 的轮子仓库 `chaquo.com/pypi-13.1`（唯一一个）里 `cffi` / `pillow` / `pycryptodome` / `pyyaml` 的 arm64 轮子**只到 cp313**，3.14 在 pip 阶段就装不上（已实跑撞到 `pillow … from versions: none`）。**本机尚未装 3.13，这是当前第一号待办。**
+- **2026-10-15**：`curl_cffi` 的依赖走 **`--no-deps` + 显式锁版本**（`curl-cffi==0.16.3` / `cffi==1.17.1` / `pillow==11.0.0` / `pycryptodome==3.21.0` / `pyyaml==6.0.3` / `jmcomic==2.7.9` / `commonx==0.6.40`）。依据：`curl_cffi` 0.15.0 起每一版都声明 `cffi>=2.0.0`，而**安卓上不存在 cffi 2.x 轮子**；`curl_cffi` 0.14 及以前又**没有安卓轮子** —— 这是唯一可行组合。**风险入册**：C ABI 兼容性未验，真机 `import curl_cffi` 才能定论（新编号 **T1-b**）。
+- **2026-10-15**：**USB 调试开着也照样没有 ADB 端点** —— 华为 Mate 80 Pro 开调试后 PID 由 `107E` 变 `1101`、接口由 2 个变 3 个，但 `MI_00` 是 **`HDC Interface`**，`CompatibleIds` = `USB\COMPAT_VID_12d1&Class_ff&SubClass_50&Prot_01` —— **ADB 的接口类是 `ff/42/01`，这里是 `ff/50/01`**。所以 `adb devices` 只输出一行 `List of devices attached` 是必然结果，**不是驱动问题、不是配置问题、没有可修的地方**。同机排除项：`adb kill-server/start-server` 后仍空；`adb version` = 1.0.41（37.0.1-15733141）正常。
+
+- **2026-10-15**：安卓工作区建在**同一仓库的 `android/` 子目录**（照 2026-10-14 定的口径），不另建仓库；`backend/` 与 `frontend/dist` 由 `scripts/sync_android.ps1` 同步成工作区里的副本（两处都 gitignore）—— **不**用 Chaquopy 的 `srcDir` 直接指仓库根：那等于把仓库根整个塞进 Python 的 import 根（`node_modules/`、`build_out/` 全在内），而 `backend/*.py` 用的是 `from backend.x import y`，副本目录必须叫 `backend/`。
+- **2026-10-15**（**更正** 2026-10-14 的调研结论）：`tmp/安卓端技术栈调研.md` §1.5 原来写「AGP 9.x 还是 alpha」**已过期** —— 现查 Google Maven，9.x 已到 **9.4.1 正式版**（只有 9.5 还是 alpha），而 Chaquopy 17.1 的支持区间是 AGP 7.3~9.4。**仍然选 8.13.2**（8.x 的最后一个版本）：与调研口径一致、Chaquopy 对 9.x 我们没有实测证据，AGP 9 还是大版本迁移（Gradle 9 / JDK 17 起步）。
+- **2026-10-15**：仓库里的 `.ps1` 一律 **UTF-8 带 BOM + LF** 写（`scripts/build_exe.ps1`、`publish_frontend.ps1` 都是）—— PowerShell 5.1 读无 BOM 的 `.ps1` 会按 ANSI 解，中文当场把脚本撕成语法错误（新的 `sync_android.ps1` 第一次跑就踩到了）。即 AGENTS.md 里「UTF-8 无 BOM」那条实际只适用于 shell 脚本。
+- **2026-10-15**：安卓构建版本线钉死为 **AGP 8.13.2 / Gradle 8.14.6 / Kotlin 2.3.21 / Chaquopy 17.1.0（CPython 3.14，构建机用仓库 `.venv`）/ minSdk 26 / compileSdk·targetSdk 36 / 只出 arm64-v8a**；`versionName` 与 `backend/version.py` 的 `APP_VERSION` 必须同步（当前都是 `0.1.1`，热更的 `app_min` 比的就是它）。
 - **2026-10-15**：**现在插在 PC 上的那台华为 Mate 80 Pro 不能当安卓测试机** —— 它是 `HarmonyOS 6`（Mate 80 全系，2025-11-25 上市），而鸿蒙 5 / NEXT 起去掉 Linux 内核、只支持鸿蒙原生应用、**不能原生跑 APK**；Host 侧只报 `HDC Device`（华为 `hdc`，不是 ADB），注册表里这台机器的 USB 历史只有 MTP + Mass Storage，**从没枚举过 ADB 接口**。→ 结论：**「开 USB 调试 → `adb devices`」那套只在能装 APK 的 Android / HarmonyOS 4 机器上成立**；华为鸿蒙 5+ 这条路（`hdc` + 装不了 APK）与我们的需求根本不接。
 - **2026-10-15**：**测试机选型待定**（唯一的阻塞项）：等用户确认第二台手机型号与系统；备选是 **iFlytek EBook R2**（Rockchip arm64 + 历史上开过 ADB）—— 它只要还能装 APK，够验 T1 那道总闸，但墨水屏刷新慢、性能弱，T3~T7（长图 / 内存 / 后台下载 / 手势）在它身上验不出有效结论。操作口径落成独立文档 `tmp/安卓真机连接与调试操作手册.md`（PC 侧装什么 / 手机侧开什么 / 核验命令 / 装包两条路 / 排障表）。
 - **2026-10-15**：再次确认**不需要 sshd、不需要 root、手机上不装任何东西** —— 构建全在 PC，连接只靠 `adb`（USB 或 Android 11+ 自带的无线调试）。
@@ -1229,6 +1287,8 @@ A / B 组后端补齐 + 前端热更新通道（§「A / B 组后端补齐」「
   ③ **依赖 spike（Chaquopy 装 curl_cffi + 直连图源）没过之前，不投入 R2 的工作量**；分发合规（Play / 备案）想不清楚就不开工。
 
 ## 下一步
+0. **安卓线（2026-10-15 收工状态）**：~~① 装 Python 3.13 → 重跑构建~~ **已完成**（APK 35.71 MB 出得来）。**只剩一条：拿到一台能装 APK 的 arm64 设备**（二手安卓机最省事；或 arm64 模拟器 API 33/34 只撞 T1）。设备到了先跑 `adb install` + `import curl_cffi` + 一次图源请求，然后再动 P2（壳接 `127.0.0.1`）。
+
 
 1. 用户真窗口验收（真图源、5173 + `main.py`）：
    - **开场动画**：冷启动看描字 → 揭幕那一下首页是否已经有封面 → 字标飞进左上角顺不顺、落下后是不是 `GuZhu漫画` 一行

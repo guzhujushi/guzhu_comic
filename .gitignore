@@ -39,12 +39,14 @@ web_dist_out/
 
 # 安卓侧（tmp/安卓端技术栈调研.md）：调研时下载的 wheel / 运行时 zip 等大文件
 tmp/_dl/
+tmp/_dl2/
 android/.gradle/
 android/build/
 android/app/build/
 android/local.properties
 android/.idea/
 android/app/src/main/python/backend/
+android/app/src/main/assets/web/
 *.apk
 *.aab
 *.jks
