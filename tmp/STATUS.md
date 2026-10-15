@@ -1593,6 +1593,13 @@ Content-Length: 5618
      `本地服务已起：http://127.0.0.1:47753（token 已拼进页面地址）`；设备上跑的是**修好的**
      `index-BGiKUf3w.js`，首页真轮播 + 真「热门推荐」（截图 `tmp/_ui/p4-dev-home.png`）。
 
+   **顺手：APK 里堆着 5 份历史前端（已修）**。用户让"把 APK 打一次"时发现的 —— `scripts/sync_android.ps1`
+   往 `android/app/src/main/assets/web/` 拷贝时**不清目标目录**，`Copy-Item` 只覆盖同名文件，于是历次
+   构建的 `index-*.js` / `index-*.css` 一层层攒在包里（实测：APK 里同时躺着 5 份 js、3 份 css；设备端
+   `files/dist/assets/` 也跟着多出 8 个文件 —— 壳每次都 `deleteRecursively()` 再解包，所以垃圾的源头
+   就在这一步同步）。修法：拷贝前把目标清空，并加了"目标必须在 `android/app/src/main/` 下"的越界拒绝。
+   重出包后 APK 内前端正好 6 个文件（index.html + 1 js + 1 css + 3 图标），装进 emulator-5554 复验正常。
+
 
 1. 用户真窗口验收（真图源、5173 + `main.py`）：
    - **开场动画**：冷启动看描字 → 揭幕那一下首页是否已经有封面 → 字标飞进左上角顺不顺、落下后是不是 `GuZhu漫画` 一行

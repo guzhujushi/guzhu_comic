@@ -26,6 +26,17 @@ $pairs = @(
 function Copy-Tree {
     param([string]$From, [string]$To, [string[]]$Skip)
     if (-not (Test-Path -LiteralPath $From)) { throw "源目录不存在：$From" }
+    # 目标先清空：这两处都是生成物（不入库），而 Copy-Item 只覆盖同名文件 —— 不清的话
+    # 上一版的前端 bundle 会一层层攒在里面（2026-10-15 实测：APK 里同时躺着 5 份 index-*.js）。
+    # 后端那边同理：删掉 / 改名的模块会留个幽灵副本，最坏能被 import 到。
+    if (Test-Path -LiteralPath $To) {
+        $full = (Resolve-Path -LiteralPath $To).Path
+        $allowed = Join-Path $root "android\app\src\main\"
+        if (-not $full.StartsWith($allowed, [StringComparison]::OrdinalIgnoreCase)) {
+            throw "拒绝清空（不在 $allowed 下）：$full"
+        }
+        Get-ChildItem -LiteralPath $full -Force | Remove-Item -Recurse -Force
+    }
     New-Item -ItemType Directory -Force -Path $To | Out-Null
     foreach ($item in (Get-ChildItem -LiteralPath $From -Force)) {
         if ($Skip -contains $item.Name) { continue }
