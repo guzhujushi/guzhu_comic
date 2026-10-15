@@ -2,8 +2,8 @@
 
 Gradle 工程，用 Android Studio **单独打开这一层**。设计文档在仓库的 `tmp/`：
 
-- `tmp/安卓端技术栈调研.md` —— 选型与理由（§0 逐层选型、§3 已核实证据、§5 环境三层与设备要求）
-- `tmp/安卓版可行性评估.md` —— 难点 D1~D10、要改的地方、待实测 T1~T8（T1 是总闸）
+- `tmp/安卓端技术栈与现状.md` —— 安卓线主文档：§1 逐层选型 + 版本线、§3 难点 D1~D10 的现状、§4 三种"环境"别混、§5 依赖探针实测
+- `tmp/现状与技术栈.md` —— 全项目现状与技术栈总览（三形态 / 发布通道 / 数据目录 / 坑清单）；进度与决策看 `tmp/STATUS.md`
 - `tmp/安卓真机连接与调试操作手册.md` —— PC / 手机要准备什么、怎么连线、怎么验机、怎么排障
 
 ## 目录
@@ -43,7 +43,7 @@ powershell -ExecutionPolicy Bypass -File scripts\sync_android.ps1
     少了它 `jmcomic` 在 import 期就会 `ModuleNotFoundError`，所以 `src/ui/python/curl_cffi/` 里放了个
     **一调就抛错的桩**（`__version__ = "0.0.0+ui-stub"`），把 import 撑住、把「图源不可用」变成运行时明确报错。
     代价：**这个变体永远验不了 T1 / T1-b / T2（图源连通）**。
-- 跑 Gradle 的 JDK：本机 Android Studio（`D:\Andriod Studio`）自带 **JBR 25.0.3**、系统 JDK 是 **26.0.1**；Java 25 要求 **Gradle ≥ 9.1**、AGP 9.4 又要求 **Gradle ≥ 9.6** → 版本线只能落在 AGP 9.4.0 / Gradle 9.8.1（见 `tmp/安卓端技术栈调研.md` §1.5）
+- 跑 Gradle 的 JDK：本机 Android Studio（`D:\Andriod Studio`）自带 **JBR 25.0.3**、系统 JDK 是 **26.0.1**；Java 25 要求 **Gradle ≥ 9.1**、AGP 9.4 又要求 **Gradle ≥ 9.6** → 版本线只能落在 AGP 9.4.0 / Gradle 9.8.1（见 `tmp/现状与技术栈.md` §2.2）
 - **开工前先把 Python 3.13 装上**，并在 `gradle.properties` 里把 `guzhu.buildPython` 指向它，否则 Chaquopy 的 pip 阶段会以 `from versions: none` 失败
 
 ## 当前进度（2026-10-15）
@@ -72,7 +72,7 @@ powershell -ExecutionPolicy Bypass -File scripts\sync_android.ps1
   ```
 
   截图要 `cmd /c "...adb.exe exec-out screencap -p > 文件"` —— PowerShell 直接重定向会把二进制搞坏。
-- **还没做的**：真机（`full` 变体，验 T1 / T1-b / T2）—— 手上两台（Mate 80 Pro = HarmonyOS 6、无 ADB 端点；另一台是 iPhone）都装不了。见 `tmp/安卓端技术栈调研.md` §5.3 / §5.7。
+- **真机**：**用户 2026-10-15 实测：手上的鸿蒙机（Mate 80 Pro）能装能用本 APK**（把 APK 拷进手机手动安装）。但 Host 侧只有华为 `hdc`、**没有 ADB 端点** → `adb install` / `logcat` / `run-as` 这条路用不上，只能"拷贝安装 + 肉眼看"。**还没验的只剩真机手感**（T3~T6：长图上限 / 一话 200 张图的内存 / 后台保活 / 毛玻璃掉帧）—— 模拟器基线 ≠ 真机。见 `tmp/安卓真机连接与调试操作手册.md`。
 
 ## 发布签名（release APK，2026-10-15 建）
 

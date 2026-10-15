@@ -6,7 +6,7 @@
     adb shell am start -n <包名>/cn.guzhujushi.comic.MainActivity --ez guzhu.probe true
     adb logcat -s GuzhuShell:* python.stdout:*
 
-为什么要有它：`tmp/安卓版可行性评估.md` §6 的 T1~T2 是「能不能上安卓」的总闸，而它们**只能在
+为什么要有它：`tmp/安卓端技术栈与现状.md` §5 的 T1~T2 是「能不能上安卓」的总闸，而它们**只能在
 跑起来的安卓运行时里验** —— 桌面上拿同一组版本验过不算数（那边根本没有「安卓轮子」这回事）。
 探针把这件事拆成逐步独立的若干步，**每步单独记成败与耗时** —— 因为卡在第 3 步（cffi 的 C ABI）
 和第 5 步（图源被墙 / 域名不对）的退路完全不同，糊成一句「失败了」等于没验。

@@ -1,7 +1,7 @@
 ﻿# 安卓构建入口：把 Gradle 的 JDK 指到 Android Studio 自带的 JBR，再跑 gradlew。
 #
 # 为什么要这个脚本：本机系统 JDK 是 Oracle 26.0.1，Gradle 9.8.1 跑不动它；
-# Android Studio 自带的 JBR 25.0.3 才行（见 tmp/安卓端技术栈调研.md §1.5）。
+# Android Studio 自带的 JBR 25.0.3 才行（见 tmp/现状与技术栈.md §2.2）。
 #
 # 用法：
 #   powershell -ExecutionPolicy Bypass -File scripts\build_android.ps1
