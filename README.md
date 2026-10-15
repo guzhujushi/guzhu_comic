@@ -52,9 +52,10 @@
 | 设计系统 | [awesome-design-md](https://github.com/VoltAgent/awesome-design-md) 里的 Raycast DESIGN.md（暗色分层 + 发丝线 + 键帽） |
 | 后端     | Python + [JMComic-Crawler-Python](https://github.com/hect0x7/JMComic-Crawler-Python) |
 | 桌面封装 | PyWebView（Windows 下使用 WebView2/Chromium），窗口毛玻璃走 DWM 亚克力 |
-| 前后端桥 | PyWebView `js_api` 直调（无 HTTP 中间层）          |
+| 前后端桥 | 本地 HTTP JSON-RPC（打包态：`POST /api` + `X-Guzhu-Token`，与页面同端口；源码态 dev 才走 PyWebView `js_api`） |
 | 本地存储 | SQLite（`data/app.db` 阅读进度 + 本地收藏、`cache/cache.db` 接口元数据）+ 文件系统（`cache/images` 章节图） |
-| 图片服务 | Python `http.server` 本地静态服务（127.0.0.1，端口随机） |
+| 图片服务 | Python `http.server` 本地静态服务（127.0.0.1，端口 47753，占用则自动回退；`/images`、`/downloads` 要 token） |
+| 整页图解扰 | 自实现的横带还原（`backend/descramble.py`）——图源发来的整页图是打过乱的，桌面用 Pillow 解、安卓用系统 `BitmapFactory`/`Canvas` 解（Chaquopy 的 Pillow 没编 webp） |
 
 ## 环境要求
 

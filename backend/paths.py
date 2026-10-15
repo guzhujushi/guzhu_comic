@@ -47,6 +47,8 @@ _INJECTED_APP_DIR = (os.environ.get("GUZHU_APP_DIR") or "").strip()
 _INJECTED_DIST_DIR = (os.environ.get("GUZHU_DIST_DIR") or "").strip()
 
 _ANDROID_DIR = Path(_INJECTED_APP_DIR) if _INJECTED_APP_DIR else _android_files_dir()
+# 给上层一个能直接问的口径（目前只有 backend/descramble.py 用它挑解码器）
+IS_ANDROID = _ANDROID_DIR is not None
 
 APP_DIR = _ANDROID_DIR if _ANDROID_DIR is not None else (Path.home() / ".jmreader")
 # data/ 放再生不出来的用户数据，cache/ 放随时可删的缓存（受 cache.max_size_mb 约束）

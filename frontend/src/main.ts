@@ -1,3 +1,6 @@
+// 第一件事：把桥架上（P0 之后是本地 HTTP 的 `/api`；没有 ?t= 时才轮到 pywebview 的 js_api）。
+// 位置必须在最前 —— 它要在任何页面代码摸 `window.pywebview` 之前装好。
+import './bridge.js'
 import './style.css'
 import { registerRoute, startRouter } from './router.js'
 import { popularPage } from './pages/popular.js'

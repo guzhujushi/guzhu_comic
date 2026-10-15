@@ -1,10 +1,11 @@
 import logging
 import sys
 import threading
+from urllib.parse import quote
 
 import webview
 
-from backend import desktop, glass, logging_setup, paths, single_instance, updater, webview2
+from backend import bridge, desktop, glass, logging_setup, paths, single_instance, updater, webview2
 from backend.api import API
 from backend.config import load_config, save_config
 from backend.server import DEFAULT_PORT, start_static_server
@@ -54,23 +55,32 @@ def _prepare_user_dir() -> None:
             print(f"[config] 默认配置写不进去（不影响使用）: {e}", flush=True)
 
 
-def _pick_url(config: dict) -> tuple[str, str | None]:
+def _wire_bridge(config: dict) -> tuple[API, str, str | None, bool]:
     """
-    选这次加载哪个地址，返回 (url, base_url)。
+    把「页面从哪来」和「桥怎么走」一次配齐，返回 (api, 页面 url, 图片 base, 还用不用原生 js_api)。
 
-    源码态且 dev.use_dev_server 开着 → 走 vite（改前端不用重打包）；其余一律起本地静态服务喂
-    frontend/dist —— 打包后没有 Node、没有 vite，只有这一条路。base_url 回给 API，图片就挂在
-    同一个端口上（页面与图同源）。
+    P0（2026-10-15）之后分两条路：
+
+      * **打包态 / 安卓**（默认）：起本地静态服务，**`POST /api` 就是桥**，URL 上挂 `?t=<token>`。
+        前端 `frontend/src/bridge.ts` 一看到 `?t=` 就把 HTTP 垫片装上 —— 页面从此不碰 pywebview
+        （那套"注两遍、把在飞调用回调清掉"的坑整类消失），安卓上更是唯一可能的路。
+      * **源码态 + `dev.use_dev_server`**：页面由 vite 喂（改前端不用重打包），**没有本地服务**，
+        桥仍旧走 pywebview 的 `js_api`（没有 token 就不装垫片）。图片另起一个随机端口的小服务。
+
+    顺序有讲究：`API` 得先建出来（它要把派发器交给服务），而服务要先绑到端口才知道 base ——
+    所以 API 先用空串占位，服务起来后回填 `img_base`。
     """
-    dev_cfg = config["dev"]
-    if not paths.is_frozen() and bool(dev_cfg.get("use_dev_server", False)):
-        return str(dev_cfg["url"]), None
+    if not paths.is_frozen() and bool(config["dev"].get("use_dev_server", False)):
+        api = API()                      # base_url 不给 = 自己起一个图片服务（老样子）
+        return api, str(config["dev"]["url"]), api.img_base, True
 
     dist = paths.dist_dir()
     overlay = paths.WEB_DIR          # 前端热更新下来的那份（有就用它，见 backend/updater.py）
     if not (dist / "index.html").exists() and not (overlay / "index.html").exists():
         raise RuntimeError(f"前端产物不在：{dist}"
                            "（源码态先跑 npm run build；包被拆过的话 dist 要跟 exe 一起在 _internal 里）")
+    token = bridge.new_token()
+    api = API(base_url="", token=token)
     base = start_static_server(
         dist,
         {
@@ -79,8 +89,11 @@ def _pick_url(config: dict) -> tuple[str, str | None]:
         },
         _port(config),
         overlay=overlay,
+        token=token,
+        rpc=bridge.make_rpc(api),
     )
-    return base + "/", base
+    api.img_base = base
+    return api, f"{base}/?t={quote(token, safe='')}", base, False
 
 
 def _gate(config: dict) -> bool:
@@ -143,18 +156,19 @@ def main() -> None:
     if rolled["note"]:
         _alert(rolled["note"])
 
-    url, base = _pick_url(config)
+    api, url, base, native_bridge = _wire_bridge(config)
     _banner(config, url, base, log_path)
     desktop.sync_autostart(config)     # 开机自启：配置与注册表对一遍账
-
-    api = API(base_url=base)
 
     # 窗口位置与大小：开着"记住"就用上次的（摆到屏幕外了只沿用大小，见 desktop.geometry_kwargs）
     geometry = desktop.geometry_kwargs(config)
     window = webview.create_window(
         title=window_cfg["title"],
         url=url,
-        js_api=api,
+        # 打包态的桥是本地 HTTP 的 `/api`（token 在 url 上），**不再挂 js_api** ——
+        # 免得两套桥并存、页面还要赌哪一套先到。源码态 dev 走 vite 那条路没有本地服务，
+        # 仍旧靠它。（见 _wire_bridge）
+        js_api=api if native_bridge else None,
         width=geometry["width"],
         height=geometry["height"],
         x=geometry.get("x"),

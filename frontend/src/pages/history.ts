@@ -68,7 +68,7 @@ export function historyPage(): HTMLElement {
   async function remove(item: HistoryItem): Promise<void> {
     const current = api()
     if (!current?.remove_history) {
-      say('pywebview api 还没就绪')
+      say('桥没连上：请用启动日志里那条带 ?t= 的地址打开')
       return
     }
     try {
@@ -84,7 +84,7 @@ export function historyPage(): HTMLElement {
     void (async () => {
       const current = api()
       if (!current?.clear_history) {
-        say('pywebview api 还没就绪')
+        say('桥没连上：请用启动日志里那条带 ?t= 的地址打开')
         return
       }
       if (!window.confirm('清空最近阅读？阅读进度会一起没（收藏和离线下载不动）')) return
@@ -100,7 +100,7 @@ export function historyPage(): HTMLElement {
 
   async function load(): Promise<void> {
     if (!api()) {
-      renderError(listEl, 'pywebview api 还没就绪', () => void load())
+      renderError(listEl, '桥没连上：请用启动日志里那条带 ?t= 的地址打开', () => void load())
       return
     }
     try {

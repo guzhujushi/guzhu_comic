@@ -29,7 +29,7 @@ export function albumPage(params: Record<string, string>): HTMLElement {
 
   async function load(): Promise<void> {
     if (!window.pywebview?.api) {
-      renderError(el, 'pywebview api 还没就绪', () => void load())
+      renderError(el, '桥没连上：请用启动日志里那条带 ?t= 的地址打开', () => void load())
       return
     }
     try {
@@ -311,7 +311,7 @@ function paintFavorite(container: HTMLElement, data: AlbumDetail, fav: boolean):
       paint()
       try {
         const api = window.pywebview?.api
-        if (!api) throw new Error('pywebview api 还没就绪')
+        if (!api) throw new Error('桥没连上：请用启动日志里那条带 ?t= 的地址打开')
         // tag / 作者一起带上：收藏那一刻的快照（推荐画像用），不然过一天详情缓存过期就没了
         const saved = await api.toggle_favorite(
           data.id, data.title, data.cover_url ?? '', data.tags, data.authors)

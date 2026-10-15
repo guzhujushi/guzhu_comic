@@ -1293,10 +1293,8 @@ Content-Length: 5618
   `python 3.13.16` → `cffi 1.17.1`（**C ABI 那关过了**）→ `curl_cffi 0.16.3` 载入 1.4s →
   `impersonate="chrome"` 的 HTTPS → 200 → `jmcomic` 建客户端（真拉 `/setting`，域名自动从 2.1.7 更到 2.1.11）→
   拉详情（真作品 `422866`）→ 取一话的图列表 → **真下到一张 218,914 B 的图（RIFF/WEBP）**。
-- **唯一的 FAIL：第 9 步 Pillow 解 WebP** —— Chaquopy 的 Pillow 轮子**不带 libwebp**
-  （`features.check('webp')=False`；桌面同版本 Pillow 是 `True`）。**对本 app 零影响**：
-  图是 WebView（Chromium 原生支持 webp）渲染的，`backend/` 里**一行 PIL 都没有**（`rg` 核过），
-  离线下载走 jmcomic 的下载器原样落盘。**只有「在安卓侧用 PIL 拼长图 / 切图 / 转格式」才要自出带 libwebp 的轮子。**
+- **第 9 步 Pillow 解 WebP：当时写成「唯一 FAIL、但对本 app 零影响」—— 那句错了**（2026-10-15 夜更正，
+  见本节末尾的「更正」与 P1）。探针现在多了**第 11 步：系统解码器解扰真图**（OK，0.4s）。
 - 结论：**T1（`curl_cffi` 装得上 + 连得上图源）、T1-b（`cffi 1.17.1` × `curl_cffi 0.16.3` 的 C ABI）、
   T2（jmcomic 起得来）三条关闭 —— 零设备、零成本。** 真机剩下的只有 T3~T6（长图渲染上限 / 一话 200 张图内存 /
   后台下载保活 / 毛玻璃掉帧）那类**只有真机才算数**的（模拟器的性能基线 ≠ 真机）。
@@ -1316,14 +1314,22 @@ Content-Length: 5618
 
 - **2026-10-15**：**T1 / T1-b / T2 关闭，靠的是「arm64 的包直接装进 x86_64 模拟器」** —— 模拟器自带 ARM 翻译层（`libndk_translation.so`、`abilist=x86_64,arm64-v8a`），`adb install -r` arm64-v8a 的 `full` 包 → Success，10 步依赖探针 1~8 + 10 全绿（原始 logcat `tmp/安卓依赖探针实测.md`）。**不需要真机、不需要 arm64 系统镜像、不需要买设备**；真机只剩 T3~T6 那类"只有真机才算数"的（手感 / 内存 / 保活）。
 - **2026-10-15**：**探针（`guzhu_probe.py`）留在仓库里**，跟着壳走一个开关（`--ez guzhu.probe true`，**不在正常启动路径上**）。它把"装得上 + 连得上"拆成 **10 步逐步记成败与耗时** —— 卡在第 3 步（cffi 的 C ABI）和第 5 步（域名 / 被墙）的退路完全不同，糊成一句"失败了"等于没验。**每次动 pip 列表或依赖版本之后都该重跑一遍**，它比"查资料"可靠。
-- **2026-10-15**：**Chaquopy 的 Pillow 轮子不带 libwebp**（实测 `features.check('webp')=False`，桌面同版本 Pillow 是 `True`），而图源现在发 `.webp`。**对本 app 零影响**（图片由 WebView 渲染、`backend/` 零 PIL 引用、离线下载走 jmcomic 下载器原样落盘）—— 但**以后谁要在安卓侧用 PIL 做长图 / 切图 / 转格式，必须先自出带 libwebp 的轮子**（记成 T2-b，非阻塞）。
-- **2026-10-15**：**别把「探针绿」当成「安卓版成了」**：它只验依赖与链路，不验手感 / 内存 / 保活，也**没验 P0 之后的真数据路径**（现在装到设备上的包，打开只有"pywebview api 还没就绪"）。要"手机上自己点着用"，下一步仍然是 **P0**。
+- **2026-10-15**：**Chaquopy 的 Pillow 轮子不带 libwebp**（实测 `features.check('webp')=False`，桌面同版本 Pillow 是 `True`），而图源现在发 `.webp`。
+  ⚠️ **当时接着写的那句「对本 app 零影响（`backend/` 零 PIL 引用、离线下载原样落盘）」是错的** ——
+  `backend/` 自己确实不用 PIL，但 **jmcomic 的图片下载器每张图都要过一遍 PIL**（`JmImageResp.transfer_to`
+  里 `JmImageTool.open_image()` 是当函数实参**先算出来**的，`num==0`、根本不用解扰的也躲不掉），
+  而图源发的整页图正是 `.webp` → **安卓上每张图都下载失败，且异常被 `_download_one` 吞掉，日志里一个字都没有**。
+  这条从「非阻塞 T2-b」升级成阻塞项，**2026-10-15 夜在 P1 关掉**（`tmp/整页图解扰设计.md`）。
+  仍然成立的那半句：真要在安卓侧**额外**用 PIL 做长图 / 切图 / 转格式，还是得自出带 libwebp 的轮子。
+- **2026-10-15**：**别把「探针绿」当成「安卓版成了」**：它只验依赖与链路，不验手感 / 内存 / 保活。**这句话本身没错，但它当初漏掉了另外两条**：① 它**没验真数据路径**（当时装到设备上的包，打开只有"pywebview api 还没就绪"，那是 P0 之前）；② 它**没验"图能不能落盘"** —— 第 8 步是自己拿 `curl_cffi` 直下字节，**根本不经过 jmcomic 的下载器**，而坏就坏在那个下载器里（见上面 Pillow 那条）。**两条都已经在 P0 / P1 关掉**（探针也补了第 11 步）。
 - **2026-10-15**：**手机版导航从左栏挪到顶部**，用 `@media (max-width: 760px)` 切；桌面 `min_size` 是 800×600，这一档只会在手机上命中（桌面版式零改动）。用 `sticky` 而不是 `fixed`：留在正常流里就不用给 `body` 补高度。**顺带更正一条**：<1180px 那档把 `.brand-text` 藏掉会让开场字标的落点变成 0×0（飞行退化成淡出），手机上放得下就别藏。
 - **2026-10-15**：**状态栏 / 导航栏 / 键盘的让位放在壳里做**（根布局 padding = `systemBars()` / `ime()` 高度），不放前端 CSS —— targetSdk 35 起系统强制 edge-to-edge，页面顶上第一行会被状态栏压住；靠 `env(safe-area-inset-*)` 还得赌 WebView 有没有把 inset 递进来，pad 根布局是确定的。
 - **2026-10-15**：**详情页评论区只留一个口子**：一处 DOM（章节与相关作品之间）、默认折叠、点开才请求。**桌面也跟着变了**（原来是右侧一整栏 + sticky），没有为桌面保留旧版式 —— 一份代码两条路才是以后最贵的那种债。用户不认再改回来。
 - **2026-10-15**：**"触屏"的判据用 `matchMedia('(hover: hover) and (pointer: fine)')`**（决定进搜索页要不要自动聚焦），不用 UA、不判平台 —— 桌面插鼠标、手机接 OTG 鼠标这些情况本来就不该硬判。
 - **2026-10-15**：**假桥（`tmp/_pc_bridge_server.py` + `_pc_bridge.js`）留在仓库里**：它是"P0 之前唯一能给手机尺寸喂真数据"的手段，也是 P0 客户端那半边的预演。**注意它没有任何鉴权，只许监听 127.0.0.1、只许临时跑。**
 - **2026-10-15**：**x86_64 模拟器自带 ARM 翻译层**（`ro.dalvik.vm.native.bridge=libndk_translation.so`、`abilist=x86_64,arm64-v8a`）→ **arm64 的 `full` 包能直接装进去跑**。此前"要验 R2 必须先有一台 arm64 安卓设备"的结论**作废**（更正见 `tmp/安卓端技术栈调研.md` §5.3）。翻译层有自己的坑、也**不能当性能基线**，T3~T6 那类"手感 / 内存 / 后台被杀"仍要真机。
+- **2026-10-15**：**整页图解扰收口在 `backend/descramble.py`（P1）**：横带规则**只写一份**（`band_plan`，桌面上拿 jmcomic 自己的产物逐字节对拍），解码器按平台挑 —— 桌面 Pillow、安卓用系统 `BitmapFactory` + `Canvas`（走 Chaquopy 的 Java 桥，**不加一行 Kotlin、不装任何轮子、不碰 NDK**），下载那一步改成 `decode_image=False`（只落原图，一点不碰 PIL）。**被否掉的四条路连理由一起记在 `tmp/整页图解扰设计.md` §3**：自出带 libwebp 的 Pillow 轮子（要 NDK、只出包时用得上）/ `opencv-python-headless`（Chaquo 包源只到 **cp310**，本 app 是 **3.13**，装不上）/ 在 WebView 里 canvas 解扰（磁盘上会留下**打过乱的原图**，离线下载、下载页预览、导出全跟着坏）/ 再写一份 Kotlin 横带算法（规则会变两份，且 Kotlin 那份**在桌面上没法测**）。顺带把「下载失败静默」补成 `_note_download_failure()`：同一章节第一次失败打一行 log —— **这次就是被静默坑掉了一整天**。
+- **2026-10-15**：**平台判断多一个公开口径 `paths.IS_ANDROID`**（原来只有内部的 `_ANDROID_DIR`）。它是 `GUZHU_APP_DIR`（壳递进来的）或 `java` 探测**任一成立**，与上面那条"靠 `java` 模块在不在认平台"是同一个口径，只是换成一个可读的常量。**目前只有 `backend/descramble.py` 用它挑解码器**；平台差异仍然不许外溢到别处。
 
 - **2026-10-15**：**安卓壳的启动链路定案：壳解 assets → Chaquopy 起 Python → `backend/server.py` 起本地静态服务 → WebView 加载 `http://127.0.0.1:47753`**。不用 `file://` 直开 `index.html` 的理由与桌面完全一致（ES module 要过 CORS、`file://` 的 origin 是 opaque；页面与图也不同源，localStorage 留不住），见 `backend/server.py` 开头。**桌面与安卓从此跑的是同一个服务、同一份前端。**
 - **2026-10-15**：**平台差异继续只收在 `backend/paths.py` 一层，安卓靠「`java` 模块在不在」认平台**（不猜 `sys.platform` —— 安卓上它是 `'linux'`）。壳递目录走 `GUZHU_APP_DIR` / `GUZHU_DIST_DIR` 环境变量，**必须早于 `import backend`**（paths 是 import 期算死的常量）；`java` 探测作兜底。理由是既有代码全项目直接读 `paths.APP_DIR`，改成惰性取值要动的面太大。
@@ -1479,10 +1485,60 @@ Content-Length: 5618
    ~~仍然只等真机的：T1 / T1-b / T2~~ —— **2026-10-15 晚已关闭**：模拟器自带 ARM 翻译层，arm64 的 `full` 包
    能装能跑，**10 步依赖探针 1~8 与 10 全绿**（`python 3.13.16` → `cffi 1.17.1` → `curl_cffi 0.16.3` → HTTPS 200 →
    真拉详情 → 真下到 218,914 B 的图），原始 logcat 存 `tmp/安卓依赖探针实测.md`。**唯一的 FAIL 是第 9 步「Pillow 解 WebP」，
-   但零影响**（图片是 WebView 渲染的、`backend/` 零 PIL 引用）。见上面「手机版 UI」一节与 `安卓版可行性评估.md` §6。
+   但零影响** —— **这半句 2026-10-15 夜被推翻**（下载器每张图都过 PIL，见「决策记录」那条与 `tmp/整页图解扰设计.md`）；
+   已在 P1 修掉。见上面「手机版 UI」一节与 `安卓版可行性评估.md` §6。
    **真机只剩手感 / 内存 / 后台存活那类（T3~T6）**。
-   0.5 **下一步是 P0（把桥从 `js_api` 换成带 token 的本地 HTTP JSON-RPC）** —— 在那之前，装到任何设备上的
-   APK 都只能看版式、看不到内容；`tmp/_pc_bridge_server.py` 就是它的预演。
+   0.5 **P0 已完成（2026-10-15 夜）** —— 把桥从 `js_api` 换成**带 token 的本地 HTTP JSON-RPC**，桌面与安卓一起切。
+
+   **落地件**：
+   - `backend/bridge.py`（新增）：协议常量（`POST /api`、`X-Guzhu-Token`、`?t=`、受保护前缀 `/images` `/downloads`）、
+     `new_token()`、`token_ok()`（`hmac.compare_digest`）、`make_rpc(api)`（只放行公开方法，下划线 / 非方法一律拒）；
+   - `backend/server.py`：`do_POST` 处理 `/api`、`do_GET/do_HEAD` 对受保护前缀校验 token（403）、
+     `start_static_server(..., token=, rpc=)`；
+   - `backend/api.py`：`API(base_url="", token=...)` 支持"服务起好再回填 `img_base`"，图片 URL 走 `_asset()` 挂 `?t=`；
+   - `frontend/src/bridge.ts`（新增）：`pickToken()`（URL `?t=` → sessionStorage）、`call()`（带头的 fetch）、
+     `makeApi()`（Proxy，函数按名字缓存）；`bridgeMode === 'http'` 时把 `window.pywebview.api` 垫出来；
+   - `main.py` / `android_boot.py`：生成 token → 起服务 → 回填 `img_base` → **把带 `?t=` 的页面地址交给窗口/WebView**；
+   - 7 个页面文件里 10 处 "pywebview api 还没就绪" 的文案改成"桥没连上：请用启动日志里那条带 `?t=` 的地址打开"。
+
+   **验收（全绿）**：
+   | 面 | 手段 | 结果 |
+   |---|---|---|
+   | 协议层 | `tmp/_check_http_bridge.py`（真服务 + 真 API） | 22 项通过：静态资源免 token 200 / `/images`·`/downloads` 无 token 403、带对 token 放行、错 token 403、Host 非回环 403；`POST /api` 无·错 token 403；`_jm`、`img_base`、不存在的方法全被拒 |
+   | 页面层 | 无头 Chrome + 真后端（`dist` 拷临时目录注入标记脚本，`--dump-dom` 取回） | 垫片真走 HTTP（`get_version` → 0.1.1）；**首页铺出 30 张作品卡**；不带 token 打开 → 页面提示"桥没连上"（符合设计） |
+   | 桌面回归 | `tmp/_runchecks.py` | 30/30 通过 |
+   | **T8 那个洞** | `tmp/_check_android_token.py`（设备上 `adb shell`，uid 2000，**不是本 app**） | 4 项通过：无 token 读 `/images`·`/downloads` → **403**；带对 token → 放行；错 token → 403 |
+   | 设备端 | emulator-5554 装 `full` 包 | 壳日志 `本地服务已起：http://127.0.0.1:47753（token 已拼进页面地址）`；**首页真封面 / 真榜单 / 真推荐** |
+
+   0.6 **P1 已完成（2026-10-15 夜）** —— **整页图解扰收口，安卓上终于能真正读到图**。
+
+   症状：设备上首页 / 详情都有真数据，**但阅读器里一页都出不来**（每张 `<img>` 都碎，页面上是一列"第 N 页"）。
+
+   根因（两条叠在一起，见 `tmp/整页图解扰设计.md`）：
+   1. 图源发的整页图是**打过乱**的（切成 num 条横带倒着重排），必须解扰；
+   2. jmcomic 的解扰在 `JmImageResp.transfer_to` 里**每张图都要过 PIL** —— `open_image()` 是当函数实参
+      **先算出来的**，`num==0`、根本不用解的也躲不掉；**Chaquopy 的 Pillow 没编 webp**（`PIL/_webp.so` 不在轮子里）
+      → 安卓上**每张图都下载失败**。而 `_download_one` 当时把异常吞了，**日志里一个字都没有**。
+
+   落地件：
+   - `backend/descramble.py`（新增）：`band_plan()`（复刻 jmcomic 的横带规则，**全项目唯一一处实现**）、
+     `num_for()`（直接问 jmcomic `get_num_by_detail`，`.gif` 一律 0）、`fix_file()`（按平台挑解码器就地还原）；
+   - `backend/descramble_android.py`（新增）：安卓用系统 `BitmapFactory` + `Canvas` 解 + `Bitmap.compress(WEBP, 90)`
+     重编（Chaquopy 的 Java 桥，不用 NDK、不装任何轮子）；
+   - `backend/api.py::_download_one`：先让 jmcomic 只落**原图**（`decode_image=False`，一点不碰 PIL），再自己解扰；
+   - `backend/api.py::_note_download_failure`：**下不下来的图不再静默**（同一章节只吭一声）；
+   - `backend/paths.py` 加 `IS_ANDROID`；探针加**第 11 步「系统解码器解扰真图」**。
+
+   验收（全绿）：
+   | 面 | 手段 | 结果 |
+   |---|---|---|
+   | 规则正确性 | `tmp/_check_descramble.py`（新增） | 17 项通过：`band_plan` 在 7 组 (h, num) 下都是"源与目标严丝合缝铺满整页"的完整置换 |
+   | **桌面零回归** | 同一支：3 部作品 6 张真图与我们自己的产物**逐字节对拍 jmcomic 自带解码** | 6/6 逐字节相同 → 桌面缓存文件一个字节都没变 |
+   | 真实下载链路 | 同一支：`get_chapter` → 后台下载 → 落盘 | 2 个文件 3s 落盘，且与"解扰后"一致（条带没错位） |
+   | 桌面回归 | `tmp/_runchecks.py` | 30/30 通过 |
+   | **设备端解码器** | 探针第 11 步（emulator-5554） | `num=10`，218,914 B → 307,042 B、**0.4s** |
+   | 设备端结果 | 把探针产物拉回电脑逐像素比 | 设备 vs 桌面解扰 **平均每像素差 1.71**（只差一次有损重编）；vs 不解扰的原图 **85.06**；逐条带 1.4~2.1（错位会到 80+）→ **肉眼 + 数值双确认** |
+   | 设备端手感 | emulator-5554 真点进阅读器截图 | **整页图正常铺出**（条带顺序正确）；`files/cache/images/<章节>/` 落满真图（292 KB~650 KB/张） |
 
 
 1. 用户真窗口验收（真图源、5173 + `main.py`）：

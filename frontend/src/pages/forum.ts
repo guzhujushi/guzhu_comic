@@ -98,7 +98,7 @@ export function forumPage(params: Record<string, string>): HTMLElement {
     const api = window.pywebview?.api
     if (!api) {
       // 桥慢半拍就这样：先提示 + 给个重试按钮，同时盯着桥，就绪了自己接上
-      renderError(listEl, 'pywebview api 还没就绪', () => {
+      renderError(listEl, '桥没连上：请用启动日志里那条带 ?t= 的地址打开', () => {
         listEl.innerHTML = ''
         void load()
       })

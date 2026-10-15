@@ -116,9 +116,30 @@ def run() -> str:
     step("5 jmcomic 建客户端", jmcomic_client)
     step("6 拉一部详情", album_detail)
     step("7 取一话的图片地址", photo_images)
+    def descramble_real() -> str:
+        """
+        用**安卓系统自带的解码器**把一张真图解扰出来（P1 的验证点）。
+
+        为什么单列一步：图源发的整页图是打过乱的（切成 num 条横带倒着重排），而 Chaquopy
+        的 Pillow 没编 webp —— 所以安卓上这步**只能**走系统解码器。产物落在缓存目录里，
+        可以拉回电脑上肉眼复核条带顺序对不对。
+        """
+        from backend import descramble, paths
+        img = state["photo"][0]
+        raw = state["img_bytes"]
+        num = descramble.num_for(img)
+        out = paths.CACHE_DIR / "_probe_descramble.webp"
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_bytes(raw)
+        descramble.fix_file(out, num)
+        fixed = out.read_bytes()
+        same = "（内容没变，说明这张不用解扰）" if fixed == raw else ""
+        return f"num={num} 原图 {len(raw)} B → 解扰后 {len(fixed)} B{same}；产物 {out}"
+
     step("8 下一张图（真下到字节）", fetch_image)
     step("9 Pillow 解码 + 支持格式", decode_image)
     step("10 Pillow 格式清单", pillow_formats)
+    step("11 系统解码器解扰（真图）", descramble_real)
 
     emit(f"DONE 共 {time.time() - t_all:.1f}s")
     return "\n".join(lines)

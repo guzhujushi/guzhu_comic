@@ -91,7 +91,7 @@ export function favoritesPage(): HTMLElement {
 
   async function load(): Promise<void> {
     if (!window.pywebview?.api) {
-      renderError(listEl, 'pywebview api 还没就绪', () => void load())
+      renderError(listEl, '桥没连上：请用启动日志里那条带 ?t= 的地址打开', () => void load())
       return
     }
     try {

@@ -534,7 +534,7 @@ export function boardPage(category: ComicCategory, startPage = 1): HTMLElement {
       // 省得用户自己"切到别的页再切回来"
       heroEl.innerHTML = ''
       state = 'error'
-      errorText = 'pywebview api 还没就绪'
+      errorText = '桥没连上：请用启动日志里那条带 ?t= 的地址打开'
       paintPanel()
       showMessage()
       splashReady()

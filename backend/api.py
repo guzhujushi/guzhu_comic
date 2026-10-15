@@ -8,6 +8,7 @@ from pathlib import Path
 import threading
 from functools import partial
 from http.server import ThreadingHTTPServer
+from urllib.parse import quote
 
 
 def _cfg_int(value: Any, default: int, lo: int, hi: int) -> int:
@@ -79,7 +80,7 @@ from backend.paths import (APP_DIR, CACHE_DIR, CACHE_DB, DATA_DB, DATA_DIR, IMG_
 # 本地静态服务的基类：图服务与打包后的前端页面共用（打包态是同一个端口）
 from backend.server import _QuietHandler   # noqa: F401
 # 设置项的声明式表（校验与前端表单都靠它）/ 桌面集成（托盘、通知、开机自启…）/ 前端热更新
-from backend import desktop, settings_spec, updater
+from backend import descramble, desktop, settings_spec, updater
 
 # 用户目录（~/.jmreader）与只读资源目录都从 backend.paths 来 —— 那里是源码态 / 冻结态的
 # 唯一分叉点。import 进来保持旧名字，api.py 里的用法一行不用改。
@@ -120,10 +121,14 @@ _ORDER_BY_MAP = {
 }
 
 class API:
-    def __init__(self, base_url: str | None = None):
+    def __init__(self, base_url: str | None = None, token: str | None = None):
         """
         base_url 给了就用它当图片的 base（打包态：main.py 起的静态服务跟页面同一个端口）；
         不给就自己起一个（源码态，端口由系统随机分配）。
+
+        `token` 是 P0 那个本地桥的通行证（`backend/bridge.py`）：给上之后，本对象拼出来的
+        **本地图片 URL 会自带 `?t=`** —— `<img src>` 发不出自定义请求头，只能走查询串。
+        `None` = 不设防（源码态 dev：没有静态服务，图片服务是随机端口上的那一个）。
         """
         # 缓存时长 / 下载并发数都来自 config.yaml（设置页可改，重启窗口后生效）
         cfg = load_config()
@@ -157,7 +162,9 @@ class API:
         self._client_lock = threading.Lock()
         self._client = None
         self._init_db()
-        self.img_base = base_url or self._start_img_server()
+        # None = 自己起一个图片服务；空串 = 调用方随后会填（main.py：服务要先绑到端口才知道 base）
+        self._token = token
+        self.img_base = base_url if base_url is not None else self._start_img_server()
         self._last_photo_id = ""   # 最近打开的章节，清理缓存时留着别删
         # 一个章节同时只允许一个下载批次：两批一起下会抢同一个 .part 文件
         # （这个锁只保护下面那个登记表，不串行化下载本身）
@@ -165,6 +172,9 @@ class API:
         self._dl_photo_ids: set[str] = set()
         # 批次在跑的时候又有人要整话（用户真进了阅读器）：记一笔，等这批跑完补一次
         self._dl_pending: set[str] = set()
+        # 下不下来的图：同一章节只在日志里说一次。以前这里是静默的，出过
+        # 「图永远下不下来、日志里一个字都没有」那种要命的事（见 _note_download_failure）
+        self._dl_failed: set[str] = set()
         # 同一把钥匙同一时刻只让一个线程去图源取（见 _fetch_guard）：闪屏预热和页面自己发的
         # 请求经常前后脚撞上，不认一下的话图源那边同一份数据要拉两遍
         self._inflight: dict[str, threading.Event] = {}
@@ -910,6 +920,17 @@ class API:
         threading.Thread(target=server.serve_forever, daemon=True).start()
         return f"http://127.0.0.1:{port}"
 
+    def _asset(self, path: str) -> str:
+        """
+        本地资源（缓存图 / 离线副本）的 URL。
+
+        带 token 时挂上 `?t=` —— `<img src>` 发不出自定义请求头，查询串是这条路唯一的载体
+        （页面自己 fetch 的那条路走 `X-Guzhu-Token` 头，见 frontend/src/bridge.ts）。
+        没 token（源码态 dev）就是老样子。
+        """
+        url = f"{self.img_base}{path}"
+        return f"{url}?t={quote(self._token, safe='')}" if self._token else url
+
     def get_chapter(self, photo_id: str) -> dict:
         """
         返回 {"photo_id", "images"}。
@@ -951,14 +972,14 @@ class API:
                 return {
                     "photo_id": photo_id,
                     "images": [
-                        f"{self.img_base}/downloads/{album_id}/{photo_id}/{name}"
+                        self._asset(f"/downloads/{album_id}/{photo_id}/{name}")
                         for name in files
                     ],
                 }
 
         return {
             "photo_id": photo_id,
-            "images": [f"{self.img_base}/images/{photo_id}/{name}" for name in files],
+            "images": [self._asset(f"/images/{photo_id}/{name}") for name in files],
         }
 
     def _spawn_download(self, photo_id: str, jobs: list[tuple] | None,
@@ -1052,13 +1073,28 @@ class API:
         # 临时名要保留真实后缀：jmcomic 按输出后缀定编码，用 .part 当后缀会直接抛错
         tmp = path.with_name(f"{path.stem}.part{path.suffix}")
         try:
-            self._jm.download_by_image_detail(img, str(tmp))
+            # 先让 jmcomic 只落「原图」：它自带的解码每张图都要 PIL，而安卓的 Pillow
+            # 没编 webp。解扰交给我们自己那层（平台差异收在 backend.descramble 里）
+            self._jm.download_by_image_detail(img, str(tmp), decode_image=False)
+            descramble.fix_file(tmp, descramble.num_for(img))
             tmp.rename(path)
             self._note_bytes(album_id, path)
             return True
-        except Exception:
+        except Exception as e:
             tmp.unlink(missing_ok=True)
+            self._note_download_failure(img, e)
             return False
+
+    def _note_download_failure(self, img: Any, exc: BaseException) -> None:
+        """下一张图彻底下不来：同一章节只吭一声（别刷屏），后面还有重试兜着"""
+        photo = getattr(img, "from_photo", None)
+        photo_id = str(getattr(photo, "photo_id", "") or getattr(img, "aid", ""))
+        with self._dl_batch_lock:
+            if photo_id in self._dl_failed:
+                return
+            self._dl_failed.add(photo_id)
+        print(f"[download] 章节 {photo_id} 有图下不下来（{type(exc).__name__}: {exc}）"
+              f" —— 解码器认不认这张图？", flush=True)
 
     # ---------- 下载速度 / 剩余时间（现算，不开线程） ----------
 

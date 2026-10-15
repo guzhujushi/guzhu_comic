@@ -275,8 +275,12 @@ ver = api.get_version()
 ok("版本字段齐", {"app", "web", "overlay", "update"} <= set(ver))
 ok("刚装的更新会被认出来", ver["overlay"] is False)
 info = api.check_update()
-ok("check_update 永不抛异常（这儿是没发布，所以 error）",
-   info["available"] is False and isinstance(info["error"], str), str(info["error"])[:80])
+# 2026-10-15 修：原来断言的是"通道里没有版本"（写这句时确实还没发布），首个热更包发布之后它就不成立
+# 了。这句真正想守的是"这条路永不抛异常、返回字段形状稳定"——改成守这个（P0 那轮顺手）。
+ok("check_update 永不抛异常、字段形状稳定",
+   isinstance(info["available"], bool) and isinstance(info["error"], str)
+   and isinstance(info.get("version"), str),
+   f"available={info['available']} version={info.get('version')!r} error={info['error'][:60]!r}")
 
 print(f"\n{'=' * 60}\n通过 {PASSED}，失败 {len(FAILED)}")
 for name in FAILED:

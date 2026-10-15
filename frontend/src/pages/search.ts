@@ -250,7 +250,7 @@ export function searchPage(params: Record<string, string>): HTMLElement {
     }
     idle = false
     if (!window.pywebview?.api) {
-      renderError(listEl, 'pywebview api 还没就绪', () => void doSearch())
+      renderError(listEl, '桥没连上：请用启动日志里那条带 ?t= 的地址打开', () => void doSearch())
       return
     }
     if (!restore) rememberRecent(keyword)
