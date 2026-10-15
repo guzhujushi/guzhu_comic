@@ -4,7 +4,7 @@ import type { IconInput } from 'morphicons/element'
 import {
   ArrowLeft, BadgeInfo, BookOpen, Check, ChevronDown, ChevronLeft, ChevronRight, ChevronUp, CircleCheck,
   Clock, Database, Download, Eraser, Flame, HardDriveDownload, Heart, HeartPulse, Info, List, Loader,
-  FolderOpen, MessageSquareText, MessagesSquare, Moon, Pause, Play, RefreshCw, Save, ScrollText,
+  EyeOff, FolderOpen, MessageSquareText, MessagesSquare, Moon, Pause, Play, RefreshCw, Save, ScrollText,
   Search, SearchCheck, Settings, SlidersHorizontal, Sun, Trash2, TrendingUp, Upload, Watch, X,
 } from 'lucide'
 
@@ -47,6 +47,7 @@ export const icons = {
   trash: Trash2,
   forum: MessagesSquare,
   forumOn: MessageSquareText,
+  panic: EyeOff,
   themeDark: Moon,
   themeLight: Sun,
   // 设置页后加的那几块（版本 / 磁盘 / 日志 / 导入导出）

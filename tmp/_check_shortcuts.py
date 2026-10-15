@@ -13,6 +13,7 @@ r"""快捷键面板 + 防社死 + 空状态品牌字标的回归（无头 Chrome
 import http.server
 import os
 import re
+import glob
 import shutil
 import socket
 import subprocess
@@ -140,6 +141,16 @@ function phase2() {
           setTimeout(function () {
             var d = sY();
             note('autoStopped=' + (Math.abs(d - c) <= 3 ? 'yes' : 'no') + '(' + c + '->' + d + ')');
+            // 工具条里那颗「遮罩」按钮：手机没键盘，这是 P 的触摸入口
+            var btn = document.querySelector('.reader-dock .panic-btn');
+            note('panicBtn=' + document.querySelectorAll('.reader-dock .panic-btn').length);
+            note('panicBtnDisplay=' + (btn ? getComputedStyle(btn).display : 'none'));
+            document.querySelector('.panic-cover').click();      // 点遮罩 = 回来
+            note('coverTapOff=' + (cover() ? 'yes' : 'no'));
+            btn.click();                                         // 点按钮 = 盖住
+            note('coverFromButton=' + (cover() ? 'yes' : 'no'));
+            document.querySelector('.panic-cover').click();
+            note('coverTapOff2=' + (cover() ? 'yes' : 'no'));
             note('DONE=1');
           }, STEP);
         }, 260);
@@ -210,6 +221,11 @@ def main():
         httpd.shutdown()
         shutil.rmtree(profile, ignore_errors=True)
 
+    css = ""
+    for path in glob.glob(os.path.join(REPO, "frontend", "dist", "assets", "*.css")):
+        css += open(path, encoding="utf-8").read()
+    touch_rule = re.search(r"@media\s*\(hover:\s*none\)[^{]*\{[^}]*panic-btn", css) is not None
+
     fields = {}
     for report in Handler.reports:
         if "=" in report:
@@ -245,6 +261,12 @@ def main():
         ("阅读器里按 P 也盖住", fields.get("readerPanic") == "yes"),
         ("按 P 时把进度落了一次库", fields.get("readerSavedOnPanic") == "yes"),
         ("自动滚屏当场停住（不看图标，看位移）", (fields.get("autoStopped") or "").startswith("yes")),
+        ("阅读工具条里有那颗「遮罩」按钮", fields.get("panicBtn") == "1"),
+        ("桌面上它不显示（桌面按 P 就行）", fields.get("panicBtnDisplay") == "none"),
+        ("CSS 里有「触屏才显示」那条规则", touch_rule),
+        ("点遮罩 = 回来", fields.get("coverTapOff") == "no"),
+        ("点那颗按钮 = 盖住", fields.get("coverFromButton") == "yes"),
+        ("再点遮罩还是能回来", fields.get("coverTapOff2") == "no"),
     ]
     bad = 0
     for label, ok in expect:

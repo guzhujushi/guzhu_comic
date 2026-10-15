@@ -1,6 +1,7 @@
 import { onUnmount } from '../router.js'
 import { icons, morphIcon, setIcon } from '../components/icons.js'
 import { renderError } from '../components/states.js'
+import { togglePanic } from '../shortcuts.js'
 import { loadSettings } from '../settings.js'
 import { warmChapterStart } from '../prefetch.js'
 import { currentTheme, setTheme } from '../theme.js'
@@ -41,6 +42,8 @@ export function readerPage(params: Record<string, string>): HTMLElement {
       <button class="chapters-btn reader-btn"><morph-icon size="16" stroke-width="1.8"></morph-icon><span>目录</span></button>
       <button class="next-btn reader-btn"><morph-icon size="16" stroke-width="1.8"></morph-icon><span>下一话</span></button>
       <button class="settings-btn reader-btn icon-btn" title="阅读设置" aria-label="阅读设置"><morph-icon size="16" stroke-width="1.8"></morph-icon></button>
+      <!-- 防社死的触摸入口：手机上没键盘，按不了 P（CSS 里只在触屏显示，桌面走快捷键） -->
+      <button class="panic-btn reader-btn icon-btn" title="遮罩（一键盖住画面）" aria-label="遮罩（一键盖住画面）"><morph-icon size="16" stroke-width="1.8"></morph-icon></button>
     </div>
     <div class="reader-sheet reader-chapters" hidden></div>
     <div class="reader-sheet reader-settings" hidden></div>
@@ -70,6 +73,9 @@ export function readerPage(params: Record<string, string>): HTMLElement {
   const autoIco = setIcon(el, '.auto-btn morph-icon', icons.play)
   const refreshIco = setIcon(el, '.refresh-btn morph-icon', icons.reload)
   const settingsIco = setIcon(el, '.settings-btn morph-icon', icons.settings)
+  setIcon(el, '.panic-btn morph-icon', icons.panic)
+  // 遮罩（防社死）：跟按 P 走同一条路 —— 盖住整窗 + 停自动滚屏 + 收浮层 + 落一次进度
+  el.querySelector('.panic-btn')!.addEventListener('click', () => { togglePanic() })
   el.querySelector('.back-btn')!.addEventListener('click', () => {
     flushProgress()
     history.back()

@@ -197,6 +197,14 @@ function onKey(event: KeyboardEvent): void {
   }
 }
 
+/**
+ * 防社死开 / 关（给**阅读器工具条那颗遮罩按钮**用 —— 手机没键盘，按不了 P）。
+ * 桌面走快捷键，这条只是同一件事的第二个入口。
+ */
+export function togglePanic(): void {
+  setPanic(!panicked)
+}
+
 /** 装一遍就够（SPA 一进进程一次）；挂在捕获阶段，先于页面自己的 keydown 判掉 */
 export function installShortcuts(): void {
   buildPanel()

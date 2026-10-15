@@ -1334,6 +1334,9 @@ body.reading { padding-left: 0; }
 .reader-btn:hover { background: rgba(255, 255, 255, .16); color: var(--text); }
 .reader-btn:disabled { opacity: .3; cursor: default; background: rgba(255, 255, 255, .05); }
 .reader-btn.icon-btn { padding: 7px 9px; }
+/* 「遮罩」按钮只在触屏上出现：桌面上按 P 就行，别再加一个重复入口；手机没键盘，得有颗能点的 */
+.reader-dock .panic-btn { display: none; }
+@media (hover: none) { .reader-dock .panic-btn { display: inline-flex; } }
 
 /* 目录 / 阅读设置共用的底部浮层 */
 .reader-sheet {
